@@ -329,8 +329,36 @@ class SettingsWindow(QWidget):
         kbd_box.layout().addWidget(self.kbd_combo)
         lay.addWidget(kbd_box)
 
+        # P2.2: Noise Suppression
+        from audio_recorder import _HAS_NOISEREDUCE
+        nr_box = _section("Noise Suppression")
+        if _HAS_NOISEREDUCE:
+            nr_status = "✅  noisereduce installed"
+            nr_style = "color: #4ade80;"
+        else:
+            nr_status = "❌  noisereduce not installed  —  pip install noisereduce"
+            nr_style = "color: #f87171;"
+        nr_status_label = QLabel(nr_status)
+        nr_status_label.setStyleSheet(f"{nr_style} background: transparent; border: none; font-size: 12px;")
+        nr_box.layout().addWidget(nr_status_label)
+
+        self.noise_suppression_cb = QCheckBox(
+            "Enable noise suppression  (reduces background hiss and room noise)"
+        )
+        self.noise_suppression_cb.setChecked(
+            self.config.get("noise_suppression", False) and _HAS_NOISEREDUCE
+        )
+        self.noise_suppression_cb.setEnabled(_HAS_NOISEREDUCE)
+        nr_box.layout().addWidget(self.noise_suppression_cb)
+        nr_box.layout().addWidget(_hint(
+            "Runs a stationary noise profile filter on each audio chunk before transcription.\n"
+            "Improves accuracy in noisy environments. Adds ~10–20ms of processing latency."
+        ))
+        lay.addWidget(nr_box)
+
         lay.addStretch()
         return w
+
 
     # ── Tab: Hotkeys ──────────────────────────────────────────────────────
     def _tab_hotkeys(self):
@@ -837,6 +865,19 @@ class SettingsWindow(QWidget):
         if self.inference_engine and self.inference_engine.actual_device == "cuda":
             report.append("✅  GPU (CUDA): active")
 
+        from audio_recorder import _HAS_NOISEREDUCE
+        if _HAS_NOISEREDUCE:
+            report.append("✅  noisereduce: installed (noise suppression available)")
+        else:
+            report.append("ℹ️  noisereduce: not installed  (pip install noisereduce)")
+
+        try:
+            import dbus
+            report.append("✅  dbus-python: installed (DBus control interface active)")
+        except ImportError:
+            report.append("ℹ️  dbus-python: not installed  (pip install dbus-python)")
+
+
         msg = "\n".join(report)
         if ok:
             QMessageBox.information(self, "System Check", f"Everything looks good!\n\n{msg}")
@@ -859,6 +900,9 @@ class SettingsWindow(QWidget):
         self.config.set("input_device_index", self.device_combo.currentData())
         self.config.set("evdev_device", self.kbd_combo.currentData())
         self.config.set("mic_gain", self.gain_slider.value() / 10.0)
+        if hasattr(self, "noise_suppression_cb"):
+            self.config.set("noise_suppression", self.noise_suppression_cb.isChecked())
+
         # Hotkeys
         if self.recorded_keys:
             self.config.set("hotkey", sorted(self.recorded_keys))

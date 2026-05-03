@@ -25,9 +25,11 @@ DEFAULT_CONFIG = {
     "snippets": {},             # {"trigger phrase": "expanded text"}
     "dictation_mode": "normal", # "normal" | "code"
     # P2.1 Ollama LLM post-processing
-    "ollama_enabled": False,    # Master switch — safe default: off
-    "ollama_model": "llama3.2:1b",  # Fast small model; user can change
-    "ollama_mode": "clean",     # "clean" | "formal" | "casual" | "bullet" | "concise"
+    "ollama_enabled": False,
+    "ollama_model": "llama3.2:1b",
+    "ollama_mode": "clean",
+    # P2.2 Noise suppression
+    "noise_suppression": False,  # Requires: pip install noisereduce
 }
 
 CONFIG_PATH = Path.home() / ".config" / "whisper-wayland" / "config.json"

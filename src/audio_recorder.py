@@ -4,6 +4,14 @@ import queue
 import time
 import numpy as np
 
+# P2.2: Optional noise suppression via noisereduce (pip install noisereduce)
+try:
+    import noisereduce as _nr
+    _HAS_NOISEREDUCE = True
+except ImportError:
+    _nr = None
+    _HAS_NOISEREDUCE = False
+
 class AudioRecorder(threading.Thread):
     def __init__(self, config, audio_queue):
         super().__init__(daemon=True)
@@ -96,9 +104,23 @@ class AudioRecorder(threading.Thread):
 
                     if gain != 1.0:
                         audio_data *= gain
-                        # Clip and convert back to int16 to avoid overflow
                         audio_data = np.clip(audio_data, -32768, 32767)
-                    
+
+                    # P2.2: Noise suppression (stationary mode — low latency)
+                    if _HAS_NOISEREDUCE and self.config.get("noise_suppression", False):
+                        try:
+                            # noisereduce expects float32 in [-1, 1]
+                            normalised = audio_data / 32768.0
+                            cleaned = _nr.reduce_noise(
+                                y=normalised,
+                                sr=self.actual_rate,
+                                stationary=True,
+                                prop_decrease=0.75,
+                            )
+                            audio_data = (cleaned * 32768.0).astype(np.float32)
+                        except Exception as nr_err:
+                            print(f"[NR] noise reduction skipped: {nr_err}")
+
                     if self.visualizer_callback:
                         self.visualizer_callback(audio_data)
 
