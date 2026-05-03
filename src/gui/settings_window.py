@@ -1,15 +1,17 @@
 import os
 import pyaudio
 import evdev
+import shutil
+import grp
 from evdev import ecodes
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QMessageBox, QSlider, QCheckBox, QTextEdit,
     QTabWidget, QGroupBox, QSizePolicy, QFrame, QScrollArea,
-    QLineEdit,
+    QLineEdit, QProgressBar, QTableWidget, QHeaderView, QTableWidgetItem
 )
-from PyQt6.QtCore import pyqtSignal, Qt
-from PyQt6.QtGui import QIcon, QFont
+from PyQt6.QtCore import pyqtSignal, Qt, QTimer
+from PyQt6.QtGui import QIcon, QFont, QPainter, QLinearGradient, QColor
 
 # ── Palette ────────────────────────────────────────────────────────────────
 QSS = """
@@ -175,13 +177,73 @@ def _section(title):
     return box
 
 
+MODE_LABELS = {
+    "clean": "✨  Fix grammar (Clean)",
+    "formal": "👔  Formal rewriting",
+    "casual": "🍕  Casual rewriting",
+    "bullet": "📝  Bullet points",
+    "concise": "✂️  Concise mode"
+}
+
+
+class VUMeter(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setMinimumHeight(12)
+        self.setMaximumHeight(12)
+        self._level = 0.0  # 0.0 to 1.0
+        self._peak = 0.0
+        self._peak_decay = 0.005
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._decay_peak)
+        self.timer.start(30)
+
+    def set_level(self, level):
+        """level should be 0.0 to 1.0 (RMS or Peak)"""
+        self._level = min(1.0, max(0.0, level))
+        if self._level > self._peak:
+            self._peak = self._level
+        self.update()
+
+    def _decay_peak(self):
+        if self._peak > 0:
+            self._peak = max(0, self._peak - self._peak_decay)
+            self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Background
+        bg_rect = self.rect()
+        painter.fillRect(bg_rect, QColor("#1e293b"))
+        
+        # Level bar
+        w = int(bg_rect.width() * self._level)
+        if w > 0:
+            grad = QLinearGradient(0, 0, bg_rect.width(), 0)
+            grad.setColorAt(0.0, QColor("#4ade80")) # Green
+            grad.setColorAt(0.7, QColor("#facc15")) # Yellow
+            grad.setColorAt(1.0, QColor("#f87171")) # Red
+            
+            painter.fillRect(0, 0, w, bg_rect.height(), grad)
+            
+        # Peak indicator
+        px = int(bg_rect.width() * self._peak)
+        if px > 0:
+            painter.setPen(QColor("#ffffff"))
+            painter.drawLine(px, 0, px, bg_rect.height())
+
+
 class SettingsWindow(QWidget):
     settings_saved = pyqtSignal()
 
-    def __init__(self, config, inference_engine=None):
+    def __init__(self, config, inference_engine=None, audio_recorder=None):
         super().__init__()
         self.config = config
         self.inference_engine = inference_engine
+        self.audio_recorder = audio_recorder
         self.recorded_keys = set()
         self.recorded_toggle_keys = set()
         self.active_recording_mode = None
@@ -247,6 +309,33 @@ class SettingsWindow(QWidget):
         footer.addWidget(save_btn)
         root.addLayout(footer)
 
+        self.monitor_timer = QTimer(self)
+        self.monitor_timer.timeout.connect(self._monitor_audio)
+        self.monitor_timer.start(50)
+
+    def showEvent(self, event):
+        """Start monitoring mic levels when window opens."""
+        super().showEvent(event)
+        if self.audio_recorder:
+            self.audio_recorder.start_monitoring()
+        self.monitor_timer.start(50)
+
+    def closeEvent(self, event):
+        """Stop monitoring when window closes."""
+        if self.audio_recorder:
+            self.audio_recorder.stop_monitoring()
+        self.monitor_timer.stop()
+        super().closeEvent(event)
+
+    def _monitor_audio(self):
+        """Update VU meter with real-time RMS levels."""
+        if self.audio_recorder:
+            level = self.audio_recorder.get_rms_level()
+            if hasattr(self, 'vu_meter'):
+                # Peak scaling for visibility
+                scaled = min(1.0, level * 5.0) 
+                self.vu_meter.set_level(scaled)
+
     # ── Tab: General ──────────────────────────────────────────────────────
     def _tab_general(self):
         w = self._scrollable()
@@ -299,6 +388,9 @@ class SettingsWindow(QWidget):
         self.device_combo = QComboBox()
         self.populate_audio_devices()
         mic_box.layout().addWidget(self.device_combo)
+        
+        self.vu_meter = VUMeter()
+        mic_box.layout().addWidget(self.vu_meter)
         lay.addWidget(mic_box)
 
         gain_box = _section("Microphone Boost")
@@ -887,6 +979,10 @@ class SettingsWindow(QWidget):
 
     # ── Save ──────────────────────────────────────────────────────────────
     def save_settings(self):
+        # Track if restart-required settings changed
+        restart_keys = ["model_size", "device", "inference_mode", "input_device_index"]
+        old_vals = {k: self.config.get(k) for k in restart_keys}
+
         # General
         self.config.set("model_size", self.model_combo.currentText())
         self.config.set("inference_mode", self.inference_mode_combo.currentText())
@@ -940,10 +1036,20 @@ class SettingsWindow(QWidget):
             if self.inference_engine and hasattr(self.inference_engine, "llm"):
                 self.inference_engine.llm.config = self.config
 
+        # Check if anything changed that needs a restart
+        needs_restart = False
+        for k in restart_keys:
+            if self.config.get(k) != old_vals[k]:
+                needs_restart = True
+                break
+
         self.config.save()
         self.settings_saved.emit()
-        QMessageBox.information(
-            self, "Saved",
-            "Settings saved.\nA restart is required to apply model or device changes."
-        )
+
+        if needs_restart:
+            QMessageBox.information(
+                self, "Settings Saved",
+                "Changes saved.\n\nA restart is required to apply your new model or device settings."
+            )
+        
         self.close()

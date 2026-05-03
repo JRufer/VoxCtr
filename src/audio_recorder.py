@@ -19,26 +19,48 @@ class AudioRecorder(threading.Thread):
         self.audio_queue = audio_queue
         self.p = pyaudio.PyAudio()
         self.stream = None
-        self.recording = False
-        self.running = True
-        self.chunk_size = 1024
-        self.target_rate = 16000 # Whisper expects 16kHz
         self.actual_rate = 16000 # Will be updated on start
-        self.visualizer_callback = None
+        self.target_rate = 16000
+        self.chunk_size = 1024
+        self.running = True
+        self.recording = False
+        self.monitoring = False
+        self._last_rms = 0.0
+        self.visualizer_callbacks = []  # List of functions(np.array)
         self._lock = threading.Lock()
 
     def start_recording(self):
-        if self.recording:
-            return
-        
+        with self._lock:
+            self.recording = True
+            if self.stream is None:
+                self._open_stream()
+
+    def stop_recording(self):
+        with self._lock:
+            self.recording = False
+            if not self.monitoring:
+                self._close_stream()
+
+    def start_monitoring(self):
+        """Opens mic for VU meter/visuals without sending to transcription queue."""
+        with self._lock:
+            self.monitoring = True
+            if self.stream is None:
+                self._open_stream()
+
+    def stop_monitoring(self):
+        with self._lock:
+            self.monitoring = False
+            if not self.recording:
+                self._close_stream()
+
+    def _open_stream(self):
         try:
             device_index = self.config.get("input_device_index")
-            print(f"Starting recording on device index: {device_index}")
+            print(f"[Audio] Opening device index: {device_index}")
             
             # Try to find supported sample rate
             rates_to_try = [16000, 44100, 48000, 32000, 22050]
-            self.stream = None
-            
             for rate in rates_to_try:
                 try:
                     self.stream = self.p.open(
@@ -50,66 +72,63 @@ class AudioRecorder(threading.Thread):
                         frames_per_buffer=self.chunk_size
                     )
                     self.actual_rate = rate
-                    print(f"Successfully opened stream at {rate}Hz")
+                    print(f"[Audio] Opened stream at {rate}Hz")
                     break
                 except Exception:
                     continue
             
             if not self.stream:
-                raise Exception("Could not find a supported sample rate for this device.")
-                
-            self.recording = True
-            print("Recording started...")
+                print("[Audio] Error: No supported sample rate found.")
         except Exception as e:
-            print(f"Failed to start recording: {e}")
+            print(f"[Audio] Failed to open stream: {e}")
 
-    def stop_recording(self):
-        with self._lock:
-            if not self.recording:
-                return
-            self.recording = False
-            if self.stream:
-                try:
-                    self.stream.stop_stream()
-                    self.stream.close()
-                except:
-                    pass
-                self.stream = None
-        print("Recording stopped.")
+    def _close_stream(self):
+        if self.stream:
+            try:
+                self.stream.stop_stream()
+                self.stream.close()
+            except:
+                pass
+            self.stream = None
+            print("[Audio] Stream closed.")
 
     def run(self):
         while self.running:
             data = None
-            # Capture stream reference under lock, then read outside it so
-            # stop_recording() is never blocked waiting for a chunk to finish.
+            is_recording = False
+            
             with self._lock:
-                stream = self.stream if self.recording else None
+                stream = self.stream
+                is_recording = self.recording
 
             if stream:
                 try:
                     data = stream.read(self.chunk_size, exception_on_overflow=False)
                 except Exception as e:
-                    if self.recording:
-                        print(f"Error reading audio: {e}")
+                    if self.recording or self.monitoring:
+                        print(f"[Audio] Read error: {e}")
                     if "Unanticipated host error" in str(e):
-                        self.recording = False
+                        with self._lock:
+                            self.recording = False
+                            self.monitoring = False
+                            self._close_stream()
 
             if data:
                 try:
-                    # Apply Gain (Boost); double up for quiet/whisper mode (P0.4)
+                    # Apply Gain
                     gain = self.config.get("mic_gain", 1.0)
                     if self.config.get("quiet_mode", False):
-                        gain = min(gain * 2.5, 10.0)  # cap at 10x to avoid clipping
+                        gain = min(gain * 2.5, 10.0)
+                    
                     audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32)
 
                     if gain != 1.0:
                         audio_data *= gain
                         audio_data = np.clip(audio_data, -32768, 32767)
 
-                    # P2.2: Noise suppression (stationary mode — low latency)
+                    # Noise suppression
                     if _HAS_NOISEREDUCE and self.config.get("noise_suppression", False):
                         try:
-                            # noisereduce expects float32 in [-1, 1]
                             normalised = audio_data / 32768.0
                             cleaned = _nr.reduce_noise(
                                 y=normalised,
@@ -121,26 +140,42 @@ class AudioRecorder(threading.Thread):
                         except Exception as nr_err:
                             print(f"[NR] noise reduction skipped: {nr_err}")
 
-                    if self.visualizer_callback:
-                        self.visualizer_callback(audio_data)
+                    # Calculate RMS for VU meter
+                    rms = np.sqrt(np.mean(audio_data**2))
+                    self._last_rms = rms / 32768.0  # Normalized to 0.0-1.0 approx
 
-                    if self.actual_rate != self.target_rate:
-                        # Resample to 16kHz
-                        num_samples = int(len(audio_data) * self.target_rate / self.actual_rate)
-                        resampled_audio = np.interp(
-                            np.linspace(0.0, 1.0, num_samples, endpoint=False),
-                            np.linspace(0.0, 1.0, len(audio_data), endpoint=False),
-                            audio_data
-                        ).astype(np.int16)
-                        self.audio_queue.put(resampled_audio.tobytes())
-                    else:
-                        self.audio_queue.put(audio_data.astype(np.int16).tobytes())
+                    # Dispatch to visualizers
+                    for cb in self.visualizer_callbacks:
+                        try:
+                            cb(audio_data)
+                        except Exception:
+                            pass
+
+                    # Only queue for transcription if recording is actually ON
+                    if is_recording:
+                        if self.actual_rate != self.target_rate:
+                            num_samples = int(len(audio_data) * self.target_rate / self.actual_rate)
+                            resampled_audio = np.interp(
+                                np.linspace(0.0, 1.0, num_samples, endpoint=False),
+                                np.linspace(0.0, 1.0, len(audio_data), endpoint=False),
+                                audio_data
+                            ).astype(np.int16)
+                            self.audio_queue.put(resampled_audio.tobytes())
+                        else:
+                            self.audio_queue.put(audio_data.astype(np.int16).tobytes())
                 except Exception as e:
-                    print(f"Error processing audio data: {e}")
+                    print(f"[Audio] Process error: {e}")
             else:
                 time.sleep(0.01)
 
+    def get_rms_level(self) -> float:
+        """Returns normalized RMS level (0.0 to 1.0) of the last captured chunk."""
+        return self._last_rms
+
     def stop(self):
         self.running = False
-        self.stop_recording()
+        with self._lock:
+            self.recording = False
+            self.monitoring = False
+            self._close_stream()
         self.p.terminate()

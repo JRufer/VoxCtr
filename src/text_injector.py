@@ -5,6 +5,12 @@ import time
 import subprocess
 import os
 
+try:
+    from portal_injector import PortalInjector
+    _HAS_PORTAL = True
+except ImportError:
+    _HAS_PORTAL = False
+
 # Word count accumulator for P0.6 (session stats)
 _session_word_count = 0
 
@@ -16,6 +22,7 @@ class TextInjector(threading.Thread):
         self.word_count_callback = word_count_callback  # P0.6: called with new total
         self.running = True
         self._session_words = 0
+        self.portal = PortalInjector() if _HAS_PORTAL else None
 
     def _send_notification(self, text):
         """P0.5: Fire a desktop notification via notify-send (best-effort)."""
@@ -82,6 +89,11 @@ class TextInjector(threading.Thread):
                 stderr=subprocess.DEVNULL
             )
             if result.returncode == 0:
+                injected = True
+
+        # --- Wayland: Portal fallback (GNOME / Secure) ---
+        if not injected and is_wayland and self.portal:
+            if self.portal.inject(text):
                 injected = True
 
         # --- X11: xdotool types directly, no clipboard needed ---
