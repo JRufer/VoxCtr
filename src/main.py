@@ -14,6 +14,8 @@ from audio_recorder import AudioRecorder
 from inference_engine import InferenceEngine
 from text_injector import TextInjector
 from dbus_service import DBusService
+from routing.loader import load_targets
+from routing.router import OutputTargetRouter
 from gui.tray_icon import WhisperTrayIcon
 from gui.settings_window import SettingsWindow
 from gui.waveform_overlay import WaveformOverlay
@@ -32,7 +34,7 @@ def ignore_stderr():
         os.close(old_stderr)
 
 class AppState(QObject):
-    recording_started = pyqtSignal()
+    recording_started = pyqtSignal(str)   # emits target_id
     recording_stopped = pyqtSignal()
     text_emitted = pyqtSignal(str)
     text_updated = pyqtSignal(str)
@@ -43,18 +45,18 @@ def ensure_single_instance():
         try:
             with open(lock_file, "r") as f:
                 old_pid = int(f.read().strip())
-            
+
             # P0.7: Don't kill ourselves!
             if old_pid == os.getpid():
                 return
-            
+
             # Check if process is still alive
             os.kill(old_pid, 0)
-            
+
             # If we reach here, it's alive. Kill it.
             print(f"[Main] Terminating existing instance (PID {old_pid})...")
             os.kill(old_pid, signal.SIGTERM)
-            
+
             # Wait up to 2 seconds for it to exit
             for _ in range(20):
                 time.sleep(0.1)
@@ -68,7 +70,7 @@ def ensure_single_instance():
         except (ValueError, ProcessLookupError, PermissionError):
             # PID file was stale or we can't see/kill it
             pass
-            
+
     # Save current PID
     try:
         os.makedirs(os.path.dirname(lock_file), exist_ok=True)
@@ -86,17 +88,27 @@ def main():
 
         config = Config()
         state = AppState()
-        
+
         audio_queue = queue.Queue()
         text_queue = queue.Queue()
         realtime_text_queue = queue.Queue()
 
+        # Initialize routing
+        try:
+            targets = load_targets()
+        except Exception as e:
+            print(f"[Main] Could not load targets.toml: {e}; using default inject target")
+            from routing.loader import _default_inject_target
+            targets = [_default_inject_target()]
+
+        router = OutputTargetRouter(targets)
+
         # Initialize components
         waveform = WaveformOverlay()
-        
+
         with ignore_stderr():
             recorder = AudioRecorder(config, audio_queue)
-        
+
         recorder.visualizer_callbacks.append(waveform.update_audio)
 
         inference = InferenceEngine(config, audio_queue, text_queue, realtime_text_queue)
@@ -106,7 +118,7 @@ def main():
             # P0.6: tray tooltip
             lang = inference.last_language
             lang_str = f" [{lang.upper()}]" if lang else ""
-            tray.setToolTip(f"Whisper Wayland{lang_str} \u2014 {total_words} words this session")
+            tray.setToolTip(f"Whisper Wayland{lang_str} — {total_words} words this session")
             # P1.2: history panel (thread-safe via QTimer)
             history_window._pending_text = text
             from PyQt6.QtCore import QTimer as _QTimer
@@ -115,17 +127,27 @@ def main():
             dbus_svc.set_word_count(total_words)
             dbus_svc.notify_text(text)
 
-        injector = TextInjector(config, text_queue, word_count_callback=on_injection)
+        injector = TextInjector(config, text_queue, word_count_callback=on_injection, router=router)
 
-        def on_press():
-            print("\n[!] Triggered: Recording...")
-            state.recording_started.emit()
+        def _get_target_info(target_id: str) -> tuple:
+            """Return (post_processing, initial_prompt) for a target_id."""
+            tgt = router.get_target(target_id)
+            if tgt is None:
+                return 'default', None
+            return tgt.post_processing, tgt.initial_prompt
+
+        def on_press(target_id: str = 'default'):
+            print(f"\n[!] Triggered: Recording → target={target_id!r}")
+            post_processing, initial_prompt = _get_target_info(target_id)
+            state.recording_started.emit(target_id)
             dbus_svc.set_status("recording")
             with ignore_stderr():
                 recorder.start_recording()
-            inference.set_recording(True)
+            inference.set_recording(True, target_id=target_id,
+                                    post_processing=post_processing,
+                                    initial_prompt_override=initial_prompt)
 
-        def on_release():
+        def on_release(target_id: str = 'default'):
             print("[!] Released: Transcribing...")
             state.recording_stopped.emit()
             dbus_svc.set_status("transcribing")
@@ -148,7 +170,6 @@ def main():
         )
 
         # Restore idle status after injection completes
-        # (injection happens on injector thread; status update is thread-safe via dbus)
         _orig_on_injection = on_injection
         def _on_injection_with_idle(total_words, text):
             _orig_on_injection(total_words, text)
@@ -157,13 +178,9 @@ def main():
 
         listener = InputListener(config, on_press, on_release)
 
-        # Note: real-time text feature is now disabled in the UI based on user request.
-        # We keep the inference running but don't show the overlay.
-
         # UI Toggles
-        def show_recording_ui():
-            # Only show the waveform as the primary indicator
-            waveform.show_mode()
+        def show_recording_ui(target_id: str = 'default'):
+            waveform.show_mode(target_id=target_id, router=router)
 
         def hide_recording_ui():
             waveform.hide_mode()
@@ -174,12 +191,13 @@ def main():
 
         # UI
         history_window = HistoryWindow(config)
-        settings_window = SettingsWindow(config, inference, recorder)
+        settings_window = SettingsWindow(config, inference, recorder, router=router)
         tray = WhisperTrayIcon(state, history_window)
         tray.settings_action.triggered.connect(settings_window.show)
         settings_window.settings_saved.connect(listener.update_hotkey)
         settings_window.settings_saved.connect(listener.update_device)
-        
+        settings_window.settings_saved.connect(lambda: _reload_routing(router))
+
         # Fallback: If tray is not available, show settings so the app isn't "invisible"
         if not tray.isSystemTrayAvailable():
             print("[Main] System tray not available, opening settings directly.")
@@ -212,6 +230,17 @@ def main():
             dbus_svc.stop()
         except:
             pass
+
+
+def _reload_routing(router: OutputTargetRouter) -> None:
+    """Hot-reload targets after settings save."""
+    try:
+        targets = load_targets()
+        router.update_targets(targets)
+        print(f"[Main] Routing targets reloaded ({len(targets)} targets)")
+    except Exception as e:
+        print(f"[Main] Could not reload routing targets: {e}")
+
 
 if __name__ == "__main__":
     main()

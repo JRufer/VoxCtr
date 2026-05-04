@@ -8,6 +8,7 @@ class WhisperTrayIcon(QSystemTrayIcon):
         super().__init__()
         self.app_state = app_state
         self.history_window = history_window
+        self._active_target_label = ""
 
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         assets_dir = os.path.join(base_dir, "assets")
@@ -35,10 +36,17 @@ class WhisperTrayIcon(QSystemTrayIcon):
 
         self.setContextMenu(self.menu)
 
-        self.app_state.recording_started.connect(self.set_recording_icon)
+        self.app_state.recording_started.connect(self._on_recording_started)
         self.app_state.recording_stopped.connect(self.set_idle_icon)
 
+    def _on_recording_started(self, target_id: str = 'default'):
+        self._active_target_label = target_id
+        self.set_recording_icon()
+        tip = self.toolTip()
+        self.setToolTip(f"{tip} • Recording → {target_id}")
+
     def set_idle_icon(self):
+        self._active_target_label = ""
         if hasattr(self, 'icon_off') and not self.icon_off.isNull():
             self.setIcon(self.icon_off)
         else:
@@ -53,4 +61,3 @@ class WhisperTrayIcon(QSystemTrayIcon):
             pixmap = QPixmap(64, 64)
             pixmap.fill(QColor("red"))
             self.setIcon(QIcon(pixmap))
-

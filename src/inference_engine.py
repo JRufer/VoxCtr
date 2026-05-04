@@ -88,6 +88,11 @@ class InferenceEngine(threading.Thread):
         self.actual_device = "Unknown"
         self.actual_compute_type = "Unknown"
 
+        # Routing: current session target
+        self._current_target_id: str = 'default'
+        self._current_post_processing: str = 'default'
+        self._current_initial_prompt_override: str | None = None
+
         # P2.1: LLM post-processor (probe happens lazily on first use)
         self.llm = LLMPostprocessor(config)
 
@@ -192,6 +197,8 @@ class InferenceEngine(threading.Thread):
                 raise e
 
     def _build_initial_prompt(self):
+        if self._current_initial_prompt_override is not None:
+            return self._current_initial_prompt_override
         vocab = self.config.get("custom_vocabulary", [])
         if not vocab:
             return None
@@ -240,13 +247,29 @@ class InferenceEngine(threading.Thread):
         return text
 
     def _postprocess(self, text):
-        mode = self.config.get("dictation_mode", "normal")
+        pp = self._current_post_processing
 
+        if pp == 'none':
+            return text
+
+        if pp == 'strip_fillers':
+            text = _FILLER_RE.sub('', text)
+            text = re.sub(r'\s+', ' ', text).strip()
+            if text:
+                text = text[0].upper() + text[1:]
+            return text
+
+        if pp == 'snippets_only':
+            return self._apply_snippets(text)
+
+        if pp == 'ollama_only':
+            return text  # Ollama applied later in process_buffer
+
+        # 'default' or unknown: full pipeline
+        mode = self.config.get("dictation_mode", "normal")
         if mode == "code":
-            # Code mode: skip filler/list/punct passes; apply code constructs
             text = self._apply_code_mode(text)
         else:
-            # Normal mode
             if self.config.get("remove_fillers", True):
                 text = _FILLER_RE.sub('', text)
                 text = re.sub(r'\s+', ' ', text).strip()
@@ -257,13 +280,19 @@ class InferenceEngine(threading.Thread):
             if self.config.get("auto_format_lists", True):
                 text = self._apply_list_formatting(text)
 
-        # Snippets run in both modes
-        text = self._apply_snippets(text)
+        # Snippets run in both modes (for default and snippets_only)
+        if pp != 'ollama_only':
+            text = self._apply_snippets(text)
         return text
 
-    def set_recording(self, recording):
+    def set_recording(self, recording, target_id='default',
+                      post_processing='default', initial_prompt_override=None):
         self.recording = recording
-        if not recording:
+        if recording:
+            self._current_target_id = target_id
+            self._current_post_processing = post_processing
+            self._current_initial_prompt_override = initial_prompt_override
+        else:
             self.process_buffer(incremental=False)
             with self._buffer_lock:
                 self.buffer.clear()
@@ -315,14 +344,20 @@ class InferenceEngine(threading.Thread):
 
             # P2.1: LLM pass — only on final output, never on incremental
             # (keeps real-time display snappy; falls back silently if Ollama is down)
-            if full_text and not incremental:
+            pp = self._current_post_processing
+            run_ollama = not incremental and full_text and (
+                pp in ('default', 'ollama_only')
+                and self.config.get("ollama_enabled", False)
+            )
+            if run_ollama:
                 full_text = self.llm.process(full_text) or full_text
 
             if full_text:
                 if incremental:
                     self.realtime_text_queue.put(full_text)
                 else:
-                    self.text_queue.put(full_text)
+                    target_id = self._current_target_id
+                    self.text_queue.put((full_text, target_id))
             elif not incremental:
                 self.realtime_text_queue.put("")
 

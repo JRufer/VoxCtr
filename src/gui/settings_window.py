@@ -8,7 +8,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QMessageBox, QSlider, QCheckBox, QTextEdit,
     QTabWidget, QGroupBox, QSizePolicy, QFrame, QScrollArea,
-    QLineEdit, QProgressBar, QTableWidget, QHeaderView, QTableWidgetItem
+    QLineEdit, QProgressBar, QTableWidget, QHeaderView, QTableWidgetItem,
+    QDialog, QDialogButtonBox, QListWidget, QListWidgetItem, QSplitter,
+    QSpinBox, QRadioButton, QButtonGroup, QFormLayout,
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QIcon, QFont, QPainter, QLinearGradient, QColor
@@ -239,11 +241,12 @@ class VUMeter(QWidget):
 class SettingsWindow(QWidget):
     settings_saved = pyqtSignal()
 
-    def __init__(self, config, inference_engine=None, audio_recorder=None):
+    def __init__(self, config, inference_engine=None, audio_recorder=None, router=None):
         super().__init__()
         self.config = config
         self.inference_engine = inference_engine
         self.audio_recorder = audio_recorder
+        self.router = router  # OutputTargetRouter, may be None
         self.recorded_keys = set()
         self.recorded_toggle_keys = set()
         self.active_recording_mode = None
@@ -287,6 +290,7 @@ class SettingsWindow(QWidget):
         tabs.addTab(self._tab_dictation(), "✨  Dictation")
         tabs.addTab(self._tab_snippets(), "📎  Snippets")
         tabs.addTab(self._tab_ai(), "🤖  AI")
+        tabs.addTab(self._tab_routing(), "🔀  Routing")
         root.addWidget(tabs)
 
         # ── Footer buttons ────────────────────────────────────────────────
@@ -1051,5 +1055,521 @@ class SettingsWindow(QWidget):
                 self, "Settings Saved",
                 "Changes saved.\n\nA restart is required to apply your new model or device settings."
             )
-        
+
         self.close()
+
+    # ── Routing tab ───────────────────────────────────────────────────────────
+
+    def _tab_routing(self):
+        from routing.loader import load_targets, load_bindings, save_targets, save_bindings
+        from routing.models import (
+            OutputTarget, HotkeyBinding, DeliveryType, GestureType,
+        )
+
+        tab = QWidget()
+        lay = QVBoxLayout(tab)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(10)
+
+        lay.addWidget(_hint(
+            "Define output targets and map hotkey gestures to them. "
+            "Changes are saved to ~/.config/whisper-wayland/targets.toml and bindings.toml."
+        ))
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # ── Targets panel ──────────────────────────────────────────────────
+        targets_panel = QWidget()
+        tp_lay = QVBoxLayout(targets_panel)
+        tp_lay.setContentsMargins(0, 0, 0, 0)
+        tp_lay.setSpacing(6)
+        tp_head = QLabel("Output Targets")
+        tp_head.setObjectName("section_head")
+        tp_lay.addWidget(tp_head)
+        self._target_list = QListWidget()
+        self._target_list.setAlternatingRowColors(True)
+        tp_lay.addWidget(self._target_list)
+        tp_btns = QHBoxLayout()
+        for label, slot in [
+            ("Add", lambda: self._routing_add_target()),
+            ("Edit", lambda: self._routing_edit_target()),
+            ("Delete", lambda: self._routing_delete_target()),
+            ("Test", lambda: self._routing_test_target()),
+        ]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(30)
+            tp_btns.addWidget(btn)
+            btn.clicked.connect(slot)
+        tp_lay.addLayout(tp_btns)
+
+        # ── Bindings panel ─────────────────────────────────────────────────
+        bindings_panel = QWidget()
+        bp_lay = QVBoxLayout(bindings_panel)
+        bp_lay.setContentsMargins(0, 0, 0, 0)
+        bp_lay.setSpacing(6)
+        bp_head = QLabel("Hotkey Bindings")
+        bp_head.setObjectName("section_head")
+        bp_lay.addWidget(bp_head)
+        self._binding_list = QListWidget()
+        self._binding_list.setAlternatingRowColors(True)
+        bp_lay.addWidget(self._binding_list)
+        bp_btns = QHBoxLayout()
+        for label, slot in [
+            ("Add", lambda: self._routing_add_binding()),
+            ("Edit", lambda: self._routing_edit_binding()),
+            ("Delete", lambda: self._routing_delete_binding()),
+        ]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(30)
+            bp_btns.addWidget(btn)
+            btn.clicked.connect(slot)
+        bp_lay.addLayout(bp_btns)
+
+        splitter.addWidget(targets_panel)
+        splitter.addWidget(bindings_panel)
+        splitter.setSizes([260, 320])
+        lay.addWidget(splitter, 1)
+
+        # Reload from disk when tab is shown
+        self._routing_refresh()
+        return tab
+
+    def _routing_refresh(self):
+        from routing.loader import load_targets, load_bindings
+        try:
+            self._routing_targets = load_targets()
+        except Exception:
+            self._routing_targets = []
+        try:
+            self._routing_bindings = load_bindings()
+        except Exception:
+            self._routing_bindings = []
+        self._routing_render_targets()
+        self._routing_render_bindings()
+
+    def _routing_render_targets(self):
+        self._target_list.clear()
+        for t in self._routing_targets:
+            item = QListWidgetItem(f"{t.label}  [{t.delivery.value}]  id={t.id!r}")
+            item.setData(Qt.ItemDataRole.UserRole, t)
+            self._target_list.addItem(item)
+
+    def _routing_render_bindings(self):
+        self._binding_list.clear()
+        target_map = {t.id: t.label for t in self._routing_targets}
+        for b in self._routing_bindings:
+            keys_str = '+'.join(k.replace('KEY_', '') for k in b.keys)
+            tgt_label = target_map.get(b.target_id, b.target_id)
+            txt = f"{b.label or b.id}  [{b.gesture.value}]  {keys_str} → {tgt_label}"
+            if b.disabled:
+                txt = f"[disabled] {txt}"
+            item = QListWidgetItem(txt)
+            item.setData(Qt.ItemDataRole.UserRole, b)
+            if b.disabled:
+                item.setForeground(QColor('#4a5568'))
+            self._binding_list.addItem(item)
+
+    def _routing_selected_target(self):
+        item = self._target_list.currentItem()
+        if item:
+            return item.data(Qt.ItemDataRole.UserRole)
+        return None
+
+    def _routing_selected_binding(self):
+        item = self._binding_list.currentItem()
+        if item:
+            return item.data(Qt.ItemDataRole.UserRole)
+        return None
+
+    def _routing_save_targets(self):
+        from routing.loader import save_targets
+        try:
+            save_targets(self._routing_targets)
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", f"Could not save targets.toml:\n{e}")
+
+    def _routing_save_bindings(self):
+        from routing.loader import save_bindings
+        try:
+            save_bindings(self._routing_bindings)
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", f"Could not save bindings.toml:\n{e}")
+
+    def _routing_add_target(self):
+        dlg = _TargetEditorDialog(parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._routing_targets.append(dlg.result_target)
+            self._routing_save_targets()
+            self._routing_render_targets()
+            if self.router:
+                self.router.update_targets(self._routing_targets)
+
+    def _routing_edit_target(self):
+        tgt = self._routing_selected_target()
+        if tgt is None:
+            return
+        dlg = _TargetEditorDialog(target=tgt, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            idx = next((i for i, t in enumerate(self._routing_targets) if t.id == tgt.id), None)
+            if idx is not None:
+                self._routing_targets[idx] = dlg.result_target
+            self._routing_save_targets()
+            self._routing_render_targets()
+            if self.router:
+                self.router.update_targets(self._routing_targets)
+
+    def _routing_delete_target(self):
+        tgt = self._routing_selected_target()
+        if tgt is None:
+            return
+        used_by = [b.id for b in self._routing_bindings if b.target_id == tgt.id]
+        if used_by:
+            QMessageBox.warning(
+                self, "Cannot Delete",
+                f"Target '{tgt.id}' is referenced by bindings: {', '.join(used_by)}.\n"
+                "Remove those bindings first."
+            )
+            return
+        if QMessageBox.question(
+            self, "Delete Target",
+            f"Delete target '{tgt.label}' ({tgt.id})?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            self._routing_targets = [t for t in self._routing_targets if t.id != tgt.id]
+            self._routing_save_targets()
+            self._routing_render_targets()
+            if self.router:
+                self.router.update_targets(self._routing_targets)
+
+    def _routing_test_target(self):
+        tgt = self._routing_selected_target()
+        if tgt is None:
+            return
+        if self.router:
+            result = self.router.test_target(tgt.id)
+            icon = "✅" if result.reachable else "❌"
+            QMessageBox.information(self, "Target Test", f"{icon}  {result.detail}")
+        else:
+            QMessageBox.information(self, "Target Test", "Router not available.")
+
+    def _routing_add_binding(self):
+        if not self._routing_targets:
+            QMessageBox.warning(self, "No Targets", "Add at least one output target first.")
+            return
+        dlg = _BindingEditorDialog(targets=self._routing_targets, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._routing_bindings.append(dlg.result_binding)
+            self._routing_save_bindings()
+            self._routing_render_bindings()
+
+    def _routing_edit_binding(self):
+        b = self._routing_selected_binding()
+        if b is None:
+            return
+        dlg = _BindingEditorDialog(binding=b, targets=self._routing_targets, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            idx = next((i for i, x in enumerate(self._routing_bindings) if x.id == b.id), None)
+            if idx is not None:
+                self._routing_bindings[idx] = dlg.result_binding
+            self._routing_save_bindings()
+            self._routing_render_bindings()
+
+    def _routing_delete_binding(self):
+        b = self._routing_selected_binding()
+        if b is None:
+            return
+        if QMessageBox.question(
+            self, "Delete Binding",
+            f"Delete binding '{b.label or b.id}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            self._routing_bindings = [x for x in self._routing_bindings if x.id != b.id]
+            self._routing_save_bindings()
+            self._routing_render_bindings()
+
+
+# ── Target Editor Dialog ──────────────────────────────────────────────────────
+
+class _TargetEditorDialog(QDialog):
+    def __init__(self, target=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit Target" if target else "Add Target")
+        self.setMinimumWidth(420)
+        self.setStyleSheet(QSS)
+        self.result_target = None
+        self._build_ui(target)
+
+    def _build_ui(self, tgt):
+        from routing.models import DeliveryType
+        lay = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self._id_edit = QLineEdit(tgt.id if tgt else "")
+        self._label_edit = QLineEdit(tgt.label if tgt else "")
+
+        self._delivery_combo = QComboBox()
+        for dt in DeliveryType:
+            self._delivery_combo.addItem(dt.value, dt)
+        if tgt:
+            idx = self._delivery_combo.findData(tgt.delivery)
+            if idx >= 0:
+                self._delivery_combo.setCurrentIndex(idx)
+
+        self._pp_combo = QComboBox()
+        for pp in ("default", "none", "strip_fillers", "ollama_only", "snippets_only"):
+            self._pp_combo.addItem(pp, pp)
+        if tgt:
+            idx = self._pp_combo.findData(tgt.post_processing)
+            if idx >= 0:
+                self._pp_combo.setCurrentIndex(idx)
+
+        self._append_newline_cb = QCheckBox("Append newline")
+        self._append_newline_cb.setChecked(tgt.append_newline if tgt else True)
+
+        # Delivery-specific fields
+        self._command_edit = QLineEdit(tgt.command or "" if tgt else "")
+        self._pipe_path_edit = QLineEdit(tgt.pipe_path or "" if tgt else "")
+        self._socket_host_edit = QLineEdit(tgt.socket_host or "localhost" if tgt else "localhost")
+        self._socket_port_spin = QSpinBox()
+        self._socket_port_spin.setRange(1, 65535)
+        self._socket_port_spin.setValue(tgt.socket_port or 9000 if tgt else 9000)
+        self._socket_unix_edit = QLineEdit(tgt.socket_unix or "" if tgt else "")
+        self._file_path_edit = QLineEdit(tgt.file_path or "" if tgt else "")
+        self._file_prefix_edit = QLineEdit(tgt.file_prefix or "" if tgt else "")
+        self._file_ts_cb = QCheckBox("Include timestamp")
+        self._file_ts_cb.setChecked(tgt.file_timestamp if tgt else True)
+        self._dbus_signal_edit = QLineEdit(tgt.dbus_signal or "" if tgt else "")
+        self._initial_prompt_edit = QLineEdit(tgt.initial_prompt or "" if tgt else "")
+
+        form.addRow("ID:", self._id_edit)
+        form.addRow("Label:", self._label_edit)
+        form.addRow("Delivery:", self._delivery_combo)
+        form.addRow("Post-processing:", self._pp_combo)
+        form.addRow("", self._append_newline_cb)
+
+        # Container for delivery-specific fields
+        self._delivery_fields = QWidget()
+        self._df_lay = QFormLayout(self._delivery_fields)
+        self._df_lay.setSpacing(6)
+        self._df_lay.addRow("Command {TEXT}:", self._command_edit)
+        self._df_lay.addRow("Pipe path:", self._pipe_path_edit)
+        self._df_lay.addRow("Socket host:", self._socket_host_edit)
+        self._df_lay.addRow("Socket port:", self._socket_port_spin)
+        self._df_lay.addRow("Unix socket:", self._socket_unix_edit)
+        self._df_lay.addRow("File path:", self._file_path_edit)
+        self._df_lay.addRow("File prefix:", self._file_prefix_edit)
+        self._df_lay.addRow("", self._file_ts_cb)
+        self._df_lay.addRow("DBus signal:", self._dbus_signal_edit)
+        self._df_lay.addRow("Initial prompt:", self._initial_prompt_edit)
+
+        form.addRow(self._delivery_fields)
+        lay.addLayout(form)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self._accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+        self._delivery_combo.currentIndexChanged.connect(self._update_delivery_fields)
+        self._update_delivery_fields()
+
+        # Auto-generate ID from label
+        self._label_edit.textChanged.connect(self._auto_id)
+
+    def _auto_id(self, text):
+        if not self._id_edit.text() or self._id_edit.text() == self._last_auto_id():
+            safe = text.lower().replace(' ', '_')
+            import re
+            safe = re.sub(r'[^a-z0-9_]', '', safe)
+            self._id_edit.setText(safe)
+
+    def _last_auto_id(self):
+        import re
+        text = self._label_edit.text().lower().replace(' ', '_')
+        return re.sub(r'[^a-z0-9_]', '', text)
+
+    def _update_delivery_fields(self):
+        from routing.models import DeliveryType
+        dt = self._delivery_combo.currentData()
+        show_command = dt == DeliveryType.EXEC
+        show_pipe = dt == DeliveryType.PIPE
+        show_socket = dt in (DeliveryType.SOCKET,)
+        show_file = dt == DeliveryType.FILE
+        show_dbus = dt == DeliveryType.DBUS
+
+        self._command_edit.setVisible(show_command)
+        self._df_lay.labelForField(self._command_edit) and \
+            self._df_lay.labelForField(self._command_edit).setVisible(show_command)
+        self._pipe_path_edit.setVisible(show_pipe)
+        lbl = self._df_lay.labelForField(self._pipe_path_edit)
+        if lbl:
+            lbl.setVisible(show_pipe)
+        self._socket_host_edit.setVisible(show_socket)
+        lbl = self._df_lay.labelForField(self._socket_host_edit)
+        if lbl:
+            lbl.setVisible(show_socket)
+        self._socket_port_spin.setVisible(show_socket)
+        lbl = self._df_lay.labelForField(self._socket_port_spin)
+        if lbl:
+            lbl.setVisible(show_socket)
+        self._socket_unix_edit.setVisible(show_socket)
+        lbl = self._df_lay.labelForField(self._socket_unix_edit)
+        if lbl:
+            lbl.setVisible(show_socket)
+        self._file_path_edit.setVisible(show_file)
+        lbl = self._df_lay.labelForField(self._file_path_edit)
+        if lbl:
+            lbl.setVisible(show_file)
+        self._file_prefix_edit.setVisible(show_file)
+        lbl = self._df_lay.labelForField(self._file_prefix_edit)
+        if lbl:
+            lbl.setVisible(show_file)
+        self._file_ts_cb.setVisible(show_file)
+        self._dbus_signal_edit.setVisible(show_dbus)
+        lbl = self._df_lay.labelForField(self._dbus_signal_edit)
+        if lbl:
+            lbl.setVisible(show_dbus)
+        self.adjustSize()
+
+    def _accept(self):
+        from routing.models import OutputTarget
+        target_id = self._id_edit.text().strip()
+        if not target_id:
+            QMessageBox.warning(self, "Validation", "ID is required.")
+            return
+        label = self._label_edit.text().strip() or target_id
+        delivery = self._delivery_combo.currentData()
+        pp = self._pp_combo.currentData()
+
+        self.result_target = OutputTarget(
+            id=target_id,
+            label=label,
+            delivery=delivery,
+            command=self._command_edit.text().strip() or None,
+            pipe_path=self._pipe_path_edit.text().strip() or None,
+            socket_host=self._socket_host_edit.text().strip() or None,
+            socket_port=self._socket_port_spin.value(),
+            socket_unix=self._socket_unix_edit.text().strip() or None,
+            file_path=self._file_path_edit.text().strip() or None,
+            file_prefix=self._file_prefix_edit.text(),
+            file_timestamp=self._file_ts_cb.isChecked(),
+            dbus_signal=self._dbus_signal_edit.text().strip() or None,
+            post_processing=pp,
+            append_newline=self._append_newline_cb.isChecked(),
+            initial_prompt=self._initial_prompt_edit.text().strip() or None,
+        )
+        self.accept()
+
+
+# ── Binding Editor Dialog ─────────────────────────────────────────────────────
+
+class _BindingEditorDialog(QDialog):
+    def __init__(self, binding=None, targets=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit Binding" if binding else "Add Binding")
+        self.setMinimumWidth(420)
+        self.setStyleSheet(QSS)
+        self.result_binding = None
+        self._targets = targets or []
+        self._build_ui(binding)
+
+    def _build_ui(self, b):
+        from routing.models import GestureType
+        lay = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setSpacing(8)
+
+        self._id_edit = QLineEdit(b.id if b else "")
+        self._label_edit = QLineEdit(b.label if b else "")
+        self._label_edit.textChanged.connect(self._auto_id)
+
+        # Keys: comma-separated evdev names
+        self._keys_edit = QLineEdit(', '.join(b.keys) if b else "")
+        self._keys_edit.setPlaceholderText("e.g. KEY_LEFTCTRL, KEY_SPACE")
+
+        self._gesture_combo = QComboBox()
+        for g in GestureType:
+            self._gesture_combo.addItem(g.value, g)
+        if b:
+            idx = self._gesture_combo.findData(b.gesture)
+            if idx >= 0:
+                self._gesture_combo.setCurrentIndex(idx)
+
+        self._target_combo = QComboBox()
+        for t in self._targets:
+            self._target_combo.addItem(f"{t.label}  [{t.delivery.value}]", t.id)
+        if b:
+            idx = self._target_combo.findData(b.target_id)
+            if idx >= 0:
+                self._target_combo.setCurrentIndex(idx)
+
+        self._tap_ms_spin = QSpinBox()
+        self._tap_ms_spin.setRange(100, 600)
+        self._tap_ms_spin.setValue(b.tap_ms if b else 250)
+        self._tap_ms_spin.setSuffix(" ms")
+
+        self._hold_ms_spin = QSpinBox()
+        self._hold_ms_spin.setRange(50, 500)
+        self._hold_ms_spin.setValue(b.hold_threshold_ms if b else 200)
+        self._hold_ms_spin.setSuffix(" ms")
+
+        self._disabled_cb = QCheckBox("Disabled")
+        self._disabled_cb.setChecked(b.disabled if b else False)
+
+        form.addRow("ID:", self._id_edit)
+        form.addRow("Label:", self._label_edit)
+        form.addRow("Keys:", self._keys_edit)
+        form.addRow("Gesture:", self._gesture_combo)
+        form.addRow("Target:", self._target_combo)
+        form.addRow("Double-tap window:", self._tap_ms_spin)
+        form.addRow("Hold threshold:", self._hold_ms_spin)
+        form.addRow("", self._disabled_cb)
+        lay.addLayout(form)
+
+        lay.addWidget(_hint("Keys: comma-separated evdev names, e.g. KEY_LEFTCTRL or KEY_LEFTMETA, KEY_SPACE"))
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(self._accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def _auto_id(self, text):
+        import re
+        safe = re.sub(r'[^a-z0-9_]', '', text.lower().replace(' ', '_'))
+        if not self._id_edit.text() or self._id_edit.text() == self._last_safe:
+            self._id_edit.setText(safe)
+        self._last_safe = safe
+
+    _last_safe = ""
+
+    def _accept(self):
+        from routing.models import HotkeyBinding
+        binding_id = self._id_edit.text().strip()
+        if not binding_id:
+            QMessageBox.warning(self, "Validation", "ID is required.")
+            return
+        keys_raw = self._keys_edit.text().strip()
+        if not keys_raw:
+            QMessageBox.warning(self, "Validation", "At least one key is required.")
+            return
+        keys = [k.strip() for k in keys_raw.split(',') if k.strip()]
+        target_id = self._target_combo.currentData()
+        if not target_id:
+            QMessageBox.warning(self, "Validation", "Select a target.")
+            return
+        self.result_binding = HotkeyBinding(
+            id=binding_id,
+            label=self._label_edit.text().strip(),
+            keys=keys,
+            gesture=self._gesture_combo.currentData(),
+            target_id=target_id,
+            tap_ms=self._tap_ms_spin.value(),
+            hold_threshold_ms=self._hold_ms_spin.value(),
+            disabled=self._disabled_cb.isChecked(),
+        )
+        self.accept()

@@ -4,27 +4,41 @@ import threading
 import time
 import os
 
+from hotkeys.double_tap import DoubleTapMachine
+from routing.loader import load_bindings
+from routing.models import GestureType
+
+
 class InputListener(threading.Thread):
     def __init__(self, config, on_press, on_release):
+        """
+        on_press(target_id):  called when a binding activates
+        on_release(target_id): called when a binding deactivates
+        """
         super().__init__(daemon=True)
         self.config = config
         self.on_press = on_press
         self.on_release = on_release
         self.device = None
-        self.target_keys = set()
-        self.target_toggle_keys = set()
-        self.hotkey_names = []
-        self.toggle_hotkey_names = []
-        self.pressed_keys = set()
         self.running = True
-        self.toggle_state = False
-        self.last_toggle_match = False
+
+        # Loaded from bindings.toml
+        self._bindings = []
+        # Per-binding state for hold/toggle gestures
+        self._hold_active: dict = {}     # binding_id → bool
+        self._toggle_state: dict = {}    # binding_id → bool
+        self._last_toggle: dict = {}     # binding_id → bool
+        # Per-binding DoubleTapMachine instances
+        self._dt_machines: dict = {}     # binding_id → DoubleTapMachine
+        # Pressed evdev scancodes
+        self.pressed_keys: set = set()
+        # Lock for pressed_keys set (shared between reader and deadline timers)
+        self._keys_lock = threading.Lock()
 
     _VIRTUAL_DEVICE_NAMES = ("whisper-wayland", "passthrough", "uinput", "virtual")
 
     def _is_virtual(self, dev):
-        name_lower = dev.name.lower()
-        return any(kw in name_lower for kw in self._VIRTUAL_DEVICE_NAMES)
+        return any(kw in dev.name.lower() for kw in self._VIRTUAL_DEVICE_NAMES)
 
     def find_device(self):
         saved_path = self.config.get("evdev_device")
@@ -36,8 +50,10 @@ class InputListener(threading.Thread):
             except Exception:
                 pass
 
-        # Sort by event number ascending — physical hardware has lower numbers
-        paths = sorted(evdev.list_devices(), key=lambda p: int(p.replace("/dev/input/event", "") or 0))
+        paths = sorted(
+            evdev.list_devices(),
+            key=lambda p: int(p.replace("/dev/input/event", "") or 0)
+        )
         for path in paths:
             try:
                 dev = evdev.InputDevice(path)
@@ -52,31 +68,104 @@ class InputListener(threading.Thread):
         return None
 
     def update_hotkey(self):
-        self.hotkey_names = self.config.get("hotkey", ["KEY_LEFTMETA", "KEY_SPACE"])
-        self.toggle_hotkey_names = self.config.get("toggle_hotkey", ["KEY_LEFTCTRL", "KEY_LEFTMETA", "KEY_SPACE"])
-        
-        print(f"Updating hotkeys: Hold={self.hotkey_names}, Toggle={self.toggle_hotkey_names}")
-        
-        self.target_keys = {ecodes.ecodes[name] for name in self.hotkey_names}
-        self.target_toggle_keys = {ecodes.ecodes[name] for name in self.toggle_hotkey_names}
-        
-        self.pressed_keys.clear()
+        """Reload bindings from file (called after settings save)."""
+        self._load_bindings()
 
     def update_device(self):
-        print("Triggering input device re-selection...")
         if self.device and self.device.path != self.config.get("evdev_device"):
             try:
                 self.device.close()
-            except:
+            except Exception:
                 pass
             self.device = None
 
+    def _load_bindings(self):
+        """Load bindings.toml; fall back to legacy config.json hotkeys if absent."""
+        try:
+            bindings = [b for b in load_bindings() if not b.disabled]
+        except Exception as e:
+            print(f"[InputListener] Could not load bindings.toml: {e}; using legacy config")
+            bindings = self._legacy_bindings()
+
+        self._bindings = bindings
+        self._hold_active = {b.id: False for b in bindings}
+        self._toggle_state = {b.id: False for b in bindings}
+        self._last_toggle = {b.id: False for b in bindings}
+        self._dt_machines = {}
+
+        for b in bindings:
+            if b.gesture == GestureType.DOUBLE_TAP:
+                self._dt_machines[b.id] = DoubleTapMachine(
+                    b,
+                    on_start=lambda binding: self.on_press(binding.target_id),
+                    on_stop=lambda binding: self.on_release(binding.target_id),
+                )
+
+        # Log for diagnostics
+        for b in bindings:
+            print(f"[InputListener] Binding: {b.id!r} keys={b.keys} gesture={b.gesture.value} → {b.target_id!r}")
+
+    def _legacy_bindings(self):
+        """Build minimal bindings from the old JSON config for backward compatibility."""
+        from routing.models import HotkeyBinding
+        result = []
+        hold_keys = self.config.get("hotkey", ["KEY_LEFTMETA", "KEY_SPACE"])
+        toggle_keys = self.config.get("toggle_hotkey", ["KEY_LEFTCTRL", "KEY_LEFTMETA", "KEY_SPACE"])
+        result.append(HotkeyBinding(
+            id='default_hold', label='Dictate (Hold)',
+            keys=hold_keys, gesture=GestureType.HOLD, target_id='default',
+        ))
+        result.append(HotkeyBinding(
+            id='default_toggle', label='Dictate (Toggle)',
+            keys=toggle_keys, gesture=GestureType.TOGGLE, target_id='default',
+        ))
+        return result
+
+    def _scancode_for(self, key_name: str) -> int | None:
+        try:
+            return ecodes.ecodes[key_name]
+        except KeyError:
+            return None
+
+    def _binding_key_scancodes(self, binding) -> set:
+        codes = set()
+        for name in binding.keys:
+            code = self._scancode_for(name)
+            if code is not None:
+                codes.add(code)
+        return codes
+
+    def _dispatch_hold(self, binding, pressed: set) -> None:
+        key_codes = self._binding_key_scancodes(binding)
+        is_match = key_codes and key_codes.issubset(pressed)
+        was_active = self._hold_active.get(binding.id, False)
+
+        if is_match and not was_active:
+            self._hold_active[binding.id] = True
+            self.on_press(binding.target_id)
+        elif not is_match and was_active:
+            self._hold_active[binding.id] = False
+            self.on_release(binding.target_id)
+
+    def _dispatch_toggle(self, binding, pressed: set) -> None:
+        key_codes = self._binding_key_scancodes(binding)
+        is_match = key_codes and key_codes.issubset(pressed)
+        last_match = self._last_toggle.get(binding.id, False)
+
+        if is_match and not last_match:
+            self._toggle_state[binding.id] = not self._toggle_state[binding.id]
+            if self._toggle_state[binding.id]:
+                self.on_press(binding.target_id)
+            else:
+                self.on_release(binding.target_id)
+
+        self._last_toggle[binding.id] = is_match
+
     def run(self):
-        self.update_hotkey()
+        self._load_bindings()
 
         while self.running:
             try:
-                # Close any previously opened device before re-finding (prevents fd leak)
                 if self.device:
                     try:
                         self.device.close()
@@ -91,46 +180,39 @@ class InputListener(threading.Thread):
                     continue
 
                 print(f"[*] Listening on {self.device.path}")
-                is_holding_active = False
-                is_toggle_active = False
 
                 for event in self.device.read_loop():
                     if not self.running:
                         break
 
-                    if event.type == ecodes.EV_KEY:
-                        key_event = evdev.categorize(event)
-                        scancode = key_event.scancode
+                    if event.type != ecodes.EV_KEY:
+                        continue
 
-                        if key_event.keystate == evdev.KeyEvent.key_down:
+                    key_event = evdev.categorize(event)
+                    scancode = key_event.scancode
+                    keystate = key_event.keystate  # 1=down, 0=up, 2=repeat
+                    key_name = ecodes.KEY.get(scancode, f"KEY_{scancode}")
+                    if isinstance(key_name, list):
+                        key_name = key_name[0]
+                    timestamp = event.timestamp()
+
+                    with self._keys_lock:
+                        if keystate == evdev.KeyEvent.key_down:
                             self.pressed_keys.add(scancode)
-                        elif key_event.keystate == evdev.KeyEvent.key_up:
+                        elif keystate == evdev.KeyEvent.key_up:
                             self.pressed_keys.discard(scancode)
+                        pressed_snapshot = set(self.pressed_keys)
 
-                        # Check Hold Hotkey
-                        is_hold_match = self.target_keys.issubset(self.pressed_keys)
-                        if is_hold_match and not is_holding_active:
-                            is_holding_active = True
-                            if not is_toggle_active:
-                                self.on_press()
-                        elif not is_hold_match and is_holding_active:
-                            is_holding_active = False
-                            if not is_toggle_active:
-                                self.on_release()
+                    for binding in self._bindings:
+                        if binding.gesture == GestureType.HOLD:
+                            self._dispatch_hold(binding, pressed_snapshot)
+                        elif binding.gesture == GestureType.TOGGLE:
+                            self._dispatch_toggle(binding, pressed_snapshot)
+                        elif binding.gesture == GestureType.DOUBLE_TAP:
+                            machine = self._dt_machines.get(binding.id)
+                            if machine:
+                                machine.on_key_event(key_name, keystate, timestamp)
 
-                        # Check Toggle Hotkey (edge-triggered)
-                        is_toggle_match = self.target_toggle_keys.issubset(self.pressed_keys)
-                        if is_toggle_match and not self.last_toggle_match:
-                            self.toggle_state = not self.toggle_state
-                            print(f"[*] Toggle State: {self.toggle_state}")
-                            if self.toggle_state:
-                                if not is_holding_active:
-                                    self.on_press()
-                            else:
-                                if not is_holding_active:
-                                    self.on_release()
-
-                        self.last_toggle_match = is_toggle_match
             except Exception as e:
                 print(f"Error in input listener: {e}")
                 time.sleep(1)

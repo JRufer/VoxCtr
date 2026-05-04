@@ -15,11 +15,12 @@ except ImportError:
 _session_word_count = 0
 
 class TextInjector(threading.Thread):
-    def __init__(self, config, text_queue, word_count_callback=None):
+    def __init__(self, config, text_queue, word_count_callback=None, router=None):
         super().__init__(daemon=True)
         self.config = config
         self.text_queue = text_queue
         self.word_count_callback = word_count_callback  # P0.6: called with new total
+        self.router = router  # OutputTargetRouter; None = use legacy inject path
         self.running = True
         self._session_words = 0
         self.portal = PortalInjector() if _HAS_PORTAL else None
@@ -166,11 +167,35 @@ class TextInjector(threading.Thread):
         return self._session_words
 
 
+    def _route_text(self, text: str, target_id: str) -> bool:
+        """Deliver text via the router; return True on success."""
+        if self.router is None:
+            return False
+        result = self.router.deliver(text, target_id)
+        if not result.success:
+            print(f"[Router] Delivery failed for target '{target_id}': {result.error}")
+        return result.success
+
     def run(self):
         while self.running:
             try:
-                text = self.text_queue.get(timeout=0.1)
-                self.inject_text(text)
+                item = self.text_queue.get(timeout=0.1)
+                # Accept both plain strings (legacy) and (text, target_id) tuples
+                if isinstance(item, tuple):
+                    text, target_id = item
+                else:
+                    text, target_id = item, 'default'
+
+                if target_id != 'default' and self.router is not None:
+                    # Non-default target: route through the router
+                    delivered = self._route_text(text, target_id)
+                    if delivered:
+                        self._session_words += len(text.split())
+                        if self.word_count_callback:
+                            self.word_count_callback(self._session_words, text)
+                else:
+                    # Default target: use existing injection path
+                    self.inject_text(text)
             except queue.Empty:
                 continue
             except Exception as e:

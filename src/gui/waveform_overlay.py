@@ -116,11 +116,13 @@ class WaveformOverlay(QWidget):
     def __init__(self):
         super().__init__()
         # Use same dimensions as OverlayWindow which we know works on Wayland
-        self.setFixedSize(800, 100) 
-        
+        self.setFixedSize(800, 100)
+        self._active_target_label = ""
+        self._active_delivery_type = ""
+
         # Full screen container flags
         self.setWindowFlags(
-            Qt.WindowType.ToolTip | 
+            Qt.WindowType.ToolTip |
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.X11BypassWindowManagerHint |
@@ -130,21 +132,21 @@ class WaveformOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        
+
         # Border and internal layout
-        self.setStyleSheet("border: 1px solid transparent;") # Reset CSS for painting manually
+        self.setStyleSheet("border: 1px solid transparent;")  # Reset CSS for painting manually
 
         self.gl_widget = WaveformGLWidget()
         self.gl_widget.setFixedSize(70, 70)
         self.gl_widget.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop)
-        
+
         # Use a layout that anchors to the bottom center
         self.layout_obj = QVBoxLayout()
-        self.layout_obj.setContentsMargins(0, 0, 0, 100) # 100px padding from bottom
+        self.layout_obj.setContentsMargins(0, 0, 0, 100)  # 100px padding from bottom
         self.layout_obj.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
         self.layout_obj.addWidget(self.gl_widget)
         self.setLayout(self.layout_obj)
-        
+
         self.hide()
 
     def update_audio(self, data):
@@ -157,19 +159,37 @@ class WaveformOverlay(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
+
         # Draw central box background at THE BOTTOM of this giant window
         box_width, box_height = 70, 70
         x = (self.width() - box_width) // 2
-        y = self.height() - box_height - 100 # 100px from bottom of screen
-        
+        y = self.height() - box_height - 100  # 100px from bottom of screen
+
         box_rect = QRect(x, y, box_width, box_height).adjusted(1, 1, -1, -1)
-        
+
         painter.setBrush(QBrush(QColor(0, 0, 0, 230)))
         painter.setPen(QPen(QColor(68, 68, 68), 1))
         painter.drawRoundedRect(box_rect, 15, 15)
 
-    def show_mode(self):
+        # Draw active target label above the waveform box
+        if self._active_target_label and self._active_target_label != 'default':
+            label_text = self._active_target_label.upper()
+            if self._active_delivery_type:
+                label_text += f" ▶ {self._active_delivery_type.upper()}"
+            painter.setPen(QPen(QColor(74, 158, 255), 1))
+            painter.setFont(QFont("monospace", 9, QFont.Weight.Bold))
+            label_rect = QRect(x - 40, y - 20, box_width + 80, 18)
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label_text)
+
+    def show_mode(self, target_id: str = 'default', router=None):
+        self._active_target_label = target_id
+        self._active_delivery_type = ""
+        if router is not None and target_id != 'default':
+            tgt = router.get_target(target_id)
+            if tgt is not None:
+                self._active_target_label = tgt.label or target_id
+                self._active_delivery_type = tgt.delivery.value
+
         # GET SCREEN SIZE AGGRESSIVELY
         from PyQt6.QtWidgets import QApplication
         screen = QApplication.primaryScreen()
@@ -178,7 +198,7 @@ class WaveformOverlay(QWidget):
             # Set geometry to cover the whole screen
             self.setGeometry(geom)
             self.setFixedSize(geom.width(), geom.height())
-            
+
             # Position at top-left
             self.move(geom.x(), geom.y())
             self.show()
@@ -187,4 +207,6 @@ class WaveformOverlay(QWidget):
             self.show()
 
     def hide_mode(self):
+        self._active_target_label = ""
+        self._active_delivery_type = ""
         self.hide()
