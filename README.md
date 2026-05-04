@@ -23,7 +23,7 @@ It supports two transcription backends: **faster-whisper** (best for NVIDIA/CUDA
 
 ### 🔊 Audio & System
 - **🔇 Noise Suppression**: Integrated `noisereduce` filter to clean up background hiss and room noise.
-- **🎤 Live Waveform Overlay**: Visual feedback of your voice level while recording.
+- **🎨 Swappable Recording Overlays**: Choose from built-in visual styles — classic Waveform, Pulse Circle, or Voice Card — or drop in your own custom overlay. See [Overlay UI Guide](docs/overlays.md).
 - **📡 DBus Interface**: Fully controllable via DBus (e.g., trigger dictation from Waybar, custom scripts, or Rofi).
 - **📝 Spoken Punctuation**: Naturally say "period", "comma", or "new line" to format your text.
 
@@ -205,6 +205,26 @@ Control Whisper Wayland from external scripts, Waybar, or Rofi:
 - **Toggle to Talk**: Tap `Ctrl+Super+Space` to start, tap again to stop.
 - **History**: Access previous dictations from the system tray icon.
 - **Settings**: All configuration in one place — open from the tray or DBus.
+
+---
+
+## 🎨 Custom Recording Overlays
+
+The visual overlay shown while recording is fully swappable. Three styles ship out of the box:
+
+| Style | Description |
+|-------|-------------|
+| **Waveform** | Classic OpenGL oscilloscope (default) |
+| **Pulse Circle** | Glowing circle that expands with audio amplitude |
+| **Voice Card** | Scrolling bar waveform in a floating card with a pink/magenta gradient |
+
+To switch styles, open **⚙ Settings → ✨ Dictation → Overlay Appearance** and pick from the dropdown. The change takes effect immediately — no restart needed.
+
+You can also build your own overlay by dropping a single Python file into `~/.config/whisper-wayland/overlays/`. Click **"Open Overlays Folder"** in Settings to go there directly. A ready-to-edit template file (`_template.py`) is created automatically the first time you open the folder.
+
+Full specification and examples: **[docs/overlays.md](docs/overlays.md)**
+
+---
 
 ## ⚖️ License
 MIT

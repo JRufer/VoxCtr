@@ -241,11 +241,12 @@ class VUMeter(QWidget):
 class SettingsWindow(QWidget):
     settings_saved = pyqtSignal()
 
-    def __init__(self, config, inference_engine=None, audio_recorder=None):
+    def __init__(self, config, inference_engine=None, audio_recorder=None, overlay_manager=None):
         super().__init__()
         self.config = config
         self.inference_engine = inference_engine
         self.audio_recorder = audio_recorder
+        self.overlay_manager = overlay_manager
         self.recorded_keys = set()
         self.recorded_toggle_keys = set()
         self.active_recording_mode = None
@@ -831,6 +832,27 @@ class SettingsWindow(QWidget):
         ))
         lay.addWidget(recording_box)
 
+        overlay_box = _section("Overlay Appearance")
+        overlay_box.layout().addWidget(_hint(
+            "Choose the visual style shown while recording. "
+            "Drop custom .py files in the overlays folder to add your own."
+        ))
+        overlay_row = QHBoxLayout()
+        self.overlay_style_combo = QComboBox()
+        self._populate_overlay_styles()
+        overlay_row.addWidget(self.overlay_style_combo, 1)
+        open_dir_btn = QPushButton("Open Overlays Folder")
+        open_dir_btn.clicked.connect(self._open_overlays_folder)
+        overlay_row.addWidget(open_dir_btn)
+        overlay_box.layout().addLayout(overlay_row)
+        self._overlay_desc_label = QLabel("")
+        self._overlay_desc_label.setObjectName("hint")
+        self._overlay_desc_label.setWordWrap(True)
+        overlay_box.layout().addWidget(self._overlay_desc_label)
+        self.overlay_style_combo.currentIndexChanged.connect(self._on_overlay_selected)
+        self._on_overlay_selected()
+        lay.addWidget(overlay_box)
+
         vocab_box = _section("Custom Vocabulary")
         vocab_box.layout().addWidget(_hint(
             "Add words or phrases Whisper should recognise, comma-separated. "
@@ -1086,6 +1108,45 @@ class SettingsWindow(QWidget):
 
     # ── Helpers ───────────────────────────────────────────────────────────
 
+    def _populate_overlay_styles(self):
+        self.overlay_style_combo.clear()
+        current = self.config.get("overlay_style", "waveform")
+        if self.overlay_manager:
+            overlays = self.overlay_manager.available()
+        else:
+            overlays = {"waveform": {"display_name": "Waveform", "description": "", "builtin": True}}
+        for oid, info in overlays.items():
+            label = info["display_name"]
+            if not info.get("builtin", True):
+                label += "  (custom)"
+            self.overlay_style_combo.addItem(label, oid)
+            if oid == current:
+                self.overlay_style_combo.setCurrentIndex(self.overlay_style_combo.count() - 1)
+
+    def _on_overlay_selected(self):
+        if not hasattr(self, "_overlay_desc_label"):
+            return
+        oid = self.overlay_style_combo.currentData()
+        desc = ""
+        if self.overlay_manager and oid:
+            info = self.overlay_manager.available().get(oid, {})
+            desc = info.get("description", "")
+        self._overlay_desc_label.setText(desc)
+
+    def _open_overlays_folder(self):
+        import subprocess
+        if self.overlay_manager:
+            folder = self.overlay_manager.ensure_user_dir()
+        else:
+            from pathlib import Path
+            folder = Path.home() / ".config" / "whisper-wayland" / "overlays"
+            folder.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.Popen(["xdg-open", str(folder)])
+        except Exception:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Overlays Folder", f"Overlays folder:\n{folder}")
+
     def _scrollable(self):
         """Returns a QWidget with a scroll area wrapping a vbox layout."""
         container = QWidget()
@@ -1309,6 +1370,10 @@ class SettingsWindow(QWidget):
         self.config.set("auto_format_lists", self.auto_list_checkbox.isChecked())
         self.config.set("quiet_mode", self.quiet_mode_checkbox.isChecked())
         self.config.set("show_overlay", self.overlay_checkbox.isChecked())
+        if hasattr(self, "overlay_style_combo"):
+            selected_style = self.overlay_style_combo.currentData()
+            if selected_style:
+                self.config.set("overlay_style", selected_style)
         self.config.set("show_notification", self.notification_checkbox.isChecked())
         self.config.set(
             "dictation_mode",

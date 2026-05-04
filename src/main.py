@@ -16,8 +16,8 @@ from text_injector import TextInjector
 from dbus_service import DBusService
 from gui.tray_icon import WhisperTrayIcon
 from gui.settings_window import SettingsWindow
-from gui.waveform_overlay import WaveformOverlay
 from gui.history_window import HistoryWindow
+from gui.overlay_manager import OverlayManager, OverlayProxy
 
 @contextlib.contextmanager
 def ignore_stderr():
@@ -91,13 +91,17 @@ def main():
         text_queue = queue.Queue()
         realtime_text_queue = queue.Queue()
 
-        # Initialize components
-        waveform = WaveformOverlay()
-        
+        # Initialize overlay manager and load the user-selected overlay
+        overlay_manager = OverlayManager()
+        _initial_style  = config.get("overlay_style", "waveform")
+        _active_overlay = overlay_manager.load(_initial_style)
+        overlay_proxy   = OverlayProxy(_active_overlay)
+        _active_style   = [_initial_style]   # mutable cell for the closure below
+
         with ignore_stderr():
             recorder = AudioRecorder(config, audio_queue)
-        
-        recorder.visualizer_callbacks.append(waveform.update_audio)
+
+        recorder.visualizer_callbacks.append(overlay_proxy.update_audio)
 
         inference = InferenceEngine(config, audio_queue, text_queue, realtime_text_queue)
 
@@ -162,11 +166,10 @@ def main():
 
         # UI Toggles
         def show_recording_ui():
-            # Only show the waveform as the primary indicator
-            waveform.show_mode()
+            overlay_proxy.show_mode()
 
         def hide_recording_ui():
-            waveform.hide_mode()
+            overlay_proxy.hide_mode()
 
         from PyQt6.QtCore import Qt
         state.recording_started.connect(show_recording_ui, Qt.ConnectionType.QueuedConnection)
@@ -174,11 +177,24 @@ def main():
 
         # UI
         history_window = HistoryWindow(config)
-        settings_window = SettingsWindow(config, inference, recorder)
+        settings_window = SettingsWindow(config, inference, recorder,
+                                         overlay_manager=overlay_manager)
         tray = WhisperTrayIcon(state, history_window)
         tray.settings_action.triggered.connect(settings_window.show)
         settings_window.settings_saved.connect(listener.update_hotkey)
         settings_window.settings_saved.connect(listener.update_device)
+
+        def _on_settings_saved():
+            new_style = config.get("overlay_style", "waveform")
+            if new_style != _active_style[0]:
+                overlay_manager.refresh()
+                new_overlay = overlay_manager.load(new_style)
+                if new_overlay is not None:
+                    overlay_proxy.swap(new_overlay)
+                    _active_style[0] = new_style
+                    print(f"[Main] Overlay switched to '{new_style}'")
+
+        settings_window.settings_saved.connect(_on_settings_saved)
         
         # Fallback: If tray is not available, show settings so the app isn't "invisible"
         if not tray.isSystemTrayAvailable():
