@@ -201,6 +201,7 @@ def main():
         history_window = HistoryWindow(config)
         settings_window = SettingsWindow(config, inference, recorder,
                                          overlay_manager=overlay_manager)
+        settings_window.router = router
         tray = WhisperTrayIcon(state, history_window)
         tray.settings_action.triggered.connect(settings_window.show)
         settings_window.settings_saved.connect(listener.update_hotkey)

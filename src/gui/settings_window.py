@@ -252,7 +252,9 @@ class SettingsWindow(QWidget):
         self._hw_probe_finished.connect(self._on_hw_probe_finished)
         self.recorded_keys = set()
         self.recorded_toggle_keys = set()
+        self.recorded_dt_keys = set()
         self.active_recording_mode = None
+        self.router = None
 
         self.setWindowTitle("Whisper Wayland — Settings")
         self.setMinimumWidth(520)
@@ -747,6 +749,10 @@ class SettingsWindow(QWidget):
         w = self._scrollable()
         lay = w.layout()
 
+        _conflict_style = (
+            "color:#f5a34f; font-size:12px; padding:3px 2px 0 2px;"
+        )
+
         hold_box = _section("Hold-to-Talk")
         hold_box.layout().addWidget(_hint(
             "Hold this key combination to record. Release to transcribe and type."
@@ -766,6 +772,11 @@ class SettingsWindow(QWidget):
         hold_row.addWidget(self.hotkey_label, 1)
         hold_row.addWidget(self.record_btn_hold)
         hold_box.layout().addLayout(hold_row)
+        self.hold_conflict_label = QLabel()
+        self.hold_conflict_label.setStyleSheet(_conflict_style)
+        self.hold_conflict_label.setWordWrap(True)
+        self.hold_conflict_label.setVisible(False)
+        hold_box.layout().addWidget(self.hold_conflict_label)
         lay.addWidget(hold_box)
 
         toggle_box = _section("Toggle-to-Talk")
@@ -786,6 +797,11 @@ class SettingsWindow(QWidget):
         toggle_row.addWidget(self.toggle_hotkey_label, 1)
         toggle_row.addWidget(self.record_btn_toggle)
         toggle_box.layout().addLayout(toggle_row)
+        self.toggle_conflict_label = QLabel()
+        self.toggle_conflict_label.setStyleSheet(_conflict_style)
+        self.toggle_conflict_label.setWordWrap(True)
+        self.toggle_conflict_label.setVisible(False)
+        toggle_box.layout().addWidget(self.toggle_conflict_label)
         lay.addWidget(toggle_box)
 
         dt_box = _section("Double-Tap to Talk")
@@ -806,8 +822,14 @@ class SettingsWindow(QWidget):
         dt_row.addWidget(self.dt_hotkey_label, 1)
         dt_row.addWidget(self.record_btn_dt)
         dt_box.layout().addLayout(dt_row)
+        self.dt_conflict_label = QLabel()
+        self.dt_conflict_label.setStyleSheet(_conflict_style)
+        self.dt_conflict_label.setWordWrap(True)
+        self.dt_conflict_label.setVisible(False)
+        dt_box.layout().addWidget(self.dt_conflict_label)
         lay.addWidget(dt_box)
 
+        self._check_hotkey_conflicts()
         lay.addStretch()
         return w
 
@@ -1218,6 +1240,77 @@ class SettingsWindow(QWidget):
             parts.append(nice.get(k, k.replace("KEY_", "").title()))
         return "  +  ".join(parts) if parts else "(not set)"
 
+    def _current_hotkeys(self):
+        """Return (hold_keys, toggle_keys, dt_keys) as sets, reflecting pending recorded changes."""
+        hold = set(self.recorded_keys) if self.recorded_keys else set(self.config.get("hotkey", []))
+        toggle = set(self.recorded_toggle_keys) if self.recorded_toggle_keys else set(self.config.get("toggle_hotkey", []))
+        dt = set(self.recorded_dt_keys) if self.recorded_dt_keys else set(self.config.get("double_tap_hotkey", ["KEY_LEFTALT"]))
+        return hold, toggle, dt
+
+    def _check_hotkey_conflicts(self):
+        """Recompute and display conflict warnings on the Hotkeys tab."""
+        if not hasattr(self, "hold_conflict_label"):
+            return
+
+        MODIFIERS = {
+            "KEY_LEFTMETA", "KEY_RIGHTMETA",
+            "KEY_LEFTCTRL", "KEY_RIGHTCTRL",
+            "KEY_LEFTALT", "KEY_RIGHTALT",
+            "KEY_LEFTSHIFT", "KEY_RIGHTSHIFT",
+        }
+
+        hold_keys, toggle_keys, dt_keys = self._current_hotkeys()
+        hold_w, toggle_w, dt_w = [], [], []
+
+        # Exact duplicates
+        if hold_keys and toggle_keys and hold_keys == toggle_keys:
+            hold_w.append("Identical to Toggle keys — both gestures will fire at once")
+            toggle_w.append("Identical to Hold keys — both gestures will fire at once")
+        if hold_keys and dt_keys and hold_keys == dt_keys:
+            hold_w.append("Identical to Double-tap keys — will conflict")
+            dt_w.append("Identical to Hold keys — will conflict")
+        if toggle_keys and dt_keys and toggle_keys == dt_keys:
+            toggle_w.append("Identical to Double-tap keys — will conflict")
+            dt_w.append("Identical to Toggle keys — will conflict")
+
+        # Subset/superset within HOLD vs TOGGLE (both are level- or edge-triggered on same keys)
+        if hold_keys and toggle_keys:
+            if hold_keys < toggle_keys:
+                hold_w.append("Hold keys are a subset of Toggle — Hold fires whenever Toggle would")
+            elif toggle_keys < hold_keys:
+                toggle_w.append("Toggle keys are a subset of Hold — Toggle fires whenever Hold would")
+
+        # Double-tap key overlaps with hold or toggle combo
+        if dt_keys and hold_keys:
+            shared = dt_keys & hold_keys
+            if shared:
+                nice = self._fmt_keys(sorted(shared))
+                dt_w.append(f"{nice} also appears in Hold — double-tap may mis-fire while holding")
+        if dt_keys and toggle_keys:
+            shared = dt_keys & toggle_keys
+            if shared:
+                nice = self._fmt_keys(sorted(shared))
+                dt_w.append(f"{nice} also appears in Toggle — double-tap may mis-fire while toggling")
+
+        # Single bare (non-modifier) key as Hold or Toggle intercepts every keypress of that key
+        if hold_keys and len(hold_keys) == 1 and not (hold_keys & MODIFIERS):
+            nice = self._fmt_keys(sorted(hold_keys))
+            hold_w.append(f"Single bare key ({nice}) — every {nice} keypress will start recording")
+        if toggle_keys and len(toggle_keys) == 1 and not (toggle_keys & MODIFIERS):
+            nice = self._fmt_keys(sorted(toggle_keys))
+            toggle_w.append(f"Single bare key ({nice}) — every {nice} keypress will toggle recording")
+
+        self._set_conflict_label(self.hold_conflict_label, hold_w)
+        self._set_conflict_label(self.toggle_conflict_label, toggle_w)
+        self._set_conflict_label(self.dt_conflict_label, dt_w)
+
+    def _set_conflict_label(self, label, warnings):
+        if warnings:
+            label.setText("\n".join(f"⚠  {w}" for w in warnings))
+            label.setVisible(True)
+        else:
+            label.setVisible(False)
+
     def populate_audio_devices(self):
         p = pyaudio.PyAudio()
         current_index = self.config.get("input_device_index")
@@ -1288,8 +1381,9 @@ class SettingsWindow(QWidget):
             self.hotkey_label.setText(self._fmt_keys(self.config.get("hotkey", [])))
         if not self.recorded_toggle_keys:
             self.toggle_hotkey_label.setText(self._fmt_keys(self.config.get("toggle_hotkey", [])))
-        if not hasattr(self, "recorded_dt_keys") or not self.recorded_dt_keys:
+        if not self.recorded_dt_keys:
             self.dt_hotkey_label.setText(self._fmt_keys(self.config.get("double_tap_hotkey", ["KEY_LEFTALT"])))
+        self._check_hotkey_conflicts()
 
     def keyPressEvent(self, event):
         if not self.active_recording_mode:
@@ -1323,6 +1417,7 @@ class SettingsWindow(QWidget):
             elif self.active_recording_mode == "double_tap":
                 self.recorded_dt_keys.add(key_name)
                 self.dt_hotkey_label.setText(self._fmt_keys(sorted(self.recorded_dt_keys)))
+            self._check_hotkey_conflicts()
 
     # ── System check ──────────────────────────────────────────────────────
     def run_system_check(self):
@@ -1417,7 +1512,7 @@ class SettingsWindow(QWidget):
             self.config.set("hotkey", sorted(self.recorded_keys))
         if self.recorded_toggle_keys:
             self.config.set("toggle_hotkey", sorted(self.recorded_toggle_keys))
-        if hasattr(self, "recorded_dt_keys") and self.recorded_dt_keys:
+        if self.recorded_dt_keys:
             self.config.set("double_tap_hotkey", sorted(self.recorded_dt_keys))
         # Dictation
         self.config.set("remove_fillers", self.filler_checkbox.isChecked())
@@ -1676,6 +1771,7 @@ class SettingsWindow(QWidget):
             self._routing_bindings.append(dlg.result_binding)
             self._routing_save_bindings()
             self._routing_render_bindings()
+            self.settings_saved.emit()
 
     def _routing_edit_binding(self):
         b = self._routing_selected_binding()
@@ -1688,6 +1784,7 @@ class SettingsWindow(QWidget):
                 self._routing_bindings[idx] = dlg.result_binding
             self._routing_save_bindings()
             self._routing_render_bindings()
+            self.settings_saved.emit()
 
     def _routing_delete_binding(self):
         b = self._routing_selected_binding()
@@ -1701,6 +1798,7 @@ class SettingsWindow(QWidget):
             self._routing_bindings = [x for x in self._routing_bindings if x.id != b.id]
             self._routing_save_bindings()
             self._routing_render_bindings()
+            self.settings_saved.emit()
 
 
 # ── Target Editor Dialog ──────────────────────────────────────────────────────

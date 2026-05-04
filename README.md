@@ -34,6 +34,7 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 - **Noise suppression** — optional `noisereduce` filter
 - **DBus interface** — control from Waybar, scripts, or Rofi
 - **Settings UI** — tabbed PyQt6 dialog covering all features
+- **Keybind conflict detection** — inline warnings in Settings → Hotkeys flag exact duplicates, subset collisions, double-tap/combo overlaps, and bare single-key bindings
 
 ---
 
@@ -168,12 +169,22 @@ GGML_VULKAN=1 pip install git+https://github.com/abdeladim-s/pywhispercpp
 |---|---|---|
 | Hold-to-Talk | `Super + Space` | Hold while speaking, release to transcribe and inject |
 | Toggle-to-Talk | `Ctrl + Super + Space` | Tap to start recording, tap again to stop |
+| Double-Tap | `Alt` | Double-tap and hold `Alt` to record, release to deliver |
 
-All hotkeys are configurable in **Settings → Hotkeys** or directly in `bindings.toml`.
+All hotkeys are configurable in **Settings → Hotkeys** or directly in `bindings.toml`. Each gesture can be individually disabled from the same screen without deleting the binding.
+
+### Conflict detection
+
+The Hotkeys settings screen checks for common problems as you record new keys and shows inline warnings for:
+
+- **Exact duplicate** — two gestures share the same keys (both fire simultaneously)
+- **Subset collision** — one binding's keys are a subset of another's (the shorter one always fires with the longer)
+- **Double-tap overlap** — the double-tap key appears in a hold or toggle combo (may cause mis-fires during normal chords)
+- **Bare single key** — a non-modifier key used alone as hold or toggle intercepts every press of that key
 
 ### Double-tap hotkeys
 
-Press and release a modifier key, then press it again within the tap window (default 250 ms) and hold while speaking. Release to deliver. This avoids collisions with normal modifier usage — double-tapping `Ctrl` never fires when `Ctrl` is used in a normal chord like `Ctrl+C`.
+Press and release a modifier key, then press it again within the tap window (default 250 ms) and hold while speaking. Release to deliver. This avoids collisions with normal modifier usage — double-tapping `Alt` never fires when `Alt` is held as part of a normal chord like `Alt+Tab`.
 
 ---
 

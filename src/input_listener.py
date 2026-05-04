@@ -81,6 +81,18 @@ class InputListener(threading.Thread):
 
     def _load_bindings(self):
         """Load bindings.toml; fall back to legacy config.json hotkeys if absent."""
+        for b in getattr(self, "_bindings", []):
+            if b.gesture == GestureType.TOGGLE and self._toggle_state.get(b.id, False):
+                try:
+                    self.on_release(b.target_id)
+                except Exception:
+                    pass
+            elif b.gesture == GestureType.HOLD and self._hold_active.get(b.id, False):
+                try:
+                    self.on_release(b.target_id)
+                except Exception:
+                    pass
+
         try:
             bindings = [b for b in load_bindings() if not b.disabled]
         except Exception as e:
@@ -223,7 +235,7 @@ class InputListener(threading.Thread):
                         # Suppress: don't fire HOLD if a more-specific binding also matches
                         if is_match:
                             for other in self._bindings:
-                                if other.id == b.id:
+                                if other.id == b.id or other.gesture != GestureType.HOLD:
                                     continue
                                 other_codes = self._binding_key_scancodes(other)
                                 if (other_codes and b_codes.issubset(other_codes)
