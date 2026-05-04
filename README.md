@@ -20,7 +20,7 @@ Whisper Wayland is a native, on-device voice-to-text (dictation) tool designed f
 
 ### 🔊 Audio & System
 - **🔇 Noise Suppression**: Integrated `noisereduce` filter to clean up background hiss and room noise.
-- **🎤 Live Waveform Overlay**: Visual feedback of your voice level while recording.
+- **🎨 Swappable Recording Overlays**: Choose from built-in visual styles — classic Waveform, Pulse Circle, or Voice Card — or drop in your own custom overlay. See [Overlay UI Guide](docs/overlays.md).
 - **📡 DBus Interface**: Fully controllable via DBus (e.g., trigger dictation from Waybar, custom scripts, or Rofi).
 - **📝 Spoken Punctuation**: Naturally say "period", "comma", or "new line" to format your text.
 
@@ -116,6 +116,26 @@ You can control the app from external scripts or bars (e.g. Waybar):
 - **Hold to Talk**: Hold `Super+Space` (default), speak, release.
 - **Toggle to Talk**: Tap `Ctrl+Super+Space` to start/stop.
 - **History**: Access the history panel from the System Tray icon to find previous dictations.
+
+---
+
+## 🎨 Custom Recording Overlays
+
+The visual overlay shown while recording is fully swappable. Three styles ship out of the box:
+
+| Style | Description |
+|-------|-------------|
+| **Waveform** | Classic OpenGL oscilloscope (default) |
+| **Pulse Circle** | Glowing circle that expands with audio amplitude |
+| **Voice Card** | Scrolling bar waveform in a floating card with a pink/magenta gradient |
+
+To switch styles, open **⚙ Settings → ✨ Dictation → Overlay Appearance** and pick from the dropdown. The change takes effect immediately — no restart needed.
+
+You can also build your own overlay by dropping a single Python file into `~/.config/whisper-wayland/overlays/`. Click **"Open Overlays Folder"** in Settings to go there directly. A ready-to-edit template file (`_template.py`) is created automatically the first time you open the folder.
+
+Full specification and examples: **[docs/overlays.md](docs/overlays.md)**
+
+---
 
 ## ⚖️ License
 MIT
