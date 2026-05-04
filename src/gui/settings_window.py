@@ -7,7 +7,7 @@ from evdev import ecodes
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QMessageBox, QSlider, QCheckBox, QTextEdit,
-    QTabWidget, QGroupBox, QSizePolicy, QFrame, QScrollArea,
+    QStackedWidget, QGroupBox, QSizePolicy, QFrame, QScrollArea,
     QLineEdit, QProgressBar, QTableWidget, QHeaderView, QTableWidgetItem
 )
 from PyQt6.QtCore import pyqtSignal, Qt, QTimer
@@ -21,28 +21,30 @@ QWidget {
     font-family: 'Segoe UI', 'Inter', 'Ubuntu', sans-serif;
     font-size: 13px;
 }
-QTabWidget::pane {
-    border: 1px solid #1e2433;
-    border-radius: 8px;
-    background: #0f1117;
-}
-QTabBar::tab {
-    background: #1a1f2e;
+QPushButton#nav_btn {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 9px 14px;
     color: #8892a4;
-    padding: 10px 20px;
-    margin-right: 2px;
-    border-top-left-radius: 8px;
-    border-top-right-radius: 8px;
     font-weight: 500;
+    text-align: left;
 }
-QTabBar::tab:selected {
-    background: #0f1117;
-    color: #4a9eff;
-    border-bottom: 2px solid #4a9eff;
-}
-QTabBar::tab:hover:!selected {
-    background: #1e2433;
+QPushButton#nav_btn:hover {
+    background: #1a1f2e;
     color: #c8d3e0;
+    border: none;
+}
+QPushButton#nav_btn:checked {
+    background: #1a1f2e;
+    color: #4a9eff;
+    border-left: 2px solid #4a9eff;
+    border-radius: 0px 6px 6px 0px;
+    padding-left: 12px;
+}
+QFrame#nav_panel {
+    background: #0a0d14;
+    border-right: 1px solid #1e2433;
 }
 QGroupBox {
     border: 1px solid #1e2433;
@@ -270,8 +272,9 @@ class SettingsWindow(QWidget):
         root.addWidget(header)
 
         if inference_engine:
+            backend_label = getattr(inference_engine, "active_backend_name", inference_engine.actual_device)
             status = QLabel(
-                f"  Running: {config.get('model_size')} · "
+                f"  {backend_label} · {config.get('model_size')} · "
                 f"{inference_engine.actual_device.upper()} · "
                 f"{inference_engine.actual_compute_type}"
             )
@@ -280,15 +283,49 @@ class SettingsWindow(QWidget):
         status.setObjectName("hint")
         root.addWidget(status)
 
-        # ── Tabs ──────────────────────────────────────────────────────────
-        tabs = QTabWidget()
-        tabs.addTab(self._tab_general(), "🎙  General")
-        tabs.addTab(self._tab_audio(), "🔊  Audio")
-        tabs.addTab(self._tab_hotkeys(), "⌨  Hotkeys")
-        tabs.addTab(self._tab_dictation(), "✨  Dictation")
-        tabs.addTab(self._tab_snippets(), "📎  Snippets")
-        tabs.addTab(self._tab_ai(), "🤖  AI")
-        root.addWidget(tabs)
+        # ── Sidebar nav + content stack ───────────────────────────────────
+        body = QHBoxLayout()
+        body.setSpacing(0)
+        body.setContentsMargins(0, 0, 0, 0)
+
+        # Left sidebar
+        nav_panel = QFrame()
+        nav_panel.setObjectName("nav_panel")
+        nav_panel.setFixedWidth(130)
+        nav_layout = QVBoxLayout(nav_panel)
+        nav_layout.setContentsMargins(0, 8, 0, 8)
+        nav_layout.setSpacing(2)
+
+        # Content stack (right side)
+        self._stack = QStackedWidget()
+
+        _nav_items = [
+            ("🎙", "General",   self._tab_general),
+            ("⚡", "Engine",    self._tab_engine),
+            ("🔊", "Audio",     self._tab_audio),
+            ("⌨", "Hotkeys",   self._tab_hotkeys),
+            ("✨", "Dictation", self._tab_dictation),
+            ("📎", "Snippets",  self._tab_snippets),
+            ("🤖", "AI",        self._tab_ai),
+        ]
+
+        self._nav_buttons = []
+        for i, (icon, label, builder) in enumerate(_nav_items):
+            self._stack.addWidget(builder())
+            btn = QPushButton(f"{icon}  {label}")
+            btn.setObjectName("nav_btn")
+            btn.setCheckable(True)
+            btn.setFlat(True)
+            btn.clicked.connect(lambda _, idx=i: self._switch_nav(idx))
+            nav_layout.addWidget(btn)
+            self._nav_buttons.append(btn)
+
+        nav_layout.addStretch()
+        self._nav_buttons[0].setChecked(True)
+
+        body.addWidget(nav_panel)
+        body.addWidget(self._stack, 1)
+        root.addLayout(body)
 
         # ── Footer buttons ────────────────────────────────────────────────
         footer = QHBoxLayout()
@@ -337,6 +374,11 @@ class SettingsWindow(QWidget):
                 scaled = min(1.0, level * 5.0) 
                 self.vu_meter.set_level(scaled)
 
+    def _switch_nav(self, idx: int):
+        self._stack.setCurrentIndex(idx)
+        for i, btn in enumerate(self._nav_buttons):
+            btn.setChecked(i == idx)
+
     # ── Tab: General ──────────────────────────────────────────────────────
     def _tab_general(self):
         w = self._scrollable()
@@ -378,6 +420,248 @@ class SettingsWindow(QWidget):
 
         lay.addStretch()
         return w
+
+    # ── Tab: Engine ───────────────────────────────────────────────────────
+    def _tab_engine(self):
+        import threading
+        w = self._scrollable()
+        lay = w.layout()
+
+        # ── Engine selector ────────────────────────────────────────────────
+        engine_box = _section("Transcription Backend")
+        engine_box.layout().addWidget(_hint(
+            "Auto selects the best backend for your GPU.\n"
+            "faster-whisper: best for NVIDIA CUDA.\n"
+            "whisper-cpp: enables AMD/Intel GPU via Vulkan."
+        ))
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItems(["auto", "faster-whisper", "whisper-cpp"])
+        self.engine_combo.setCurrentText(self.config.get("backend_engine", "auto"))
+        self.engine_combo.currentTextChanged.connect(self._on_engine_changed)
+        engine_box.layout().addWidget(self.engine_combo)
+        lay.addWidget(engine_box)
+
+        # ── Detected hardware panel ────────────────────────────────────────
+        hw_box = _section("Detected Hardware")
+        hw_row = QHBoxLayout()
+        self._hw_label = QLabel("⏳  Probing…")
+        self._hw_label.setWordWrap(True)
+        self._hw_label.setStyleSheet("font-size: 12px; background: transparent; border: none;")
+        hw_row.addWidget(self._hw_label, 1)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh_hardware)
+        hw_row.addWidget(refresh_btn)
+        hw_box.layout().addLayout(hw_row)
+
+        self._active_backend_label = QLabel("")
+        self._active_backend_label.setObjectName("hint")
+        hw_box.layout().addWidget(self._active_backend_label)
+        lay.addWidget(hw_box)
+
+        # ── whisper.cpp settings ───────────────────────────────────────────
+        self._cpp_box = _section("whisper.cpp Settings")
+        self._cpp_box.layout().addWidget(_hint(
+            "These settings apply when the whisper-cpp backend is active."
+        ))
+
+        # Binary path
+        bin_row = QHBoxLayout()
+        bin_row.addWidget(QLabel("Binary:"))
+        self.cpp_binary_edit = QLineEdit(self.config.get("whisper_cpp_binary", "whisper-cli"))
+        self.cpp_binary_edit.setPlaceholderText("whisper-cli  (must be on $PATH or full path)")
+        bin_row.addWidget(self.cpp_binary_edit, 1)
+        self._cpp_box.layout().addLayout(bin_row)
+
+        # Model size for whisper.cpp
+        cpp_model_row = QHBoxLayout()
+        cpp_model_row.addWidget(QLabel("Model:"))
+        self.cpp_model_combo = QComboBox()
+        from backends.whisper_cpp_backend import GGUF_MAP
+        self.cpp_model_combo.addItems(list(GGUF_MAP.keys()))
+        self.cpp_model_combo.setCurrentText(
+            self.config.get("whisper_cpp_model_size", "large-v3")
+        )
+        cpp_model_row.addWidget(self.cpp_model_combo, 1)
+        self._cpp_box.layout().addLayout(cpp_model_row)
+
+        # Device
+        cpp_dev_row = QHBoxLayout()
+        cpp_dev_row.addWidget(QLabel("Device:"))
+        self.cpp_device_combo = QComboBox()
+        self.cpp_device_combo.addItems(["auto", "vulkan", "cuda", "cpu"])
+        self.cpp_device_combo.setCurrentText(
+            self.config.get("whisper_cpp_device", "auto")
+        )
+        cpp_dev_row.addWidget(self.cpp_device_combo, 1)
+        self._cpp_box.layout().addLayout(cpp_dev_row)
+
+        # Thread count
+        threads_row = QHBoxLayout()
+        threads_row.addWidget(QLabel("CPU threads:"))
+        from PyQt6.QtWidgets import QSpinBox
+        self.cpp_threads_spin = QSpinBox()
+        self.cpp_threads_spin.setRange(0, 32)
+        self.cpp_threads_spin.setSpecialValueText("Auto")
+        self.cpp_threads_spin.setValue(self.config.get("whisper_cpp_threads", 0))
+        self.cpp_threads_spin.setStyleSheet(
+            "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
+            "padding:4px 8px; color:#e2e8f0;"
+        )
+        threads_row.addWidget(self.cpp_threads_spin)
+        threads_row.addStretch()
+        self._cpp_box.layout().addLayout(threads_row)
+
+        # Model download status
+        self._cpp_model_status = QLabel("")
+        self._cpp_model_status.setObjectName("hint")
+        self._cpp_model_status.setWordWrap(True)
+        self._cpp_box.layout().addWidget(self._cpp_model_status)
+
+        # Download button
+        self._cpp_download_btn = QPushButton("Download Selected Model")
+        self._cpp_download_btn.clicked.connect(self._download_cpp_model)
+        self._cpp_box.layout().addWidget(self._cpp_download_btn)
+
+        lay.addWidget(self._cpp_box)
+
+        # ── pywhispercpp binding status ────────────────────────────────────
+        binding_box = _section("pywhispercpp Binding (Optional)")
+        try:
+            import pywhispercpp  # noqa: F401
+            binding_label = QLabel("✅  pywhispercpp installed — in-process mode active (lower latency)")
+            binding_label.setStyleSheet("color: #4ade80; background: transparent; border: none; font-size: 12px;")
+        except ImportError:
+            binding_label = QLabel(
+                "ℹ️  pywhispercpp not installed — subprocess mode will be used.\n"
+                "Install for lower latency: pip install pywhispercpp"
+            )
+            binding_label.setStyleSheet("color: #8892a4; background: transparent; border: none; font-size: 12px;")
+        binding_label.setWordWrap(True)
+        binding_box.layout().addWidget(binding_label)
+        lay.addWidget(binding_box)
+
+        lay.addStretch()
+
+        # Populate hardware info asynchronously
+        threading.Thread(target=self._probe_hardware_async, daemon=True).start()
+        # Show/hide cpp settings depending on current selection
+        self._on_engine_changed(self.engine_combo.currentText())
+
+        return w
+
+    def _on_engine_changed(self, engine: str):
+        show_cpp = engine in ("whisper-cpp", "auto")
+        if hasattr(self, "_cpp_box"):
+            self._cpp_box.setVisible(show_cpp)
+
+    def _refresh_hardware(self):
+        import threading
+        if hasattr(self, "_hw_label"):
+            self._hw_label.setText("⏳  Probing…")
+        threading.Thread(target=self._probe_hardware_async, daemon=True).start()
+
+    def _probe_hardware_async(self):
+        from backends.selector import probe_gpu, _cuda_available, _vulkan_available
+        from PyQt6.QtCore import QTimer
+
+        gpu = probe_gpu()
+        cuda = _cuda_available()
+        vulkan = _vulkan_available()
+
+        if gpu:
+            vram_str = f", {gpu.vram_mb} MB VRAM" if gpu.vram_mb else ""
+            api_str = gpu.api.upper()
+            hw_text = (
+                f"GPU: {gpu.vendor.upper()}{vram_str}  |  "
+                f"API: {api_str}  |  "
+                f"CUDA: {'yes' if cuda else 'no'}  |  "
+                f"Vulkan: {'yes' if vulkan else 'no'}"
+            )
+        else:
+            hw_text = f"No GPU detected  |  CUDA: {'yes' if cuda else 'no'}  |  Vulkan: {'yes' if vulkan else 'no'}"
+
+        backend_text = ""
+        if self.inference_engine:
+            backend_text = (
+                f"Active backend: {self.inference_engine.active_backend_name}  |  "
+                f"Device: {self.inference_engine.actual_device}  |  "
+                f"Compute: {self.inference_engine.actual_compute_type}"
+            )
+
+        def update():
+            if hasattr(self, "_hw_label"):
+                self._hw_label.setText(hw_text)
+            if hasattr(self, "_active_backend_label"):
+                self._active_backend_label.setText(backend_text)
+            self._update_cpp_model_status()
+
+        QTimer.singleShot(0, update)
+
+    def _update_cpp_model_status(self):
+        if not hasattr(self, "cpp_model_combo"):
+            return
+        from backends.whisper_cpp_backend import WhisperCppBackend
+        import os
+
+        model_dir = self.config.get("whisper_cpp_model_dir", "") or os.path.join(
+            os.path.expanduser("~"), ".local", "share", "whisper-wayland", "models"
+        )
+        cpp = WhisperCppBackend(model_dir=model_dir)
+        downloaded = cpp.list_downloaded_models()
+        selected = self.cpp_model_combo.currentText()
+
+        if selected in downloaded:
+            self._cpp_model_status.setText(f"✅  {selected} is downloaded and ready.")
+            self._cpp_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;")
+        else:
+            self._cpp_model_status.setText(
+                f"⚠  {selected} not found in {model_dir}.\n"
+                f"Click 'Download Selected Model' to fetch it."
+            )
+            self._cpp_model_status.setStyleSheet("color: #facc15; background: transparent; border: none;")
+
+    def _download_cpp_model(self):
+        import threading
+        from backends.whisper_cpp_backend import WhisperCppBackend, GGUF_BASE_URL
+        import os
+        import urllib.request
+
+        model_size = self.cpp_model_combo.currentText()
+        model_dir = self.config.get("whisper_cpp_model_dir", "") or os.path.join(
+            os.path.expanduser("~"), ".local", "share", "whisper-wayland", "models"
+        )
+        cpp = WhisperCppBackend(model_dir=model_dir)
+        url = cpp.get_model_url(model_size)
+
+        from backends.whisper_cpp_backend import GGUF_MAP
+        filename = GGUF_MAP.get(model_size, f"ggml-{model_size}.bin")
+        dest = os.path.join(model_dir, filename)
+
+        if not hasattr(self, "_cpp_download_btn"):
+            return
+
+        self._cpp_download_btn.setEnabled(False)
+        self._cpp_model_status.setText(f"⏳  Downloading {filename}…")
+        self._cpp_model_status.setStyleSheet("color: #e2e8f0; background: transparent; border: none;")
+
+        def do_download():
+            from PyQt6.QtCore import QTimer
+            try:
+                os.makedirs(model_dir, exist_ok=True)
+                urllib.request.urlretrieve(url, dest)
+                def done():
+                    self._cpp_model_status.setText(f"✅  Downloaded {filename} successfully.")
+                    self._cpp_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;")
+                    self._cpp_download_btn.setEnabled(True)
+                QTimer.singleShot(0, done)
+            except Exception as e:
+                def err():
+                    self._cpp_model_status.setText(f"❌  Download failed: {e}")
+                    self._cpp_model_status.setStyleSheet("color: #f87171; background: transparent; border: none;")
+                    self._cpp_download_btn.setEnabled(True)
+                QTimer.singleShot(0, err)
+
+        threading.Thread(target=do_download, daemon=True).start()
 
     # ── Tab: Audio ────────────────────────────────────────────────────────
     def _tab_audio(self):
@@ -1041,8 +1325,23 @@ class SettingsWindow(QWidget):
     # ── Save ──────────────────────────────────────────────────────────────
     def save_settings(self):
         # Track if restart-required settings changed
-        restart_keys = ["model_size", "device", "inference_mode", "input_device_index"]
+        restart_keys = [
+            "model_size", "device", "inference_mode", "input_device_index",
+            "backend_engine", "whisper_cpp_model_size", "whisper_cpp_device",
+        ]
         old_vals = {k: self.config.get(k) for k in restart_keys}
+
+        # Engine
+        if hasattr(self, "engine_combo"):
+            self.config.set("backend_engine", self.engine_combo.currentText())
+        if hasattr(self, "cpp_binary_edit"):
+            self.config.set("whisper_cpp_binary", self.cpp_binary_edit.text().strip() or "whisper-cli")
+        if hasattr(self, "cpp_model_combo"):
+            self.config.set("whisper_cpp_model_size", self.cpp_model_combo.currentText())
+        if hasattr(self, "cpp_device_combo"):
+            self.config.set("whisper_cpp_device", self.cpp_device_combo.currentText())
+        if hasattr(self, "cpp_threads_spin"):
+            self.config.set("whisper_cpp_threads", self.cpp_threads_spin.value())
 
         # General
         self.config.set("model_size", self.model_combo.currentText())
