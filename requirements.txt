@@ -54,3 +54,5 @@ tokenizers==0.22.2
 tqdm==4.67.3
 typer==0.24.1
 typing_extensions==4.15.0
+# Optional: install for in-process whisper.cpp (lower latency than subprocess)
+# pywhispercpp>=1.2.0

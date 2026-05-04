@@ -18,8 +18,8 @@ from routing.loader import load_targets
 from routing.router import OutputTargetRouter
 from gui.tray_icon import WhisperTrayIcon
 from gui.settings_window import SettingsWindow
-from gui.waveform_overlay import WaveformOverlay
 from gui.history_window import HistoryWindow
+from gui.overlay_manager import OverlayManager, OverlayProxy
 
 @contextlib.contextmanager
 def ignore_stderr():
@@ -93,23 +93,17 @@ def main():
         text_queue = queue.Queue()
         realtime_text_queue = queue.Queue()
 
-        # Initialize routing
-        try:
-            targets = load_targets()
-        except Exception as e:
-            print(f"[Main] Could not load targets.toml: {e}; using default inject target")
-            from routing.loader import _default_inject_target
-            targets = [_default_inject_target()]
-
-        router = OutputTargetRouter(targets)
-
-        # Initialize components
-        waveform = WaveformOverlay()
+        # Initialize overlay manager and load the user-selected overlay
+        overlay_manager = OverlayManager()
+        _initial_style  = config.get("overlay_style", "waveform")
+        _active_overlay = overlay_manager.load(_initial_style)
+        overlay_proxy   = OverlayProxy(_active_overlay)
+        _active_style   = [_initial_style]   # mutable cell for the closure below
 
         with ignore_stderr():
             recorder = AudioRecorder(config, audio_queue)
 
-        recorder.visualizer_callbacks.append(waveform.update_audio)
+        recorder.visualizer_callbacks.append(overlay_proxy.update_audio)
 
         inference = InferenceEngine(config, audio_queue, text_queue, realtime_text_queue)
 
@@ -179,11 +173,11 @@ def main():
         listener = InputListener(config, on_press, on_release)
 
         # UI Toggles
-        def show_recording_ui(target_id: str = 'default'):
-            waveform.show_mode(target_id=target_id, router=router)
+        def show_recording_ui():
+            overlay_proxy.show_mode()
 
         def hide_recording_ui():
-            waveform.hide_mode()
+            overlay_proxy.hide_mode()
 
         from PyQt6.QtCore import Qt
         state.recording_started.connect(show_recording_ui, Qt.ConnectionType.QueuedConnection)
@@ -191,7 +185,8 @@ def main():
 
         # UI
         history_window = HistoryWindow(config)
-        settings_window = SettingsWindow(config, inference, recorder, router=router)
+        settings_window = SettingsWindow(config, inference, recorder,
+                                         overlay_manager=overlay_manager)
         tray = WhisperTrayIcon(state, history_window)
         tray.settings_action.triggered.connect(settings_window.show)
         settings_window.settings_saved.connect(listener.update_hotkey)
