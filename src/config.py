@@ -30,6 +30,14 @@ DEFAULT_CONFIG = {
     "ollama_mode": "clean",
     # P2.2 Noise suppression
     "noise_suppression": False,  # Requires: pip install noisereduce
+    # Multi-backend engine selection
+    "backend_engine": "auto",           # 'auto' | 'faster-whisper' | 'whisper-cpp'
+    "whisper_cpp_binary": "whisper-cli",
+    "whisper_cpp_model_dir": "",        # empty = use default ~/.local/share/…/models
+    "whisper_cpp_model_size": "large-v3",
+    "whisper_cpp_device": "auto",       # 'auto' | 'vulkan' | 'cuda' | 'cpu'
+    "whisper_cpp_threads": 0,           # 0 = auto (half of logical cores)
+    "whisper_cpp_use_bindings": True,   # prefer pywhispercpp when available
 }
 
 CONFIG_PATH = Path.home() / ".config" / "whisper-wayland" / "config.json"
