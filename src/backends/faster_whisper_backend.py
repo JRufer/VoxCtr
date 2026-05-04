@@ -35,9 +35,14 @@ class FasterWhisperBackend:
         from faster_whisper import WhisperModel
         import os
 
-        self._model_size = model_size
-        self._device = device
-        self._compute_type = compute_type
+        # Sanitize list-wrapped configs
+        if isinstance(model_size, list): model_size = str(model_size[0]) if model_size else "base"
+        if isinstance(device, list): device = str(device[0]) if device else "auto"
+        if isinstance(compute_type, list): compute_type = str(compute_type[0]) if compute_type else "default"
+
+        self._model_size = str(model_size)
+        self._device = str(device)
+        self._compute_type = str(compute_type)
 
         cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "whisper-wayland")
         self._model = WhisperModel(

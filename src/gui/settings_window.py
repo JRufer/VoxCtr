@@ -7,7 +7,7 @@ from evdev import ecodes
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QMessageBox, QSlider, QCheckBox, QTextEdit,
-    QTabWidget, QGroupBox, QSizePolicy, QFrame, QScrollArea,
+    QStackedWidget, QTabWidget, QGroupBox, QSizePolicy, QFrame, QScrollArea,
     QLineEdit, QProgressBar, QTableWidget, QHeaderView, QTableWidgetItem,
     QDialog, QDialogButtonBox, QListWidget, QListWidgetItem, QSplitter,
     QSpinBox, QRadioButton, QButtonGroup, QFormLayout,
@@ -94,7 +94,6 @@ QCheckBox::indicator:checked {
     border-color: #4a9eff;
     image: none;
 }
-QCheckBox::indicator:checked:after { content: ""; }
 QSlider::groove:horizontal {
     height: 4px;
     background: #2a3448;
@@ -242,6 +241,7 @@ class VUMeter(QWidget):
 
 class SettingsWindow(QWidget):
     settings_saved = pyqtSignal()
+    _hw_probe_finished = pyqtSignal(str, str)  # (hw_text, backend_text)
 
     def __init__(self, config, inference_engine=None, audio_recorder=None, overlay_manager=None):
         super().__init__()
@@ -249,6 +249,7 @@ class SettingsWindow(QWidget):
         self.inference_engine = inference_engine
         self.audio_recorder = audio_recorder
         self.overlay_manager = overlay_manager
+        self._hw_probe_finished.connect(self._on_hw_probe_finished)
         self.recorded_keys = set()
         self.recorded_toggle_keys = set()
         self.active_recording_mode = None
@@ -285,16 +286,6 @@ class SettingsWindow(QWidget):
         status.setObjectName("hint")
         root.addWidget(status)
 
-        # ── Tabs ──────────────────────────────────────────────────────────
-        tabs = QTabWidget()
-        tabs.addTab(self._tab_general(), "🎙  General")
-        tabs.addTab(self._tab_audio(), "🔊  Audio")
-        tabs.addTab(self._tab_hotkeys(), "⌨  Hotkeys")
-        tabs.addTab(self._tab_dictation(), "✨  Dictation")
-        tabs.addTab(self._tab_snippets(), "📎  Snippets")
-        tabs.addTab(self._tab_ai(), "🤖  AI")
-        tabs.addTab(self._tab_routing(), "🔀  Routing")
-        root.addWidget(tabs)
         # ── Sidebar nav + content stack ───────────────────────────────────
         body = QHBoxLayout()
         body.setSpacing(0)
@@ -317,8 +308,10 @@ class SettingsWindow(QWidget):
             ("🔊", "Audio",     self._tab_audio),
             ("⌨", "Hotkeys",   self._tab_hotkeys),
             ("✨", "Dictation", self._tab_dictation),
+            ("🎨", "Appearance", self._tab_appearance),
             ("📎", "Snippets",  self._tab_snippets),
             ("🤖", "AI",        self._tab_ai),
+            ("🔀", "Routing",   self._tab_routing),
         ]
 
         self._nav_buttons = []
@@ -545,7 +538,7 @@ class SettingsWindow(QWidget):
         except ImportError:
             binding_label = QLabel(
                 "ℹ️  pywhispercpp not installed — subprocess mode will be used.\n"
-                "Install for lower latency: pip install pywhispercpp"
+                "Install for lower latency: <b>./venv/bin/pip install pywhispercpp</b>"
             )
             binding_label.setStyleSheet("color: #8892a4; background: transparent; border: none; font-size: 12px;")
         binding_label.setWordWrap(True)
@@ -567,47 +560,47 @@ class SettingsWindow(QWidget):
             self._cpp_box.setVisible(show_cpp)
 
     def _refresh_hardware(self):
-        import threading
         if hasattr(self, "_hw_label"):
             self._hw_label.setText("⏳  Probing…")
-        threading.Thread(target=self._probe_hardware_async, daemon=True).start()
+        threading.Thread(target=self._probe_hardware_async, daemon=True, name="hw-probe").start()
 
     def _probe_hardware_async(self):
-        from backends.selector import probe_gpu, _cuda_available, _vulkan_available
-        from PyQt6.QtCore import QTimer
+        try:
+            from backends.selector import probe_gpu, _cuda_available, _vulkan_available
+            gpu = probe_gpu()
+            cuda = _cuda_available()
+            vulkan = _vulkan_available()
 
-        gpu = probe_gpu()
-        cuda = _cuda_available()
-        vulkan = _vulkan_available()
+            if gpu:
+                vram_str = f", {gpu.vram_mb} MB VRAM" if gpu.vram_mb else ""
+                api_str = gpu.api.upper()
+                hw_text = (
+                    f"GPU: {gpu.vendor.upper()}{vram_str}  |  "
+                    f"API: {api_str}  |  "
+                    f"CUDA: {'yes' if cuda else 'no'}  |  "
+                    f"Vulkan: {'yes' if vulkan else 'no'}"
+                )
+            else:
+                hw_text = f"No GPU detected  |  CUDA: {'yes' if cuda else 'no'}  |  Vulkan: {'yes' if vulkan else 'no'}"
 
-        if gpu:
-            vram_str = f", {gpu.vram_mb} MB VRAM" if gpu.vram_mb else ""
-            api_str = gpu.api.upper()
-            hw_text = (
-                f"GPU: {gpu.vendor.upper()}{vram_str}  |  "
-                f"API: {api_str}  |  "
-                f"CUDA: {'yes' if cuda else 'no'}  |  "
-                f"Vulkan: {'yes' if vulkan else 'no'}"
-            )
-        else:
-            hw_text = f"No GPU detected  |  CUDA: {'yes' if cuda else 'no'}  |  Vulkan: {'yes' if vulkan else 'no'}"
+            backend_text = ""
+            if self.inference_engine:
+                backend_text = (
+                    f"Active backend: {self.inference_engine.active_backend_name}  |  "
+                    f"Device: {self.inference_engine.actual_device}  |  "
+                    f"Compute: {self.inference_engine.actual_compute_type}"
+                )
+            self._hw_probe_finished.emit(hw_text, backend_text)
+        except Exception as e:
+            print(f"[Settings] HW Probe error: {e}")
+            self._hw_probe_finished.emit(f"Probe failed: {e}", "")
 
-        backend_text = ""
-        if self.inference_engine:
-            backend_text = (
-                f"Active backend: {self.inference_engine.active_backend_name}  |  "
-                f"Device: {self.inference_engine.actual_device}  |  "
-                f"Compute: {self.inference_engine.actual_compute_type}"
-            )
-
-        def update():
-            if hasattr(self, "_hw_label"):
-                self._hw_label.setText(hw_text)
-            if hasattr(self, "_active_backend_label"):
-                self._active_backend_label.setText(backend_text)
-            self._update_cpp_model_status()
-
-        QTimer.singleShot(0, update)
+    def _on_hw_probe_finished(self, hw_text, backend_text):
+        if hasattr(self, "_hw_label"):
+            self._hw_label.setText(hw_text)
+        if hasattr(self, "_active_backend_label"):
+            self._active_backend_label.setText(backend_text)
+        self._update_cpp_model_status()
 
     def _update_cpp_model_status(self):
         if not hasattr(self, "cpp_model_combo"):
@@ -795,6 +788,26 @@ class SettingsWindow(QWidget):
         toggle_box.layout().addLayout(toggle_row)
         lay.addWidget(toggle_box)
 
+        dt_box = _section("Double-Tap to Talk")
+        dt_box.layout().addWidget(_hint(
+            "Quickly tap the hotkey twice to start recording. Great for hands-free use."
+        ))
+        dt_row = QHBoxLayout()
+        self.dt_hotkey_label = QLabel(self._fmt_keys(self.config.get("double_tap_hotkey", ["KEY_LEFTALT"])))
+        self.dt_hotkey_label.setFrameShape(QFrame.Shape.StyledPanel)
+        self.dt_hotkey_label.setStyleSheet(
+            "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
+            "padding:7px 12px; color:#4a9eff; font-weight:600;"
+        )
+        self.record_btn_dt = QPushButton("Record")
+        self.record_btn_dt.setObjectName("btn_record")
+        self.record_btn_dt.setCheckable(True)
+        self.record_btn_dt.clicked.connect(lambda: self.toggle_recording("double_tap"))
+        dt_row.addWidget(self.dt_hotkey_label, 1)
+        dt_row.addWidget(self.record_btn_dt)
+        dt_box.layout().addLayout(dt_row)
+        lay.addWidget(dt_box)
+
         lay.addStretch()
         return w
 
@@ -823,8 +836,6 @@ class SettingsWindow(QWidget):
             "Quiet / whisper mode  — lower VAD sensitivity + boost for soft speech"
         )
         self.quiet_mode_checkbox.setChecked(self.config.get("quiet_mode", False))
-        self.overlay_checkbox = QCheckBox("Show real-time waveform overlay while recording")
-        self.overlay_checkbox.setChecked(self.config.get("show_overlay", True))
         self.notification_checkbox = QCheckBox(
             "Desktop notification after each transcription  (requires notify-send)"
         )
@@ -836,7 +847,7 @@ class SettingsWindow(QWidget):
         self.code_mode_checkbox.setChecked(
             self.config.get("dictation_mode", "normal") == "code"
         )
-        for cb in (self.quiet_mode_checkbox, self.overlay_checkbox,
+        for cb in (self.quiet_mode_checkbox,
                    self.notification_checkbox, self.code_mode_checkbox):
             recording_box.layout().addWidget(cb)
         recording_box.layout().addWidget(_hint(
@@ -844,7 +855,19 @@ class SettingsWindow(QWidget):
         ))
         lay.addWidget(recording_box)
 
-        overlay_box = _section("Overlay Appearance")
+        lay.addStretch()
+        return w
+
+    # ── Tab: Appearance ───────────────────────────────────────────────────
+    def _tab_appearance(self):
+        w = self._scrollable()
+        lay = w.layout()
+
+        overlay_box = _section("Recording Overlay")
+        self.overlay_checkbox = QCheckBox("Show real-time visualizer while recording")
+        self.overlay_checkbox.setChecked(self.config.get("show_overlay", True))
+        overlay_box.layout().addWidget(self.overlay_checkbox)
+
         overlay_box.layout().addWidget(_hint(
             "Choose the visual style shown while recording. "
             "Drop custom .py files in the overlays folder to add your own."
@@ -857,10 +880,12 @@ class SettingsWindow(QWidget):
         open_dir_btn.clicked.connect(self._open_overlays_folder)
         overlay_row.addWidget(open_dir_btn)
         overlay_box.layout().addLayout(overlay_row)
+
         self._overlay_desc_label = QLabel("")
         self._overlay_desc_label.setObjectName("hint")
         self._overlay_desc_label.setWordWrap(True)
         overlay_box.layout().addWidget(self._overlay_desc_label)
+
         self.overlay_style_combo.currentIndexChanged.connect(self._on_overlay_selected)
         self._on_overlay_selected()
         lay.addWidget(overlay_box)
@@ -1223,20 +1248,31 @@ class SettingsWindow(QWidget):
 
     # ── Hotkey recording ──────────────────────────────────────────────────
     def toggle_recording(self, mode):
-        btn = self.record_btn_hold if mode == "hold" else self.record_btn_toggle
+        if mode == "hold":
+            btn = self.record_btn_hold
+        elif mode == "toggle":
+            btn = self.record_btn_toggle
+        else:
+            btn = self.record_btn_dt
 
         if btn.isChecked():
-            other_btn = self.record_btn_toggle if mode == "hold" else self.record_btn_hold
-            if other_btn.isChecked():
-                other_btn.setChecked(False)
+            # Uncheck other record buttons
+            for other in (self.record_btn_hold, self.record_btn_toggle, self.record_btn_dt):
+                if other != btn:
+                    other.setChecked(False)
 
             self.active_recording_mode = mode
-            label = self.hotkey_label if mode == "hold" else self.toggle_hotkey_label
-            label.setText("Press keys…")
             if mode == "hold":
+                label = self.hotkey_label
                 self.recorded_keys = set()
-            else:
+            elif mode == "toggle":
+                label = self.toggle_hotkey_label
                 self.recorded_toggle_keys = set()
+            else:
+                label = self.dt_hotkey_label
+                self.recorded_dt_keys = set()
+
+            label.setText("Press keys…")
             btn.setText("Done")
             self.grabKeyboard()
         else:
@@ -1244,7 +1280,7 @@ class SettingsWindow(QWidget):
 
     def stop_recording(self):
         self.active_recording_mode = None
-        for btn in (self.record_btn_hold, self.record_btn_toggle):
+        for btn in (self.record_btn_hold, self.record_btn_toggle, self.record_btn_dt):
             btn.setChecked(False)
             btn.setText("Record")
         self.releaseKeyboard()
@@ -1252,6 +1288,8 @@ class SettingsWindow(QWidget):
             self.hotkey_label.setText(self._fmt_keys(self.config.get("hotkey", [])))
         if not self.recorded_toggle_keys:
             self.toggle_hotkey_label.setText(self._fmt_keys(self.config.get("toggle_hotkey", [])))
+        if not hasattr(self, "recorded_dt_keys") or not self.recorded_dt_keys:
+            self.dt_hotkey_label.setText(self._fmt_keys(self.config.get("double_tap_hotkey", ["KEY_LEFTALT"])))
 
     def keyPressEvent(self, event):
         if not self.active_recording_mode:
@@ -1279,9 +1317,12 @@ class SettingsWindow(QWidget):
             if self.active_recording_mode == "hold":
                 self.recorded_keys.add(key_name)
                 self.hotkey_label.setText(self._fmt_keys(sorted(self.recorded_keys)))
-            else:
+            elif self.active_recording_mode == "toggle":
                 self.recorded_toggle_keys.add(key_name)
                 self.toggle_hotkey_label.setText(self._fmt_keys(sorted(self.recorded_toggle_keys)))
+            elif self.active_recording_mode == "double_tap":
+                self.recorded_dt_keys.add(key_name)
+                self.dt_hotkey_label.setText(self._fmt_keys(sorted(self.recorded_dt_keys)))
 
     # ── System check ──────────────────────────────────────────────────────
     def run_system_check(self):
@@ -1376,6 +1417,8 @@ class SettingsWindow(QWidget):
             self.config.set("hotkey", sorted(self.recorded_keys))
         if self.recorded_toggle_keys:
             self.config.set("toggle_hotkey", sorted(self.recorded_toggle_keys))
+        if hasattr(self, "recorded_dt_keys") and self.recorded_dt_keys:
+            self.config.set("double_tap_hotkey", sorted(self.recorded_dt_keys))
         # Dictation
         self.config.set("remove_fillers", self.filler_checkbox.isChecked())
         self.config.set("spoken_punctuation", self.spoken_punct_checkbox.isChecked())

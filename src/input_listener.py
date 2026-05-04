@@ -111,6 +111,8 @@ class InputListener(threading.Thread):
         result = []
         hold_keys = self.config.get("hotkey", ["KEY_LEFTMETA", "KEY_SPACE"])
         toggle_keys = self.config.get("toggle_hotkey", ["KEY_LEFTCTRL", "KEY_LEFTMETA", "KEY_SPACE"])
+        dt_keys = self.config.get("double_tap_hotkey", ["KEY_LEFTALT"])
+
         result.append(HotkeyBinding(
             id='default_hold', label='Dictate (Hold)',
             keys=hold_keys, gesture=GestureType.HOLD, target_id='default',
@@ -118,6 +120,10 @@ class InputListener(threading.Thread):
         result.append(HotkeyBinding(
             id='default_toggle', label='Dictate (Toggle)',
             keys=toggle_keys, gesture=GestureType.TOGGLE, target_id='default',
+        ))
+        result.append(HotkeyBinding(
+            id='default_dt', label='Dictate (Double-Tap)',
+            keys=dt_keys, gesture=GestureType.DOUBLE_TAP, target_id='default',
         ))
         return result
 
@@ -153,7 +159,7 @@ class InputListener(threading.Thread):
         last_match = self._last_toggle.get(binding.id, False)
 
         if is_match and not last_match:
-            self._toggle_state[binding.id] = not self._toggle_state[binding.id]
+            self._toggle_state[binding.id] = not self._toggle_state.get(binding.id, False)
             if self._toggle_state[binding.id]:
                 self.on_press(binding.target_id)
             else:
@@ -175,7 +181,7 @@ class InputListener(threading.Thread):
 
                 self.device = self.find_device()
                 if not self.device:
-                    print("No suitable input device found. Retrying in 5s...")
+                    print("[InputListener] No suitable input device found. Check /dev/input permissions (input group). Retrying in 5s...")
                     time.sleep(5)
                     continue
 
@@ -203,15 +209,72 @@ class InputListener(threading.Thread):
                             self.pressed_keys.discard(scancode)
                         pressed_snapshot = set(self.pressed_keys)
 
-                    for binding in self._bindings:
-                        if binding.gesture == GestureType.HOLD:
-                            self._dispatch_hold(binding, pressed_snapshot)
-                        elif binding.gesture == GestureType.TOGGLE:
-                            self._dispatch_toggle(binding, pressed_snapshot)
-                        elif binding.gesture == GestureType.DOUBLE_TAP:
-                            machine = self._dt_machines.get(binding.id)
-                            if machine:
-                                machine.on_key_event(key_name, keystate, timestamp)
+                    # Build snapshot of currently-pressed scancodes
+                    # (already done above in the lock block)
+
+                    # ── HOLD: fire on_press when all keys down, on_release when any key up ─
+                    for b in self._bindings:
+                        if b.gesture != GestureType.HOLD:
+                            continue
+                        b_codes = self._binding_key_scancodes(b)
+                        if not b_codes:          # skip if no known scancodes
+                            continue
+                        is_match = b_codes.issubset(pressed_snapshot)
+                        # Suppress: don't fire HOLD if a more-specific binding also matches
+                        if is_match:
+                            for other in self._bindings:
+                                if other.id == b.id:
+                                    continue
+                                other_codes = self._binding_key_scancodes(other)
+                                if (other_codes and b_codes.issubset(other_codes)
+                                        and len(other_codes) > len(b_codes)
+                                        and other_codes.issubset(pressed_snapshot)):
+                                    is_match = False   # shadowed by a longer combo
+                                    break
+                        was_active = self._hold_active.get(b.id, False)
+                        if is_match and not was_active:
+                            print(f"[InputListener] HOLD start: {b.label or b.id}")
+                            self._hold_active[b.id] = True
+                            self.on_press(b.target_id)
+                        elif not is_match and was_active:
+                            print(f"[InputListener] HOLD end: {b.label or b.id}")
+                            self._hold_active[b.id] = False
+                            self.on_release(b.target_id)
+
+                    # ── TOGGLE / DOUBLE_TAP: edge-triggered on key events ─────────────────
+                    if keystate == evdev.KeyEvent.key_down:
+                        for b in self._bindings:
+                            b_codes = self._binding_key_scancodes(b)
+                            if not b_codes:
+                                continue
+
+                            if b.gesture == GestureType.TOGGLE:
+                                if b_codes.issubset(pressed_snapshot):
+                                    # Rising-edge: only fire once per physical key press
+                                    if not self._last_toggle.get(b.id, False):
+                                        self._toggle_state[b.id] = not self._toggle_state.get(b.id, False)
+                                        print(f"[InputListener] TOGGLE {'on' if self._toggle_state[b.id] else 'off'}: {b.label or b.id}")
+                                        if self._toggle_state[b.id]:
+                                            self.on_press(b.target_id)
+                                        else:
+                                            self.on_release(b.target_id)
+                                    self._last_toggle[b.id] = True
+
+                            elif b.gesture == GestureType.DOUBLE_TAP:
+                                machine = self._dt_machines.get(b.id)
+                                if machine:
+                                    machine.on_key_event(key_name, keystate, timestamp)
+
+                    elif keystate == evdev.KeyEvent.key_up:
+                        for b in self._bindings:
+                            if b.gesture == GestureType.TOGGLE:
+                                b_codes = self._binding_key_scancodes(b)
+                                if b_codes and not b_codes.issubset(pressed_snapshot):
+                                    self._last_toggle[b.id] = False   # reset latch on release
+                            elif b.gesture == GestureType.DOUBLE_TAP:
+                                machine = self._dt_machines.get(b.id)
+                                if machine:
+                                    machine.on_key_event(key_name, keystate, timestamp)
 
             except Exception as e:
                 print(f"Error in input listener: {e}")

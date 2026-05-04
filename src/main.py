@@ -100,6 +100,9 @@ def main():
         overlay_proxy   = OverlayProxy(_active_overlay)
         _active_style   = [_initial_style]   # mutable cell for the closure below
 
+        # P3.1: Routing system
+        router = OutputTargetRouter(load_targets())
+
         with ignore_stderr():
             recorder = AudioRecorder(config, audio_queue)
 
@@ -131,6 +134,9 @@ def main():
             return tgt.post_processing, tgt.initial_prompt
 
         def on_press(target_id: str = 'default'):
+            if recorder.recording:
+                # Already recording; ignore redundant triggers from overlapping hotkeys
+                return
             print(f"\n[!] Triggered: Recording → target={target_id!r}")
             post_processing, initial_prompt = _get_target_info(target_id)
             state.recording_started.emit(target_id)

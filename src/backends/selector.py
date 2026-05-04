@@ -176,10 +176,9 @@ def select_backend(config) -> object:
     if engine == "whisper-cpp":
         log.info("Backend: forced to whisper-cpp")
         cpp_binary = config.get("whisper_cpp_binary", "whisper-cli")
-        cpp_model_dir = config.get("whisper_cpp_model_dir",
-                                   os.path.join(os.path.expanduser("~"),
-                                                ".local", "share",
-                                                "whisper-wayland", "models"))
+        cpp_model_dir = config.get("whisper_cpp_model_dir") or os.path.join(
+            os.path.expanduser("~"), ".local", "share", "whisper-wayland", "models"
+        )
         backend = WhisperCppBackend(binary_path=cpp_binary, model_dir=cpp_model_dir)
         if config.get("whisper_cpp_threads"):
             backend.configure_threads(config.get("whisper_cpp_threads"))
@@ -190,10 +189,9 @@ def select_backend(config) -> object:
     log.info(f"GPU probe result: {gpu}")
 
     cpp_binary = config.get("whisper_cpp_binary", "whisper-cli")
-    cpp_model_dir = config.get("whisper_cpp_model_dir",
-                               os.path.join(os.path.expanduser("~"),
-                                            ".local", "share",
-                                            "whisper-wayland", "models"))
+    cpp_model_dir = config.get("whisper_cpp_model_dir") or os.path.join(
+        os.path.expanduser("~"), ".local", "share", "whisper-wayland", "models"
+    )
 
     def make_cpp():
         b = WhisperCppBackend(binary_path=cpp_binary, model_dir=cpp_model_dir)

@@ -1,3 +1,10 @@
 #!/bin/bash
-export PYTHONPATH="/app/share/whisper-wayland:/app/lib/python3.11/site-packages:$PYTHONPATH"
-exec python3 /app/share/whisper-wayland/src/main.py "$@"
+# Local development launch script
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+export PYTHONPATH="$DIR/src:$PYTHONPATH"
+
+if [ -f "$DIR/venv/bin/python3" ]; then
+    exec "$DIR/venv/bin/python3" "$DIR/src/main.py" "$@"
+else
+    exec python3 "$DIR/src/main.py" "$@"
+fi

@@ -157,6 +157,17 @@ class InferenceEngine(threading.Thread):
         try:
             print(f"Loading backend '{backend.name}' model='{model_size}' device='{device}'...")
             self._verify_and_load(backend, model_size, device, compute_type)
+        except FileNotFoundError as e:
+            # Model file missing — fall back to faster-whisper gracefully
+            print(f"[Engine] Model not found: {e}")
+            print("[Engine] Falling back to faster-whisper backend...")
+            from backends.faster_whisper_backend import FasterWhisperBackend as _FW
+            backend = _FW()
+            model_size = self.config.get("model_size", "base")
+            device = self.config.get("device", "auto")
+            gpu = probe_gpu()
+            compute_type = auto_compute_type("faster-whisper", gpu)
+            self._verify_and_load(backend, model_size, device, compute_type)
         except Exception as e:
             # Attempt CPU fallback if loading failed on GPU
             if isinstance(backend, FasterWhisperBackend) and device != "cpu":

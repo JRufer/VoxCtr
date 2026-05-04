@@ -55,8 +55,26 @@ class Config:
                 with open(CONFIG_PATH, "r") as f:
                     user_config = json.load(f)
                     self.config.update(user_config)
+                    self._sanitize()
             except Exception as e:
                 print(f"Error loading config: {e}")
+
+    def _sanitize(self):
+        """Ensure critical string keys didn't accidentally become lists/objects."""
+        string_keys = [
+            "model_size", "device", "compute_type", "backend_engine",
+            "whisper_cpp_binary", "whisper_cpp_model_size", "whisper_cpp_device",
+            "dictation_mode", "ollama_model", "ollama_mode", "overlay_style"
+        ]
+        for k in string_keys:
+            val = self.config.get(k)
+            if isinstance(val, list):
+                if val:
+                    self.config[k] = str(val[0])
+                else:
+                    self.config[k] = DEFAULT_CONFIG.get(k)
+            elif val is None:
+                self.config[k] = DEFAULT_CONFIG.get(k)
 
     def save(self):
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -70,5 +88,13 @@ class Config:
         return self.config.get(key, default if default is not None else DEFAULT_CONFIG.get(key))
 
     def set(self, key, value):
+        # Sanitize string keys that must not be lists
+        _string_keys = {
+            "model_size", "device", "compute_type", "backend_engine",
+            "whisper_cpp_binary", "whisper_cpp_model_size", "whisper_cpp_device",
+            "dictation_mode", "ollama_model", "ollama_mode", "overlay_style"
+        }
+        if key in _string_keys and isinstance(value, list):
+            value = str(value[0]) if value else DEFAULT_CONFIG.get(key, "")
         self.config[key] = value
         self.save()

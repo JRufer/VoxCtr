@@ -11,14 +11,16 @@ import numpy as np
 from .protocol import TranscriptionResult, WordTimestamp, BackendCapabilities
 
 # Friendly model-size name → GGUF filename mapping
-GGUF_MAP: dict[str, str] = {
-    "tiny":     "ggml-tiny-q5_1.bin",
-    "tiny.en":  "ggml-tiny.en-q5_1.bin",
-    "base":     "ggml-base-q5_1.bin",
-    "small":    "ggml-small-q5_k.bin",
-    "medium":   "ggml-medium-q5_k.bin",
-    "large-v2": "ggml-large-v2-q5_k.bin",
-    "large-v3": "ggml-large-v3-q5_k_m.bin",
+# Multiple filenames per size handle different quantisation variants
+GGUF_MAP: dict[str, list[str]] = {
+    "tiny":           ["ggml-tiny-q5_1.bin", "ggml-tiny.bin"],
+    "tiny.en":        ["ggml-tiny.en-q5_1.bin", "ggml-tiny.en.bin"],
+    "base":           ["ggml-base-q5_1.bin", "ggml-base.bin"],
+    "small":          ["ggml-small-q5_k.bin", "ggml-small-q5_k_m.bin", "ggml-small.bin"],
+    "medium":         ["ggml-medium-q5_k.bin", "ggml-medium-q5_k_m.bin", "ggml-medium.bin"],
+    "large-v2":       ["ggml-large-v2-q5_k.bin", "ggml-large-v2-q5_k_m.bin", "ggml-large-v2.bin"],
+    "large-v3":       ["ggml-large-v3-q5_0.bin", "ggml-large-v3-q5_k_m.bin", "ggml-large-v3-q5_k_s.bin", "ggml-large-v3.bin"],
+    "large-v3-turbo": ["ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo-q5_k_m.bin", "ggml-large-v3-turbo.bin"],
 }
 
 GGUF_BASE_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
@@ -33,11 +35,16 @@ class WhisperCppBackend:
 
     def __init__(
         self,
-        binary_path: str = "whisper-cli",
-        model_dir: str = DEFAULT_MODEL_DIR,
+        binary_path: str | list = "whisper-cli",
+        model_dir: str | None = None,
     ) -> None:
-        self._binary = binary_path
-        self._model_dir = model_dir
+        # Sanitize binary_path if it's a list (backward compatibility / config error)
+        if isinstance(binary_path, list):
+            self._binary = str(binary_path[0]) if binary_path else "whisper-cli"
+        else:
+            self._binary = str(binary_path)
+
+        self._model_dir = model_dir or DEFAULT_MODEL_DIR
         self._model_path: str | None = None
         self._device_flags: list[str] = []
         self._threads: int = max(1, (os.cpu_count() or 4) // 2)
@@ -68,8 +75,12 @@ class WhisperCppBackend:
         )
 
     def load_model(self, model_size: str, device: str, compute_type: str) -> None:
-        self._model_path = self._resolve_model_path(model_size)
-        self._device_flags = _device_to_flags(device)
+        # Ensure model_size is a string (config safety)
+        if isinstance(model_size, list):
+            model_size = str(model_size[0]) if model_size else "base"
+        
+        self._model_path = self._resolve_model_path(str(model_size))
+        self._device_flags = _device_to_flags(str(device))
 
         if self._use_bindings:
             self._cpp_model = self._CppModel(
@@ -128,6 +139,9 @@ class WhisperCppBackend:
         # whisper-cli reads WAV from stdin when --file - is given
         cmd += ["--file", "-"]
 
+        # Final safety check: ensure everything in cmd is a string
+        cmd = [str(x) for x in cmd]
+
         t0 = time.monotonic_ns()
         try:
             proc = subprocess.run(
@@ -185,7 +199,9 @@ class WhisperCppBackend:
             params["initial_prompt"] = initial_prompt
 
         t0 = time.monotonic_ns()
-        segments = self._cpp_model.transcribe(audio.tolist(), **params)
+        # pywhispercpp expects a numpy float32 array, NOT a Python list
+        audio_f32 = audio.astype(np.float32) if audio.dtype != np.float32 else audio
+        segments = self._cpp_model.transcribe(audio_f32, **params)
         inference_ms = int((time.monotonic_ns() - t0) / 1e6)
 
         text = " ".join(s.text.strip() for s in segments)
@@ -230,37 +246,42 @@ class WhisperCppBackend:
                 f"Download it to {self._model_dir}/"
             )
 
-        # Friendly name → GGUF filename
-        filename = GGUF_MAP.get(model_size)
-        if filename is None:
+        # Friendly name → try each candidate filename in order
+        candidates = GGUF_MAP.get(model_size)
+        if candidates is None:
             raise ValueError(
                 f"Unknown model size '{model_size}'. "
                 f"Valid sizes: {list(GGUF_MAP.keys())}"
             )
 
-        path = os.path.join(self._model_dir, filename)
-        if not os.path.isfile(path):
-            raise FileNotFoundError(
-                f"GGUF model not found: {path}\n"
-                f"Download with:\n"
-                f"  mkdir -p {self._model_dir}\n"
-                f"  wget -P {self._model_dir} {GGUF_BASE_URL}{filename}"
-            )
-        return path
+        for filename in candidates:
+            path = os.path.join(self._model_dir, filename)
+            if os.path.isfile(path):
+                return path
+
+        # None found — report all candidates in the error
+        raise FileNotFoundError(
+            f"GGUF model not found for '{model_size}'.\n"
+            f"Expected one of: {candidates}\n"
+            f"in: {self._model_dir}\n"
+            f"Download with:\n"
+            f"  mkdir -p {self._model_dir}\n"
+            f"  wget -P {self._model_dir} {GGUF_BASE_URL}{candidates[0]}"
+        )
 
     def list_downloaded_models(self) -> list[str]:
         """Return friendly names of GGUF models present in model_dir."""
         if not os.path.isdir(self._model_dir):
             return []
         present = []
-        for friendly, filename in GGUF_MAP.items():
-            if os.path.isfile(os.path.join(self._model_dir, filename)):
+        for friendly, filenames in GGUF_MAP.items():
+            if any(os.path.isfile(os.path.join(self._model_dir, f)) for f in filenames):
                 present.append(friendly)
         return present
 
     def get_model_url(self, model_size: str) -> str:
-        filename = GGUF_MAP.get(model_size, f"ggml-{model_size}.bin")
-        return GGUF_BASE_URL + filename
+        candidates = GGUF_MAP.get(model_size, [f"ggml-{model_size}.bin"])
+        return GGUF_BASE_URL + candidates[0]
 
     def configure_threads(self, n: int) -> None:
         self._threads = max(1, n)
