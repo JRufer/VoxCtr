@@ -1318,7 +1318,16 @@ class SettingsWindow(QWidget):
             label.setVisible(False)
 
     def populate_audio_devices(self):
-        p = pyaudio.PyAudio()
+        # Reuse the recorder's PyAudio instance to avoid calling Pa_Terminate()
+        # while the recorder's instance is still alive. PortAudio does not use
+        # reference counting for Pa_Initialize/Pa_Terminate, so a stray terminate()
+        # invalidates all existing PyAudio objects and causes a SIGSEGV on next use.
+        if self.audio_recorder:
+            p = self.audio_recorder.p
+            do_terminate = False
+        else:
+            p = pyaudio.PyAudio()
+            do_terminate = True
         current_index = self.config.get("input_device_index")
         for i in range(p.get_device_count()):
             info = p.get_device_info_by_index(i)
@@ -1327,7 +1336,8 @@ class SettingsWindow(QWidget):
                 self.device_combo.addItem(f"{name}", i)
                 if current_index == i:
                     self.device_combo.setCurrentIndex(self.device_combo.count() - 1)
-        p.terminate()
+        if do_terminate:
+            p.terminate()
 
     def populate_keyboard_devices(self):
         current_path = self.config.get("evdev_device")
