@@ -1,0 +1,37 @@
+app-id: ai.whisperwayland.Dictation
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: whisper-wayland
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=all # Required for evdev hotkeys (not ideal for Flathub, but necessary for current architecture)
+  - --talk-name=org.freedesktop.portal.Desktop
+  - --talk-name=org.freedesktop.Notifications
+  - --own-name=ai.whisperwayland.Dictation
+
+modules:
+  - name: python3-requirements
+    buildsystem: simple
+    build-commands:
+      - pip3 install --prefix=/app -r requirements.txt
+    sources:
+      - type: file
+        path: requirements.txt
+
+  - name: whisper-wayland
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/bin
+      - mkdir -p /app/share/whisper-wayland
+      - cp -r src /app/share/whisper-wayland/
+      - cp -r assets /app/share/whisper-wayland/
+      - install -D whisper-wayland.sh /app/bin/whisper-wayland
+      - install -D whisper-wayland.desktop /app/share/applications/ai.whisperwayland.Dictation.desktop
+    sources:
+      - type: dir
+        path: .
