@@ -80,30 +80,17 @@ pip install dbus-python
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
 
-### 3. udev rules (required for hotkeys)
-
-Create `/etc/udev/rules.d/99-whisper-wayland.rules`:
-
-```
-KERNEL=="uinput", GROUP="uinput", MODE="0660"
-```
-
-Reload rules and add your user to the required groups:
-
-```bash
-sudo udevadm control --reload-rules && sudo udevadm trigger
-sudo usermod -aG input $USER
-```
-
-> **Note:** Log out and back in for group changes to take effect.
-
-### 4. Launch
+### 3. Launch
 
 ```bash
 ./whisper-wayland.sh
 ```
 
 The app starts in the system tray. If your compositor doesn't support system trays, the Settings window opens directly.
+
+**On first launch**, if global hotkeys aren't yet configured, a setup wizard appears automatically. Click **Set Up Permissions**, enter your administrator password when prompted, then log out and back in. That's it — no terminal commands, no scripts to run manually.
+
+> You can also open the wizard any time from the tray icon → **Set Up Hotkeys…**
 
 ---
 

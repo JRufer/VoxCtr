@@ -20,6 +20,7 @@ from gui.tray_icon import WhisperTrayIcon
 from gui.settings_window import SettingsWindow
 from gui.history_window import HistoryWindow
 from gui.overlay_manager import OverlayManager, OverlayProxy
+from gui.setup_dialog import needs_setup, PermissionsSetupDialog
 
 @contextlib.contextmanager
 def ignore_stderr():
@@ -87,6 +88,13 @@ def main():
         app.setQuitOnLastWindowClosed(False)
 
         config = Config()
+
+        # Show the hotkey-permissions wizard on first run (or if setup is still incomplete).
+        # The dialog is non-modal — the user can skip it and still use the app via DBus/tray.
+        if needs_setup():
+            _setup_dlg = PermissionsSetupDialog()
+            _setup_dlg.exec()
+
         state = AppState()
 
         audio_queue = queue.Queue()

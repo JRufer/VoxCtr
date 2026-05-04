@@ -30,6 +30,12 @@ class WhisperTrayIcon(QSystemTrayIcon):
             self.menu.addAction(self.history_action)
 
         self.menu.addSeparator()
+
+        self.setup_hotkeys_action = QAction("🔑  Set Up Hotkeys…")
+        self.setup_hotkeys_action.triggered.connect(self._show_setup_dialog)
+        self.menu.addAction(self.setup_hotkeys_action)
+
+        self.menu.addSeparator()
         self.quit_action = QAction("Quit")
         self.quit_action.triggered.connect(QApplication.instance().quit)
         self.menu.addAction(self.quit_action)
@@ -53,6 +59,11 @@ class WhisperTrayIcon(QSystemTrayIcon):
             pixmap = QPixmap(64, 64)
             pixmap.fill(QColor("grey"))
             self.setIcon(QIcon(pixmap))
+
+    def _show_setup_dialog(self):
+        from gui.setup_dialog import PermissionsSetupDialog
+        dlg = PermissionsSetupDialog()
+        dlg.exec()
 
     def set_recording_icon(self):
         if hasattr(self, 'icon_on') and not self.icon_on.isNull():
