@@ -255,6 +255,12 @@ class SettingsWindow(QWidget):
         self.recorded_dt_keys = set()
         self.active_recording_mode = None
         self.router = None
+        
+        from routing.loader import load_bindings
+        try:
+            self._routing_bindings = load_bindings()
+        except Exception:
+            self._routing_bindings = []
 
         self.setWindowTitle("Whisper Wayland — Settings")
         self.setMinimumWidth(520)
@@ -1507,13 +1513,44 @@ class SettingsWindow(QWidget):
         if hasattr(self, "noise_suppression_cb"):
             self.config.set("noise_suppression", self.noise_suppression_cb.isChecked())
 
-        # Hotkeys
+        # Hotkeys (Sync to both config.json and bindings.toml)
+        from routing.loader import save_bindings
+        bindings_changed = False
+        
         if self.recorded_keys:
             self.config.set("hotkey", sorted(self.recorded_keys))
+            for b in self._routing_bindings:
+                if b.id == 'default_hold':
+                    b.keys = sorted(self.recorded_keys)
+                    bindings_changed = True
+                    
         if self.recorded_toggle_keys:
             self.config.set("toggle_hotkey", sorted(self.recorded_toggle_keys))
+            for b in self._routing_bindings:
+                if b.id == 'default_toggle':
+                    b.keys = sorted(self.recorded_toggle_keys)
+                    bindings_changed = True
+                    
         if self.recorded_dt_keys:
             self.config.set("double_tap_hotkey", sorted(self.recorded_dt_keys))
+            dt_b = next((b for b in self._routing_bindings if b.id == 'default_dt'), None)
+            if dt_b:
+                dt_b.keys = sorted(self.recorded_dt_keys)
+            else:
+                from routing.models import HotkeyBinding, GestureType
+                self._routing_bindings.append(HotkeyBinding(
+                    id='default_dt', label='Dictate (Double-Tap)',
+                    keys=sorted(self.recorded_dt_keys),
+                    gesture=GestureType.DOUBLE_TAP, target_id='default',
+                ))
+            bindings_changed = True
+
+        if bindings_changed:
+            save_bindings(self._routing_bindings)
+            # Re-render routing tab if it has been instantiated
+            if hasattr(self, '_routing_render_bindings'):
+                self._routing_render_bindings()
+
         # Dictation
         self.config.set("remove_fillers", self.filler_checkbox.isChecked())
         self.config.set("spoken_punctuation", self.spoken_punct_checkbox.isChecked())
