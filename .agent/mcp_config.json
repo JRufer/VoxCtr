@@ -1,24 +1,42 @@
 {
     "mcpServers": {
-        "context7": {
-            "command": "npx",
-            "args": [
-                "-y",
-                "@upstash/context7-mcp",
-                "--api-key",
-                "YOUR_API_KEY"
-            ]
-        },
-        "shadcn": {
-            "command": "npx",
-            "args": [
-                "shadcn@latest",
-                "mcp"
-            ]
+        "whisper-wayland": {
+            "command": "socat",
+            "args": ["STDIO", "UNIX-CONNECT:/tmp/whisper-wayland-mcp.sock"]
         }
-        //other mcp servers
     }
 }
 
-// setup mcp server in  ~/.gemini\antigravity\mcp_config.json
-
+// ── How to use ────────────────────────────────────────────────────────────────
+//
+// 1. Start Whisper-Wayland with mcp_server_enabled=true in config.json
+//    (or toggle it in Settings → Voice Output → Enable MCP Server)
+//
+// 2. Copy the mcpServers block above into the config file for your tool:
+//
+//    Claude Desktop:   ~/.config/claude/claude_desktop_config.json
+//    Claude Code CLI:  .claude/settings.json  (project)  or
+//                      ~/.claude/settings.json (global)
+//    Gemini CLI:       ~/.gemini/antigravity/mcp_config.json
+//    Cursor / Cline:   use their MCP settings UI
+//
+//    The app's "Register in Claude Desktop" button (Settings → Voice Output)
+//    writes this automatically for Claude Desktop.
+//
+// 3. Restart your tool. The following tools will appear:
+//
+//    transcribe_voice(timeout_seconds?)  — record mic, return transcript
+//    speak_text(text)                    — speak text via TTS
+//    get_status()                        — {recording, speaking}
+//    inject_text(text)                   — type text into active window
+//    cancel_tts()                        — stop TTS immediately
+//    get_last_transcript()               — most recent transcript
+//    get_history(n?)                     — last N transcripts
+//    list_voices()                       — TTS voices + download status
+//    set_voice(voice_id)                 — switch TTS voice
+//    transcribe_file(path)               — transcribe an audio file from disk
+//    get_config(key)                     — read a config value
+//    set_config(key, value)              — write a config value
+//
+// Requires: socat  (sudo pacman -S socat  or  sudo apt install socat)
+// Full docs: docs/mcp_documentation.md
