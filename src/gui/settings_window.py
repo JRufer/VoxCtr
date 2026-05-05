@@ -670,7 +670,7 @@ class SettingsWindow(QWidget):
         try:
             self._cpp_download_ok_sig.disconnect()
             self._cpp_download_err_sig.disconnect()
-        except RuntimeError:
+        except (RuntimeError, TypeError):
             pass
 
         self._cpp_download_ok_sig.connect(
@@ -1851,7 +1851,7 @@ class SettingsWindow(QWidget):
             self._tts_progress_sig.disconnect()
             self._tts_download_ok_sig.disconnect()
             self._tts_download_err_sig.disconnect()
-        except RuntimeError:
+        except (RuntimeError, TypeError):
             pass  # not yet connected
 
         def _on_progress(done, total):
@@ -1926,7 +1926,7 @@ class SettingsWindow(QWidget):
 
         try:
             self._tts_test_done_sig.disconnect()
-        except RuntimeError:
+        except (RuntimeError, TypeError):
             pass
 
         def _on_test_done():
