@@ -100,6 +100,9 @@ def _parse_target(d: dict) -> OutputTarget:
         send_on_release=d.get('send_on_release', True),
         append_newline=d.get('append_newline', True),
         initial_prompt=d.get('initial_prompt'),
+        response_pipe=d.get('response_pipe'),
+        tts_engine=d.get('tts_engine', 'piper'),
+        tts_voice=d.get('tts_voice'),
     )
 
 
@@ -147,6 +150,12 @@ def _serialize_target(t: OutputTarget) -> dict:
         d['dbus_signal'] = t.dbus_signal
     if t.initial_prompt is not None:
         d['initial_prompt'] = t.initial_prompt
+    if t.response_pipe is not None:
+        d['response_pipe'] = t.response_pipe
+    if t.tts_engine != 'piper':
+        d['tts_engine'] = t.tts_engine
+    if t.tts_voice is not None:
+        d['tts_voice'] = t.tts_voice
     return d
 
 

@@ -49,7 +49,46 @@ Type=Application
 Categories=Utility;Audio;
 EOF
 
-# 4. Set up permissions (evdev)
+# 4. Install piper TTS (binary + bundled shared libraries)
+echo ""
+echo "[*] Installing piper TTS engine..."
+_install_piper() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local tarball="$tmp_dir/piper_amd64.tar.gz"
+
+    echo "    Downloading piper v0.0.2..."
+    if ! curl -fsSL -o "$tarball" \
+        "https://github.com/rhasspy/piper/releases/download/v0.0.2/piper_amd64.tar.gz"; then
+        echo "    Warning: piper download failed. TTS will fall back to espeak-ng."
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    tar -xzf "$tarball" -C "$tmp_dir"
+
+    sudo mkdir -p /opt/piper
+    sudo cp -r "$tmp_dir/piper/." /opt/piper/
+
+    # Wrapper keeps the binary next to its bundled .so files
+    printf '#!/bin/sh\nexec /opt/piper/piper "$@"\n' | sudo tee /usr/local/bin/piper > /dev/null
+    sudo chmod +x /usr/local/bin/piper
+
+    # Register bundled libs with the dynamic linker
+    echo /opt/piper | sudo tee /etc/ld.so.conf.d/piper.conf > /dev/null
+    sudo ldconfig
+
+    rm -rf "$tmp_dir"
+    echo "    piper installed to /opt/piper"
+}
+
+if command -v piper &>/dev/null; then
+    echo "    piper already installed at $(command -v piper) — skipping."
+else
+    _install_piper
+fi
+
+# 5. Set up permissions (evdev)
 echo ""
 echo "[*] Setting up hardware permissions (evdev) for global hotkeys..."
 echo "This step requires root privileges to create udev rules."
@@ -59,7 +98,7 @@ else
     echo "Warning: scripts/setup-permissions.sh not found. Hotkeys may not work globally."
 fi
 
-# 5. Update desktop database
+# 6. Update desktop database
 echo "[*] Updating desktop database..."
 if command -v update-desktop-database &> /dev/null; then
     update-desktop-database "$DESKTOP_DIR"

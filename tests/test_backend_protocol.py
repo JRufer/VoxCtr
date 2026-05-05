@@ -147,7 +147,7 @@ class TestWhisperCppBackend:
         assert b.list_downloaded_models() == []
 
     def test_list_downloaded_models_present(self, tmp_path):
-        filename = GGUF_MAP["base"]
+        filename = GGUF_MAP["base"][0]
         (tmp_path / filename).touch()
         b = WhisperCppBackend(model_dir=str(tmp_path))
         assert "base" in b.list_downloaded_models()
