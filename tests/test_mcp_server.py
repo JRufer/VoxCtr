@@ -131,18 +131,8 @@ class TestMCPSocketServer(unittest.TestCase):
 
     def _make_and_start(self, **kwargs):
         srv = _make_server(**kwargs)
-        with patch("mcp_server.SOCKET_PATH", self._test_sock):
-            srv._server_sock = None
-            # Patch the path inside _serve
-            original_serve = srv._serve
-            def patched_serve():
-                import mcp_server as _m
-                old = _m.SOCKET_PATH
-                _m.SOCKET_PATH = self._test_sock
-                original_serve()
-                _m.SOCKET_PATH = old
-            srv._serve = patched_serve
-            srv.start()
+        srv._socket_path = self._test_sock
+        srv.start()
         time.sleep(0.15)   # wait for socket to be ready
         return srv
 

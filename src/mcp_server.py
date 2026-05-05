@@ -90,6 +90,7 @@ class WhisperMCPServer:
         self._on_record = on_record
         self._on_speak = on_speak
         self._get_status = get_status
+        self._socket_path = SOCKET_PATH
         self._server_sock: Optional[socket.socket] = None
         self._thread: Optional[threading.Thread] = None
         self._running = False
@@ -104,7 +105,7 @@ class WhisperMCPServer:
             target=self._serve, daemon=True, name="mcp-server"
         )
         self._thread.start()
-        print(f"[MCP] Server started on {SOCKET_PATH}")
+        print(f"[MCP] Server started on {self._socket_path}")
 
     def stop(self) -> None:
         self._running = False
@@ -114,7 +115,7 @@ class WhisperMCPServer:
             except Exception:
                 pass
         try:
-            os.unlink(SOCKET_PATH)
+            os.unlink(self._socket_path)
         except OSError:
             pass
 
@@ -123,14 +124,14 @@ class WhisperMCPServer:
     def _serve(self):
         # Clean up stale socket
         try:
-            os.unlink(SOCKET_PATH)
+            os.unlink(self._socket_path)
         except OSError:
             pass
 
         self._server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._server_sock.bind(SOCKET_PATH)
-        os.chmod(SOCKET_PATH, 0o600)
+        self._server_sock.bind(self._socket_path)
+        os.chmod(self._socket_path, 0o600)
         self._server_sock.listen(4)
         self._server_sock.settimeout(1.0)
 
