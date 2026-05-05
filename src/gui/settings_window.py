@@ -1829,29 +1829,18 @@ class SettingsWindow(QWidget):
         self._tts_progress.setVisible(True)
 
         def _do():
-            from PyQt6.QtCore import QMetaObject, Qt
+            from PyQt6.QtCore import QTimer
             try:
                 def _prog(done, total):
                     if total > 0:
                         pct = int(done * 100 / total)
-                        # Switch to determinate mode if currently indeterminate
-                        QMetaObject.invokeMethod(
-                            self._tts_progress, "setRange",
-                            Qt.ConnectionType.QueuedConnection,
-                            0, 100,
-                        )
-                        QMetaObject.invokeMethod(
-                            self._tts_progress, "setValue",
-                            Qt.ConnectionType.QueuedConnection,
-                            pct,
-                        )
+                        # Use default-arg capture so each lambda closes over its
+                        # own value of pct (not the cell reference).
+                        QTimer.singleShot(0, lambda: self._tts_progress.setRange(0, 100))
+                        QTimer.singleShot(0, lambda v=pct: self._tts_progress.setValue(v))
                     else:
-                        # No Content-Length — show busy/indeterminate bar
-                        QMetaObject.invokeMethod(
-                            self._tts_progress, "setRange",
-                            Qt.ConnectionType.QueuedConnection,
-                            0, 0,
-                        )
+                        # No Content-Length — indeterminate busy animation
+                        QTimer.singleShot(0, lambda: self._tts_progress.setRange(0, 0))
 
                 download_voice(vid, progress_cb=_prog)
 
@@ -1917,13 +1906,18 @@ class SettingsWindow(QWidget):
 
         def _run():
             from PyQt6.QtCore import QTimer
-            engine.speak_test(vid)
-            def _done():
-                self._tts_test_btn.setEnabled(True)
-                self._tts_test_btn.setText("▶  Test Voice")
-                self.config.set("tts_voice", orig_voice)
-                self.config.set("tts_engine", orig_engine)
-            QTimer.singleShot(0, _done)
+            try:
+                engine.speak_test(vid)
+            except Exception as e:
+                print(f"[TTS test] {e}")
+            finally:
+                engine.shutdown()
+                def _done():
+                    self._tts_test_btn.setEnabled(True)
+                    self._tts_test_btn.setText("▶  Test Voice")
+                    self.config.set("tts_voice", orig_voice)
+                    self.config.set("tts_engine", orig_engine)
+                QTimer.singleShot(0, _done)
 
         _threading.Thread(target=_run, daemon=True).start()
 

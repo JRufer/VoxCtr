@@ -362,12 +362,22 @@ class TTSEngine:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
-        aplay = subprocess.Popen(
-            ["aplay", "-r", rate, "-f", "S16_LE", "-t", "raw", "-"],
-            stdin=piper.stdout,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+
+        try:
+            aplay = subprocess.Popen(
+                ["aplay", "-r", rate, "-f", "S16_LE", "-t", "raw", "-"],
+                stdin=piper.stdout,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            # aplay not installed — kill piper so it doesn't hang on a full pipe
+            piper.kill()
+            piper.wait()
+            print("[TTS] aplay not found; falling back to espeak-ng")
+            self._speak_espeak(text)
+            return
+
         piper.stdout.close()
 
         with self._lock:
