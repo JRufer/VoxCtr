@@ -670,13 +670,13 @@ class SettingsWindow(QWidget):
                     self._cpp_model_status.setText(f"✅  Downloaded {filename} successfully.")
                     self._cpp_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;")
                     self._cpp_download_btn.setEnabled(True)
-                QTimer.singleShot(0, done)
+                QTimer.singleShot(0, self, done)
             except Exception as e:
                 def err():
                     self._cpp_model_status.setText(f"❌  Download failed: {e}")
                     self._cpp_model_status.setStyleSheet("color: #f87171; background: transparent; border: none;")
                     self._cpp_download_btn.setEnabled(True)
-                QTimer.singleShot(0, err)
+                QTimer.singleShot(0, self, err)
 
         threading.Thread(target=do_download, daemon=True).start()
 
@@ -1834,17 +1834,15 @@ class SettingsWindow(QWidget):
                 def _prog(done, total):
                     if total > 0:
                         pct = int(done * 100 / total)
-                        # Use default-arg capture so each lambda closes over its
-                        # own value of pct (not the cell reference).
-                        QTimer.singleShot(0, lambda: self._tts_progress.setRange(0, 100))
-                        QTimer.singleShot(0, lambda v=pct: self._tts_progress.setValue(v))
+                        # 3-arg form routes callback to self's thread (main thread).
+                        # Without the context arg, Qt fires in the calling thread's
+                        # event loop — which doesn't exist for background threads.
+                        QTimer.singleShot(0, self, lambda: self._tts_progress.setRange(0, 100))
+                        QTimer.singleShot(0, self, lambda v=pct: self._tts_progress.setValue(v))
                     else:
-                        # No Content-Length — indeterminate busy animation
-                        QTimer.singleShot(0, lambda: self._tts_progress.setRange(0, 0))
+                        QTimer.singleShot(0, self, lambda: self._tts_progress.setRange(0, 0))
 
                 download_voice(vid, progress_cb=_prog)
-
-                from PyQt6.QtCore import QTimer as _QT
 
                 def _ok():
                     self._tts_model_status.setText("✅  Download complete.")
@@ -1856,10 +1854,8 @@ class SettingsWindow(QWidget):
                     self._tts_download_btn.setEnabled(False)
                     self._refresh_tts_voice_labels()
 
-                _QT.singleShot(0, _ok)
+                QTimer.singleShot(0, self, _ok)
             except Exception as e:
-                from PyQt6.QtCore import QTimer as _QT
-
                 def _err():
                     self._tts_model_status.setText(f"❌  Download failed: {e}")
                     self._tts_model_status.setStyleSheet("color:#f87171; background:transparent; border:none;")
@@ -1867,7 +1863,7 @@ class SettingsWindow(QWidget):
                     self._tts_progress.setVisible(False)
                     self._tts_download_btn.setEnabled(True)
 
-                _QT.singleShot(0, _err)
+                QTimer.singleShot(0, self, _err)
 
         _threading.Thread(target=_do, daemon=True).start()
 
@@ -1917,7 +1913,8 @@ class SettingsWindow(QWidget):
                     self._tts_test_btn.setText("▶  Test Voice")
                     self.config.set("tts_voice", orig_voice)
                     self.config.set("tts_engine", orig_engine)
-                QTimer.singleShot(0, _done)
+                # 3-arg form: routes _done to self's (main) thread event loop.
+                QTimer.singleShot(0, self, _done)
 
         _threading.Thread(target=_run, daemon=True).start()
 
