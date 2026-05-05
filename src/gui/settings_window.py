@@ -241,7 +241,13 @@ class VUMeter(QWidget):
 
 class SettingsWindow(QWidget):
     settings_saved = pyqtSignal()
-    _hw_probe_finished = pyqtSignal(str, str)  # (hw_text, backend_text)
+    _hw_probe_finished = pyqtSignal(str, str)       # (hw_text, backend_text)
+    _tts_progress_sig = pyqtSignal(int, int)        # (bytes_done, bytes_total)
+    _tts_download_ok_sig = pyqtSignal()
+    _tts_download_err_sig = pyqtSignal(str)
+    _tts_test_done_sig = pyqtSignal()
+    _cpp_download_ok_sig = pyqtSignal(str)          # filename
+    _cpp_download_err_sig = pyqtSignal(str)
 
     def __init__(self, config, inference_engine=None, audio_recorder=None, overlay_manager=None):
         super().__init__()
@@ -661,22 +667,34 @@ class SettingsWindow(QWidget):
         self._cpp_model_status.setText(f"⏳  Downloading {filename}…")
         self._cpp_model_status.setStyleSheet("color: #e2e8f0; background: transparent; border: none;")
 
+        try:
+            self._cpp_download_ok_sig.disconnect()
+            self._cpp_download_err_sig.disconnect()
+        except RuntimeError:
+            pass
+
+        self._cpp_download_ok_sig.connect(
+            lambda fn: (
+                self._cpp_model_status.setText(f"✅  Downloaded {fn} successfully."),
+                self._cpp_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;"),
+                self._cpp_download_btn.setEnabled(True),
+            )
+        )
+        self._cpp_download_err_sig.connect(
+            lambda msg: (
+                self._cpp_model_status.setText(f"❌  Download failed: {msg}"),
+                self._cpp_model_status.setStyleSheet("color: #f87171; background: transparent; border: none;"),
+                self._cpp_download_btn.setEnabled(True),
+            )
+        )
+
         def do_download():
-            from PyQt6.QtCore import QTimer
             try:
                 os.makedirs(model_dir, exist_ok=True)
                 urllib.request.urlretrieve(url, dest)
-                def done():
-                    self._cpp_model_status.setText(f"✅  Downloaded {filename} successfully.")
-                    self._cpp_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;")
-                    self._cpp_download_btn.setEnabled(True)
-                QTimer.singleShot(0, self, done)
+                self._cpp_download_ok_sig.emit(filename)
             except Exception as e:
-                def err():
-                    self._cpp_model_status.setText(f"❌  Download failed: {e}")
-                    self._cpp_model_status.setStyleSheet("color: #f87171; background: transparent; border: none;")
-                    self._cpp_download_btn.setEnabled(True)
-                QTimer.singleShot(0, self, err)
+                self._cpp_download_err_sig.emit(str(e))
 
         threading.Thread(target=do_download, daemon=True).start()
 
@@ -1816,54 +1834,60 @@ class SettingsWindow(QWidget):
 
     def _tts_download_voice(self):
         import threading as _threading
-        from tts_engine import VOICE_CATALOG, download_voice, is_voice_downloaded
+        from tts_engine import download_voice
 
         vid = self.tts_voice_combo.currentData()
         if not vid:
             return
 
         self._tts_download_btn.setEnabled(False)
-        self._tts_model_status.setText(f"⏳  Downloading…")
+        self._tts_model_status.setText("⏳  Downloading…")
         self._tts_model_status.setStyleSheet("color:#e2e8f0; background:transparent; border:none;")
         self._tts_progress.setValue(0)
         self._tts_progress.setVisible(True)
 
+        # Connect signals (disconnect first to avoid duplicates from repeat clicks)
+        try:
+            self._tts_progress_sig.disconnect()
+            self._tts_download_ok_sig.disconnect()
+            self._tts_download_err_sig.disconnect()
+        except RuntimeError:
+            pass  # not yet connected
+
+        def _on_progress(done, total):
+            if total > 0:
+                self._tts_progress.setRange(0, 100)
+                self._tts_progress.setValue(int(done * 100 / total))
+            else:
+                self._tts_progress.setRange(0, 0)  # indeterminate
+
+        def _on_ok():
+            self._tts_model_status.setText("✅  Download complete.")
+            self._tts_model_status.setStyleSheet("color:#4ade80; background:transparent; border:none;")
+            self._tts_progress.setRange(0, 100)
+            self._tts_progress.setValue(100)
+            self._tts_progress.setVisible(False)
+            self._tts_test_btn.setEnabled(True)
+            self._tts_download_btn.setEnabled(False)
+            self._refresh_tts_voice_labels()
+
+        def _on_err(msg):
+            self._tts_model_status.setText(f"❌  Download failed: {msg}")
+            self._tts_model_status.setStyleSheet("color:#f87171; background:transparent; border:none;")
+            self._tts_progress.setRange(0, 100)
+            self._tts_progress.setVisible(False)
+            self._tts_download_btn.setEnabled(True)
+
+        self._tts_progress_sig.connect(_on_progress)
+        self._tts_download_ok_sig.connect(_on_ok)
+        self._tts_download_err_sig.connect(_on_err)
+
         def _do():
-            from PyQt6.QtCore import QTimer
             try:
-                def _prog(done, total):
-                    if total > 0:
-                        pct = int(done * 100 / total)
-                        # 3-arg form routes callback to self's thread (main thread).
-                        # Without the context arg, Qt fires in the calling thread's
-                        # event loop — which doesn't exist for background threads.
-                        QTimer.singleShot(0, self, lambda: self._tts_progress.setRange(0, 100))
-                        QTimer.singleShot(0, self, lambda v=pct: self._tts_progress.setValue(v))
-                    else:
-                        QTimer.singleShot(0, self, lambda: self._tts_progress.setRange(0, 0))
-
-                download_voice(vid, progress_cb=_prog)
-
-                def _ok():
-                    self._tts_model_status.setText("✅  Download complete.")
-                    self._tts_model_status.setStyleSheet("color:#4ade80; background:transparent; border:none;")
-                    self._tts_progress.setRange(0, 100)
-                    self._tts_progress.setValue(100)
-                    self._tts_progress.setVisible(False)
-                    self._tts_test_btn.setEnabled(True)
-                    self._tts_download_btn.setEnabled(False)
-                    self._refresh_tts_voice_labels()
-
-                QTimer.singleShot(0, self, _ok)
+                download_voice(vid, progress_cb=lambda d, t: self._tts_progress_sig.emit(d, t))
+                self._tts_download_ok_sig.emit()
             except Exception as e:
-                def _err():
-                    self._tts_model_status.setText(f"❌  Download failed: {e}")
-                    self._tts_model_status.setStyleSheet("color:#f87171; background:transparent; border:none;")
-                    self._tts_progress.setRange(0, 100)
-                    self._tts_progress.setVisible(False)
-                    self._tts_download_btn.setEnabled(True)
-
-                QTimer.singleShot(0, self, _err)
+                self._tts_download_err_sig.emit(str(e))
 
         _threading.Thread(target=_do, daemon=True).start()
 
@@ -1900,21 +1924,27 @@ class SettingsWindow(QWidget):
 
         engine = TTSEngine(self.config)
 
+        try:
+            self._tts_test_done_sig.disconnect()
+        except RuntimeError:
+            pass
+
+        def _on_test_done():
+            self._tts_test_btn.setEnabled(True)
+            self._tts_test_btn.setText("▶  Test Voice")
+            self.config.set("tts_voice", orig_voice)
+            self.config.set("tts_engine", orig_engine)
+
+        self._tts_test_done_sig.connect(_on_test_done)
+
         def _run():
-            from PyQt6.QtCore import QTimer
             try:
                 engine.speak_test(vid)
             except Exception as e:
                 print(f"[TTS test] {e}")
             finally:
                 engine.shutdown()
-                def _done():
-                    self._tts_test_btn.setEnabled(True)
-                    self._tts_test_btn.setText("▶  Test Voice")
-                    self.config.set("tts_voice", orig_voice)
-                    self.config.set("tts_engine", orig_engine)
-                # 3-arg form: routes _done to self's (main) thread event loop.
-                QTimer.singleShot(0, self, _done)
+                self._tts_test_done_sig.emit()
 
         _threading.Thread(target=_run, daemon=True).start()
 
