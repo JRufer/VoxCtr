@@ -1573,7 +1573,7 @@ class SettingsWindow(QWidget):
         if hasattr(self, "tts_engine_combo"):
             self.config.set("tts_engine", self.tts_engine_combo.currentData() or "piper")
         if hasattr(self, "tts_voice_combo"):
-            self.config.set("tts_voice", self.tts_voice_combo.currentData() or "en_US-lessac-medium")
+            self.config.set("tts_voice", self.tts_voice_combo.currentData() or "en-us-lessac-medium")
         if hasattr(self, "tts_stop_key_label"):
             stop_keys = getattr(self, "_recorded_tts_stop_keys", None)
             if stop_keys:
@@ -1654,7 +1654,7 @@ class SettingsWindow(QWidget):
 
         voice_row = QHBoxLayout()
         self.tts_voice_combo = QComboBox()
-        cur_voice = self.config.get("tts_voice", "en_US-lessac-medium")
+        cur_voice = self.config.get("tts_voice", "en-us-lessac-medium")
         for vid, info in VOICE_CATALOG.items():
             downloaded = is_voice_downloaded(vid)
             label = info["display"] + ("  ✅" if downloaded else "  ⬇")

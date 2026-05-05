@@ -43,7 +43,7 @@ DEFAULT_CONFIG = {
     # TTS / Voice Output
     "tts_enabled": False,
     "tts_engine": "piper",              # 'piper' | 'espeak'
-    "tts_voice": "en_US-lessac-medium",
+    "tts_voice": "en-us-lessac-medium",
     "tts_stop_key": ["KEY_ESCAPE"],     # evdev key(s) to stop TTS playback
     "tts_response_overlay": True,       # show overlay while TTS is playing
     # MCP Server

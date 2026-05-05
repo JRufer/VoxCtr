@@ -28,6 +28,23 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 - **Code mode** — spoken constructs convert to syntax: `"get underscore user dot name"` → `get_user.name`
 - **AI post-processing** — optional Ollama integration for grammar correction, tone rewriting, or bullet points
 
+### Voice Output (TTS)
+- **Neural TTS with Piper** — high-quality, on-device speech synthesis; `espeak-ng` used automatically as fallback
+- **Voice picker** — choose from 8 curated Piper voices directly in Settings; each shows download status at a glance
+- **One-click model download** — progress bar in-app; models stored in `~/.local/share/whisper-wayland/voices/`
+- **Test button** — play a sample of any voice before committing to it
+- **TTS stop key** — configurable global hotkey (default: `Escape`) interrupts playback from any window
+- **Response overlay** — optional teal overlay displayed while TTS plays, distinct from the recording overlay
+
+### MCP Server (AI Voice Gateway)
+- **Built-in MCP server** — exposes voice I/O as tools any MCP-capable AI can call
+- **`transcribe_voice` tool** — AI triggers the mic, user speaks, transcript returned
+- **`speak_text` tool** — AI queues spoken responses through Piper/espeak
+- **`get_status` tool** — AI queries whether recording or speaking is in progress
+- **Claude Desktop integration** — one-click registration writes the `socat` bridge to `claude_desktop_config.json`
+- **Response loopback** — per-target `response_pipe` FIFO: agents write responses there and they are spoken automatically
+- Full documentation: **[docs/mcp_documentation.md](docs/mcp_documentation.md)**
+
 ### System & UI
 - **Transcription history** — persistent, searchable panel with one-click copy
 - **Swappable recording overlays** — Waveform, Pulse Circle, Voice Card, or drop in your own; each displays a **routing indicator badge** showing exactly which output target is active while you record
@@ -57,6 +74,15 @@ The backend is chosen automatically at startup. Override it in **Settings → En
 
 ```bash
 sudo pacman -S portaudio python-pyaudio wl-clipboard dbus pkgconf python-gobject ydotool wtype
+
+# For TTS voice output (recommended)
+sudo pacman -S alsa-utils          # aplay for Piper audio output
+yay -S piper-tts                   # Neural TTS engine
+# OR minimal fallback:
+sudo pacman -S espeak-ng
+
+# For MCP server → Claude Desktop bridge
+sudo pacman -S socat
 ```
 
 ### 2. Clone and set up the virtual environment
@@ -327,6 +353,66 @@ Full specification and examples: **[docs/overlays.md](docs/overlays.md)**
 
 ---
 
+## Voice Output (TTS)
+
+Whisper-Wayland can speak responses aloud using [Piper](https://github.com/rhasspy/piper), an on-device neural TTS engine.
+
+### Setup
+
+1. Install Piper: `yay -S piper-tts` (or download from the [Piper releases page](https://github.com/rhasspy/piper/releases))
+2. Open **Settings → Voice Output**
+3. Select a voice from the picker
+4. Click **⬇ Download** to fetch the model (~5–130 MB depending on quality)
+5. Click **▶ Test Voice** to preview
+6. Toggle **"Enable TTS"** on
+
+`espeak-ng` is used automatically if Piper is not installed — no configuration needed.
+
+### Voice models
+
+| Voice | Language | Quality | Size |
+|---|---|---|---|
+| Lessac | US English | Medium | ~55 MB |
+| Ryan | US English | Medium / High | ~55–130 MB |
+| Amy | US English | Low | ~5 MB |
+| Joe | US English | Medium | ~55 MB |
+| Kusal | US English | Medium | ~55 MB |
+| Danny | US English | Low | ~5 MB |
+| Alan | GB English | Low | ~5 MB |
+
+Models are downloaded from GitHub releases and stored in `~/.local/share/whisper-wayland/voices/`. Download once, use offline forever.
+
+### TTS stop key
+
+Press the configured key (default: `Escape`) from any window to stop TTS playback instantly. Change it in **Settings → Voice Output → TTS Stop Key** using the same Record/Done flow as hotkeys.
+
+### Response overlay
+
+When enabled, a teal floating overlay appears while TTS plays — distinct from the pink recording overlay — so you always know when the app is speaking.
+
+---
+
+## MCP Server
+
+Whisper-Wayland can act as a **voice I/O gateway for AI agents** via its built-in MCP server. Enable it in **Settings → Voice Output → MCP Server**.
+
+```json
+{
+  "mcp_server_enabled": true
+}
+```
+
+An AI with MCP tool access can then:
+- Call `transcribe_voice` → the app opens the mic and returns the user's speech as text
+- Call `speak_text` → the app speaks the response aloud through Piper
+- Call `get_status` → check if mic or TTS is currently active
+
+**Claude Desktop integration:** click **"Register in Claude Desktop"** in Settings — the app writes the socat bridge config automatically.
+
+Full setup guide, protocol reference, and integration examples: **[docs/mcp_documentation.md](docs/mcp_documentation.md)**
+
+---
+
 ## Ollama AI Post-Processing
 
 Whisper-Wayland can post-process transcriptions through a local [Ollama](https://ollama.com) model.
@@ -366,7 +452,8 @@ Control the app from external scripts, Waybar, or Rofi.
 ```
 Input Engine (evdev)
   ├── Hold / Toggle gesture handlers
-  └── DoubleTapMachine per double_tap binding
+  ├── DoubleTapMachine per double_tap binding
+  └── TTS stop key interceptor → TTSEngine.stop()
         │ on_press(target_id)
         ▼
 Recording Controller (AudioRecorder)
@@ -391,6 +478,25 @@ OutputTargetRouter
   ├── socket    → TCP or Unix domain socket
   ├── file      → append with optional timestamp
   └── dbus      → DBus signal emission
+        │
+        ▼ (response_pipe per target)
+ResponseListener(s)  ←── agent writes response text to FIFO
+        │ tts_speak(line)
+        ▼
+TTSEngine (queue + worker thread)
+  ├── piper --model … --output_raw | aplay …
+  └── espeak-ng fallback
+        │ on_started / on_finished callbacks
+        ▼
+TTSResponseOverlay (teal floating widget, shown while speaking)
+
+                 ┌─────────────────────────┐
+                 │    MCP Server           │
+                 │  Unix socket JSON-RPC   │
+                 │  transcribe_voice ──────┼──→ triggers recording
+                 │  speak_text ────────────┼──→ TTSEngine.speak()
+                 │  get_status ────────────┼──→ recording/speaking flags
+                 └─────────────────────────┘
 ```
 
 ---
@@ -401,13 +507,16 @@ OutputTargetRouter
 src/
 ├── main.py                   # Application entry point
 ├── config.py                 # JSON config (model, audio, UI settings)
-├── input_listener.py         # evdev hotkey engine (hold / toggle / double-tap)
+├── input_listener.py         # evdev hotkey engine (hold / toggle / double-tap / TTS stop)
 ├── audio_recorder.py         # PyAudio capture + VU meter
 ├── inference_engine.py       # Transcription + post-processing pipeline
 ├── text_injector.py          # Text delivery thread (inject + routing dispatch)
 ├── llm_postprocessor.py      # Ollama integration
 ├── dbus_service.py           # DBus control interface
 ├── portal_injector.py        # Wayland RemoteDesktop portal fallback
+├── tts_engine.py             # Piper/espeak TTS engine, voice catalog, model download
+├── tts_responder.py          # ResponseListener — reads agent FIFO → TTSEngine
+├── mcp_server.py             # MCP JSON-RPC server (Unix socket)
 ├── hotkeys/
 │   └── double_tap.py         # DoubleTapMachine state machine
 ├── routing/
@@ -416,14 +525,22 @@ src/
 │   ├── loader.py             # TOML load/save for targets.toml + bindings.toml
 │   └── router.py             # OutputTargetRouter
 └── gui/
-    ├── settings_window.py    # PyQt6 settings dialog (tabbed)
+    ├── settings_window.py    # PyQt6 settings dialog (tabbed, incl. Voice Output tab)
     ├── tray_icon.py          # System tray icon
     ├── waveform_overlay.py   # OpenGL recording overlay
-    └── history_window.py     # Transcription history panel
+    ├── history_window.py     # Transcription history panel
+    └── overlays/
+        └── tts_response.py   # Teal TTS response overlay widget
+docs/
+├── overlays.md               # Custom overlay specification
+└── mcp_documentation.md      # MCP server setup, protocol reference, integration guide
 tests/
 ├── test_double_tap.py        # DoubleTapMachine state machine tests
 ├── test_targets.py           # Delivery implementation tests
-└── test_routing_loader.py    # TOML config round-trip tests
+├── test_routing_loader.py    # TOML config round-trip tests
+├── test_tts_engine.py        # Voice catalog, download helpers, TTSEngine (30 tests)
+├── test_tts_responder.py     # ResponseListener FIFO reading and TTS dispatch (6 tests)
+└── test_mcp_server.py        # MCP protocol dispatch and socket server (16 tests)
 ```
 
 ---
@@ -434,6 +551,17 @@ tests/
 pip install pytest
 python -m pytest tests/ -v
 ```
+
+The test suite covers:
+
+| File | Coverage |
+|---|---|
+| `test_double_tap.py` | DoubleTapMachine timing and state transitions |
+| `test_targets.py` | All delivery types (inject, clipboard, exec, pipe, socket, file, dbus) |
+| `test_routing_loader.py` | TOML round-trips for targets.toml and bindings.toml |
+| `test_tts_engine.py` | Voice catalog validation, path helpers, download extraction, TTSEngine (30 tests) |
+| `test_tts_responder.py` | ResponseListener FIFO reading, ordering, empty-line skip, late FIFO (6 tests) |
+| `test_mcp_server.py` | JSON-RPC dispatch, all tools, error codes, socket server integration (16 tests) |
 
 ---
 
