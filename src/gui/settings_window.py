@@ -245,7 +245,7 @@ class SettingsWindow(QWidget):
     _tts_progress_sig = pyqtSignal(int, int)        # (bytes_done, bytes_total)
     _tts_download_ok_sig = pyqtSignal()
     _tts_download_err_sig = pyqtSignal(str)
-    _tts_test_done_sig = pyqtSignal()
+    _tts_test_done_sig = pyqtSignal(str)        # status message (empty = success)
     _cpp_download_ok_sig = pyqtSignal(str)          # filename
     _cpp_download_err_sig = pyqtSignal(str)
 
@@ -1929,22 +1929,27 @@ class SettingsWindow(QWidget):
         except (RuntimeError, TypeError):
             pass
 
-        def _on_test_done():
+        def _on_test_done(err_msg):
             self._tts_test_btn.setEnabled(True)
             self._tts_test_btn.setText("▶  Test Voice")
             self.config.set("tts_voice", orig_voice)
             self.config.set("tts_engine", orig_engine)
+            if err_msg:
+                self._tts_model_status.setText(f"❌  {err_msg.splitlines()[0]}")
+                self._tts_model_status.setStyleSheet("color:#f87171; background:transparent; border:none;")
 
         self._tts_test_done_sig.connect(_on_test_done)
 
         def _run():
+            err = ""
             try:
                 engine.speak_test(vid)
             except Exception as e:
+                err = str(e)
                 print(f"[TTS test] {e}")
             finally:
                 engine.shutdown()
-                self._tts_test_done_sig.emit()
+                self._tts_test_done_sig.emit(err)
 
         _threading.Thread(target=_run, daemon=True).start()
 

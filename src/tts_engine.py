@@ -408,15 +408,33 @@ class TTSEngine:
         """
         Blocking test playback — returns when audio finishes or is stopped.
         Used by the Settings → Voice Out → Test Voice button.
+        Raises RuntimeError if no usable TTS engine is found.
         """
-        engine = self.config.get("tts_engine", "piper")
+        piper_bin   = shutil.which("piper")
+        espeak_bin  = shutil.which("espeak-ng")
+        aplay_bin   = shutil.which("aplay")
+        voice_path  = get_voice_path(voice)
+
+        print(f"[TTS test] voice={voice!r}  model={voice_path}  exists={voice_path.exists()}")
+        print(f"[TTS test] piper={piper_bin}  aplay={aplay_bin}  espeak-ng={espeak_bin}")
+
         with self._lock:
             self._speaking = True
         try:
-            if engine == "piper" and shutil.which("piper"):
+            if piper_bin and aplay_bin and voice_path.exists():
+                print("[TTS test] using piper")
                 self._speak_piper(text, voice)
-            elif shutil.which("espeak-ng"):
+            elif espeak_bin:
+                print("[TTS test] using espeak-ng (piper/aplay/model unavailable)")
                 self._speak_espeak(text)
+            else:
+                raise RuntimeError(
+                    "No TTS engine available.\n"
+                    f"  piper binary : {'✓' if piper_bin else '✗ not found'}\n"
+                    f"  aplay binary : {'✓' if aplay_bin else '✗ not found (alsa-utils)'}\n"
+                    f"  voice model  : {'✓' if voice_path.exists() else '✗ not downloaded'}\n"
+                    f"  espeak-ng    : {'✓' if espeak_bin else '✗ not found'}"
+                )
         finally:
             with self._lock:
                 self._speaking = False
