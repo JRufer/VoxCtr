@@ -347,20 +347,21 @@ class TTSEngine:
                 except Exception:
                     pass
 
-    def _speak_piper(self, text: str, voice: str):
+    def _speak_piper(self, text: str, voice: str, verbose: bool = False):
         voice_path = get_voice_path(voice)
         if not voice_path.exists():
             print(f"[TTS] Voice model not found ({voice_path}); falling back to espeak-ng")
-            self._speak_espeak(text)
+            self._speak_espeak(text, verbose=verbose)
             return
 
         rate = str(get_voice_sample_rate(voice))
+        stderr_dest = subprocess.PIPE if verbose else subprocess.DEVNULL
 
         piper = subprocess.Popen(
             ["piper", "--model", str(voice_path), "--output_raw"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr_dest,
         )
 
         try:
@@ -368,14 +369,13 @@ class TTSEngine:
                 ["aplay", "-r", rate, "-f", "S16_LE", "-t", "raw", "-"],
                 stdin=piper.stdout,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=stderr_dest,
             )
         except FileNotFoundError:
-            # aplay not installed — kill piper so it doesn't hang on a full pipe
             piper.kill()
             piper.wait()
             print("[TTS] aplay not found; falling back to espeak-ng")
-            self._speak_espeak(text)
+            self._speak_espeak(text, verbose=verbose)
             return
 
         piper.stdout.close()
@@ -392,15 +392,25 @@ class TTSEngine:
         aplay.wait()
         piper.wait()
 
-    def _speak_espeak(self, text: str):
+        if verbose:
+            piper_err = (piper.stderr.read() if piper.stderr else b"").decode(errors="replace").strip()
+            aplay_err = (aplay.stderr.read() if aplay.stderr else b"").decode(errors="replace").strip()
+            print(f"[TTS test] piper exit={piper.returncode}  stderr: {piper_err or '(none)'}")
+            print(f"[TTS test] aplay  exit={aplay.returncode}  stderr: {aplay_err or '(none)'}")
+
+    def _speak_espeak(self, text: str, verbose: bool = False):
+        stderr_dest = subprocess.PIPE if verbose else subprocess.DEVNULL
         proc = subprocess.Popen(
             ["espeak-ng", "-s", "150", "--", text],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr_dest,
         )
         with self._lock:
             self._procs = [proc]
         proc.wait()
+        if verbose:
+            err = (proc.stderr.read() if proc.stderr else b"").decode(errors="replace").strip()
+            print(f"[TTS test] espeak-ng exit={proc.returncode}  stderr: {err or '(none)'}")
 
     # ── Blocking test (used by settings UI preview) ───────────────────────────
 
@@ -423,10 +433,10 @@ class TTSEngine:
         try:
             if piper_bin and aplay_bin and voice_path.exists():
                 print("[TTS test] using piper")
-                self._speak_piper(text, voice)
+                self._speak_piper(text, voice, verbose=True)
             elif espeak_bin:
                 print("[TTS test] using espeak-ng (piper/aplay/model unavailable)")
-                self._speak_espeak(text)
+                self._speak_espeak(text, verbose=True)
             else:
                 raise RuntimeError(
                     "No TTS engine available.\n"
