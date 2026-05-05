@@ -40,6 +40,15 @@ DEFAULT_CONFIG = {
     "whisper_cpp_device": "auto",       # 'auto' | 'vulkan' | 'cuda' | 'cpu'
     "whisper_cpp_threads": 0,           # 0 = auto (half of logical cores)
     "whisper_cpp_use_bindings": True,   # prefer pywhispercpp when available
+    # TTS / Voice Output
+    "tts_enabled": False,
+    "tts_engine": "piper",              # 'piper' | 'espeak'
+    "tts_voice": "en_US-lessac-medium",
+    "tts_stop_key": ["KEY_ESCAPE"],     # evdev key(s) to stop TTS playback
+    "tts_response_overlay": True,       # show overlay while TTS is playing
+    # MCP Server
+    "mcp_server_enabled": False,
+    "mcp_record_timeout": 15.0,         # max seconds for MCP-triggered recording
 }
 
 CONFIG_PATH = Path.home() / ".config" / "whisper-wayland" / "config.json"

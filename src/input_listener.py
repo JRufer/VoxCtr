@@ -10,15 +10,17 @@ from routing.models import GestureType
 
 
 class InputListener(threading.Thread):
-    def __init__(self, config, on_press, on_release):
+    def __init__(self, config, on_press, on_release, on_tts_stop=None):
         """
         on_press(target_id):  called when a binding activates
         on_release(target_id): called when a binding deactivates
+        on_tts_stop():        called when the TTS stop key is pressed (optional)
         """
         super().__init__(daemon=True)
         self.config = config
         self.on_press = on_press
         self.on_release = on_release
+        self.on_tts_stop = on_tts_stop
         self.device = None
         self.running = True
 
@@ -254,6 +256,17 @@ class InputListener(threading.Thread):
                             print(f"[InputListener] HOLD end: {b.label or b.id}")
                             self._hold_active[b.id] = False
                             self.on_release(b.target_id)
+
+                    # ── TTS stop key: fires on key_down ───────────────────────────────────
+                    if keystate == evdev.KeyEvent.key_down and self.on_tts_stop:
+                        stop_keys = self.config.get("tts_stop_key", ["KEY_ESCAPE"])
+                        stop_codes = set()
+                        for k in stop_keys:
+                            c = self._scancode_for(k)
+                            if c is not None:
+                                stop_codes.add(c)
+                        if stop_codes and stop_codes == {scancode}:
+                            self.on_tts_stop()
 
                     # ── TOGGLE / DOUBLE_TAP: edge-triggered on key events ─────────────────
                     if keystate == evdev.KeyEvent.key_down:

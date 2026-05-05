@@ -14,6 +14,9 @@ from audio_recorder import AudioRecorder
 from inference_engine import InferenceEngine
 from text_injector import TextInjector
 from dbus_service import DBusService
+from tts_engine import TTSEngine
+from tts_responder import ResponseListener
+from mcp_server import WhisperMCPServer
 from routing.loader import load_targets
 from routing.router import OutputTargetRouter
 from gui.tray_icon import WhisperTrayIcon
@@ -21,6 +24,7 @@ from gui.settings_window import SettingsWindow
 from gui.history_window import HistoryWindow
 from gui.overlay_manager import OverlayManager, OverlayProxy
 from gui.setup_dialog import needs_setup, PermissionsSetupDialog
+from gui.overlays.tts_response import TTSResponseOverlay
 
 @contextlib.contextmanager
 def ignore_stderr():
@@ -122,6 +126,39 @@ def main():
         # P3.1: Routing system
         router = OutputTargetRouter(load_targets())
 
+        # ── TTS engine + response overlay ─────────────────────────────────
+        tts_engine = TTSEngine(config)
+        tts_overlay = TTSResponseOverlay()
+
+        def _on_tts_started(text: str):
+            if config.get("tts_response_overlay", True):
+                tts_overlay.show_response(text)
+
+        def _on_tts_finished():
+            tts_overlay.hide_response()
+
+        tts_engine.on_started  = _on_tts_started
+        tts_engine.on_finished = _on_tts_finished
+
+        # ── Response pipe listeners (one per target with response_pipe set) ─
+        _response_listeners: list = []
+
+        def _start_response_listeners(targets):
+            for rl in _response_listeners:
+                rl.stop()
+            _response_listeners.clear()
+            for tgt in targets:
+                if tgt.response_pipe:
+                    rl = ResponseListener(
+                        pipe_path=tgt.response_pipe,
+                        tts_speak=tts_engine.speak,
+                        label=tgt.label or tgt.id,
+                    )
+                    rl.start()
+                    _response_listeners.append(rl)
+
+        _start_response_listeners(load_targets())
+
         with ignore_stderr():
             recorder = AudioRecorder(config, audio_queue)
 
@@ -177,7 +214,50 @@ def main():
             on_toggle=on_toggle,
         )
 
-        listener = InputListener(config, on_press, on_release)
+        # ── MCP Server ────────────────────────────────────────────────────
+        _mcp_result_queue: queue.Queue = queue.Queue()
+
+        def _mcp_on_record(timeout: float) -> str:
+            """Called by MCP tool — triggers a recording and waits for result."""
+            import threading as _t
+            _mcp_result_queue.queue.clear()
+            # Schedule on Qt main thread
+            from PyQt6.QtCore import QTimer as _QT
+            _QT.singleShot(0, lambda: on_press('mcp'))
+
+            # Auto-stop after timeout seconds (MCP recording has no key-release)
+            def _auto_stop():
+                time.sleep(timeout)
+                from PyQt6.QtCore import QTimer as _QT2
+                _QT2.singleShot(0, lambda: on_release('mcp'))
+
+            _t.Thread(target=_auto_stop, daemon=True).start()
+
+            try:
+                result = _mcp_result_queue.get(timeout=timeout + 5.0)
+            except queue.Empty:
+                result = ""
+            return result
+
+        def _mcp_on_speak(text: str):
+            tts_engine.speak(text)
+
+        def _mcp_get_status() -> dict:
+            return {
+                "recording": recorder.recording,
+                "speaking": tts_engine.is_speaking,
+            }
+
+        mcp_server = WhisperMCPServer(
+            on_record=_mcp_on_record,
+            on_speak=_mcp_on_speak,
+            get_status=_mcp_get_status,
+        )
+        if config.get("mcp_server_enabled", False):
+            mcp_server.start()
+
+        listener = InputListener(config, on_press, on_release,
+                                 on_tts_stop=tts_engine.stop)
 
         # UI Toggles
         def show_recording_ui(target_id: str = ""):
@@ -210,13 +290,16 @@ def main():
             dbus_svc.set_status("idle")
             dbus_svc.set_word_count(total_words)
             dbus_svc.notify_text(text)
+            # Feed MCP result queue if recording was triggered by MCP
+            _mcp_result_queue.put(text)
 
         state.text_injected.connect(_on_text_injected, Qt.ConnectionType.QueuedConnection)
 
         tray.settings_action.triggered.connect(settings_window.show)
         settings_window.settings_saved.connect(listener.update_hotkey)
         settings_window.settings_saved.connect(listener.update_device)
-        settings_window.settings_saved.connect(lambda: _reload_routing(router))
+        settings_window.settings_saved.connect(lambda: _reload_routing(router, _start_response_listeners))
+        settings_window.settings_saved.connect(lambda: _apply_mcp_toggle(mcp_server, config))
         settings_window.settings_saved.connect(_update_overlay)
 
         # Fallback: If tray is not available, show settings so the app isn't "invisible"
@@ -249,18 +332,33 @@ def main():
             inference.stop()
             injector.stop()
             dbus_svc.stop()
+            tts_engine.shutdown()
+            mcp_server.stop()
+            for rl in _response_listeners:
+                rl.stop()
         except:
             pass
 
 
-def _reload_routing(router: OutputTargetRouter) -> None:
+def _reload_routing(router: OutputTargetRouter, start_response_listeners=None) -> None:
     """Hot-reload targets after settings save."""
     try:
         targets = load_targets()
         router.update_targets(targets)
         print(f"[Main] Routing targets reloaded ({len(targets)} targets)")
+        if start_response_listeners:
+            start_response_listeners(targets)
     except Exception as e:
         print(f"[Main] Could not reload routing targets: {e}")
+
+
+def _apply_mcp_toggle(mcp_server: WhisperMCPServer, config) -> None:
+    """Start or stop the MCP server based on the current config."""
+    enabled = config.get("mcp_server_enabled", False)
+    if enabled:
+        mcp_server.start()
+    else:
+        mcp_server.stop()
 
 
 if __name__ == "__main__":

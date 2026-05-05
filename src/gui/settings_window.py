@@ -255,6 +255,8 @@ class SettingsWindow(QWidget):
         self.recorded_dt_keys = set()
         self.active_recording_mode = None
         self.router = None
+        self._tts_stop_recording = False
+        self._recorded_tts_stop_keys: set = set()
         
         from routing.loader import load_bindings
         try:
@@ -320,6 +322,7 @@ class SettingsWindow(QWidget):
             ("📎", "Snippets",  self._tab_snippets),
             ("🤖", "AI",        self._tab_ai),
             ("🔀", "Routing",   self._tab_routing),
+            ("🔈", "Voice Out", self._tab_voice_output),
         ]
 
         self._nav_buttons = []
@@ -1402,40 +1405,6 @@ class SettingsWindow(QWidget):
             self.dt_hotkey_label.setText(self._fmt_keys(self.config.get("double_tap_hotkey", ["KEY_LEFTALT"])))
         self._check_hotkey_conflicts()
 
-    def keyPressEvent(self, event):
-        if not self.active_recording_mode:
-            return super().keyPressEvent(event)
-
-        key = event.key()
-        mapping = {
-            Qt.Key.Key_Meta: "KEY_LEFTMETA",
-            Qt.Key.Key_Alt: "KEY_LEFTALT",
-            Qt.Key.Key_Control: "KEY_LEFTCTRL",
-            Qt.Key.Key_Shift: "KEY_LEFTSHIFT",
-            Qt.Key.Key_Space: "KEY_SPACE",
-            Qt.Key.Key_Enter: "KEY_ENTER",
-            Qt.Key.Key_Return: "KEY_ENTER",
-        }
-
-        if Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
-            key_name = f"KEY_{chr(key)}"
-        else:
-            key_name = mapping.get(key)
-            if not key_name:
-                key_name = f"KEY_{event.text().upper()}" if event.text() else None
-
-        if key_name:
-            if self.active_recording_mode == "hold":
-                self.recorded_keys.add(key_name)
-                self.hotkey_label.setText(self._fmt_keys(sorted(self.recorded_keys)))
-            elif self.active_recording_mode == "toggle":
-                self.recorded_toggle_keys.add(key_name)
-                self.toggle_hotkey_label.setText(self._fmt_keys(sorted(self.recorded_toggle_keys)))
-            elif self.active_recording_mode == "double_tap":
-                self.recorded_dt_keys.add(key_name)
-                self.dt_hotkey_label.setText(self._fmt_keys(sorted(self.recorded_dt_keys)))
-            self._check_hotkey_conflicts()
-
     # ── System check ──────────────────────────────────────────────────────
     def run_system_check(self):
         import shutil, grp
@@ -1598,6 +1567,23 @@ class SettingsWindow(QWidget):
             if self.inference_engine and hasattr(self.inference_engine, "llm"):
                 self.inference_engine.llm.config = self.config
 
+        # Voice Output / TTS
+        if hasattr(self, "tts_enabled_cb"):
+            self.config.set("tts_enabled", self.tts_enabled_cb.isChecked())
+        if hasattr(self, "tts_engine_combo"):
+            self.config.set("tts_engine", self.tts_engine_combo.currentData() or "piper")
+        if hasattr(self, "tts_voice_combo"):
+            self.config.set("tts_voice", self.tts_voice_combo.currentData() or "en_US-lessac-medium")
+        if hasattr(self, "tts_stop_key_label"):
+            stop_keys = getattr(self, "_recorded_tts_stop_keys", None)
+            if stop_keys:
+                self.config.set("tts_stop_key", sorted(stop_keys))
+        if hasattr(self, "tts_overlay_cb"):
+            self.config.set("tts_response_overlay", self.tts_overlay_cb.isChecked())
+        # MCP Server
+        if hasattr(self, "mcp_enabled_cb"):
+            self.config.set("mcp_server_enabled", self.mcp_enabled_cb.isChecked())
+
         # Check if anything changed that needs a restart
         needs_restart = False
         for k in restart_keys:
@@ -1615,6 +1601,387 @@ class SettingsWindow(QWidget):
             )
 
         self.close()
+
+    # ── Tab: Voice Output (TTS + MCP) ─────────────────────────────────────────
+
+    def _tab_voice_output(self):
+        import threading as _threading
+        from tts_engine import (
+            VOICE_CATALOG, available_tts_engine,
+            is_voice_downloaded, download_voice, SAMPLE_TEXT,
+        )
+
+        w = self._scrollable()
+        lay = w.layout()
+
+        # ── TTS Enable ────────────────────────────────────────────────────────
+        tts_box = _section("Text-to-Speech")
+        self.tts_enabled_cb = QCheckBox(
+            "Enable TTS responses — AI agents can speak replies aloud"
+        )
+        self.tts_enabled_cb.setChecked(self.config.get("tts_enabled", False))
+        self.tts_enabled_cb.toggled.connect(self._on_tts_toggle)
+        tts_box.layout().addWidget(self.tts_enabled_cb)
+
+        engine_row = QHBoxLayout()
+        engine_row.addWidget(QLabel("Engine:"))
+        self.tts_engine_combo = QComboBox()
+        detected = available_tts_engine()
+        self.tts_engine_combo.addItem("Piper (neural, recommended)", "piper")
+        self.tts_engine_combo.addItem("espeak-ng (lightweight fallback)", "espeak")
+        cur_engine = self.config.get("tts_engine", "piper")
+        self.tts_engine_combo.setCurrentIndex(0 if cur_engine == "piper" else 1)
+        engine_row.addWidget(self.tts_engine_combo, 1)
+        if detected == "none":
+            engine_status = QLabel("⚠  Neither piper nor espeak-ng found on PATH")
+            engine_status.setStyleSheet("color:#facc15; background:transparent; border:none; font-size:11px;")
+        elif detected == "piper":
+            engine_status = QLabel("✅  piper found")
+            engine_status.setStyleSheet("color:#4ade80; background:transparent; border:none; font-size:11px;")
+        else:
+            engine_status = QLabel("ℹ️  piper not found — espeak-ng available")
+            engine_status.setStyleSheet("color:#8892a4; background:transparent; border:none; font-size:11px;")
+        tts_box.layout().addLayout(engine_row)
+        tts_box.layout().addWidget(engine_status)
+        lay.addWidget(tts_box)
+
+        # ── Voice Picker ──────────────────────────────────────────────────────
+        voice_box = _section("Voice")
+        voice_box.layout().addWidget(_hint(
+            "Select a voice for TTS output. Neural voices (Piper) require a one-time "
+            "model download (~40–130 MB each)."
+        ))
+
+        voice_row = QHBoxLayout()
+        self.tts_voice_combo = QComboBox()
+        cur_voice = self.config.get("tts_voice", "en_US-lessac-medium")
+        for vid, info in VOICE_CATALOG.items():
+            downloaded = is_voice_downloaded(vid)
+            label = info["display"] + ("  ✅" if downloaded else "  ⬇")
+            self.tts_voice_combo.addItem(label, vid)
+            if vid == cur_voice:
+                self.tts_voice_combo.setCurrentIndex(self.tts_voice_combo.count() - 1)
+        self.tts_voice_combo.currentIndexChanged.connect(self._on_tts_voice_selected)
+        voice_row.addWidget(self.tts_voice_combo, 1)
+
+        self._tts_test_btn = QPushButton("▶  Test Voice")
+        self._tts_test_btn.setFixedWidth(110)
+        self._tts_test_btn.clicked.connect(self._tts_test_voice)
+        voice_row.addWidget(self._tts_test_btn)
+        voice_box.layout().addLayout(voice_row)
+
+        # Model download status + progress
+        self._tts_model_status = QLabel("")
+        self._tts_model_status.setObjectName("hint")
+        self._tts_model_status.setWordWrap(True)
+        voice_box.layout().addWidget(self._tts_model_status)
+
+        self._tts_progress = QProgressBar()
+        self._tts_progress.setRange(0, 100)
+        self._tts_progress.setValue(0)
+        self._tts_progress.setVisible(False)
+        self._tts_progress.setStyleSheet(
+            "QProgressBar { background:#1a1f2e; border:1px solid #2a3448; border-radius:4px; height:8px; text-align:center; }"
+            "QProgressBar::chunk { background:#4a9eff; border-radius:4px; }"
+        )
+        voice_box.layout().addWidget(self._tts_progress)
+
+        self._tts_download_btn = QPushButton("⬇  Download Selected Voice")
+        self._tts_download_btn.clicked.connect(self._tts_download_voice)
+        voice_box.layout().addWidget(self._tts_download_btn)
+        lay.addWidget(voice_box)
+
+        # Populate status for initially selected voice
+        self._on_tts_voice_selected()
+
+        # ── Stop Hotkey ───────────────────────────────────────────────────────
+        stop_box = _section("Stop TTS Playback")
+        stop_box.layout().addWidget(_hint(
+            "Press this key at any time to immediately stop TTS playback. "
+            "Works globally even when another window is focused."
+        ))
+        stop_row = QHBoxLayout()
+        cur_stop = self.config.get("tts_stop_key", ["KEY_ESCAPE"])
+        self.tts_stop_key_label = QLabel(self._fmt_keys(cur_stop))
+        self.tts_stop_key_label.setStyleSheet(
+            "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
+            "padding:7px 12px; color:#4a9eff; font-weight:600;"
+        )
+        self._recorded_tts_stop_keys: set = set()
+        self._tts_stop_recording = False
+
+        self._tts_stop_record_btn = QPushButton("Record")
+        self._tts_stop_record_btn.setObjectName("btn_record")
+        self._tts_stop_record_btn.setCheckable(True)
+        self._tts_stop_record_btn.clicked.connect(self._toggle_tts_stop_recording)
+        stop_row.addWidget(self.tts_stop_key_label, 1)
+        stop_row.addWidget(self._tts_stop_record_btn)
+        stop_box.layout().addLayout(stop_row)
+        lay.addWidget(stop_box)
+
+        # ── Response Overlay ──────────────────────────────────────────────────
+        overlay_box = _section("Response Overlay")
+        self.tts_overlay_cb = QCheckBox(
+            "Show overlay while AI is speaking a TTS response"
+        )
+        self.tts_overlay_cb.setChecked(self.config.get("tts_response_overlay", True))
+        overlay_box.layout().addWidget(self.tts_overlay_cb)
+        overlay_box.layout().addWidget(_hint(
+            "A teal card (distinct from the pink recording overlay) will appear at the "
+            "bottom of the screen showing the text being spoken."
+        ))
+        lay.addWidget(overlay_box)
+
+        # ── MCP Server ────────────────────────────────────────────────────────
+        mcp_box = _section("MCP Server (AI Tool Integration)")
+        mcp_box.layout().addWidget(_hint(
+            "Exposes Whisper-Wayland as an MCP tool so AI clients (Claude Desktop, "
+            "custom agents) can trigger voice recording and TTS directly."
+        ))
+
+        self.mcp_enabled_cb = QCheckBox("Enable MCP server")
+        self.mcp_enabled_cb.setChecked(self.config.get("mcp_server_enabled", False))
+        self.mcp_enabled_cb.toggled.connect(self._on_mcp_toggle)
+        mcp_box.layout().addWidget(self.mcp_enabled_cb)
+
+        from mcp_server import SOCKET_PATH as _MCP_SOCK
+        sock_label = QLabel(f"Socket:  {_MCP_SOCK}")
+        sock_label.setStyleSheet(
+            "font-family: monospace; color:#4a9eff; background:transparent; border:none; font-size:11px;"
+        )
+        mcp_box.layout().addWidget(sock_label)
+
+        self._mcp_status_label = QLabel("")
+        self._mcp_status_label.setObjectName("hint")
+        self._mcp_status_label.setWordWrap(True)
+        mcp_box.layout().addWidget(self._mcp_status_label)
+
+        mcp_btn_row = QHBoxLayout()
+        self._mcp_claude_btn = QPushButton("Register in Claude Desktop")
+        self._mcp_claude_btn.clicked.connect(self._mcp_register_claude_desktop)
+        mcp_btn_row.addWidget(self._mcp_claude_btn)
+        mcp_btn_row.addStretch()
+        mcp_box.layout().addLayout(mcp_btn_row)
+
+        mcp_box.layout().addWidget(_hint(
+            "Claude Desktop connection requires socat:  sudo pacman -S socat  (or apt install socat)\n"
+            "Tools exposed:  transcribe_voice · speak_text · get_status"
+        ))
+        lay.addWidget(mcp_box)
+
+        self._on_tts_toggle(self.tts_enabled_cb.isChecked())
+        self._on_mcp_toggle(self.mcp_enabled_cb.isChecked())
+        lay.addStretch()
+        return w
+
+    # ── Voice Output helpers ──────────────────────────────────────────────────
+
+    def _on_tts_toggle(self, enabled: bool):
+        for attr in ("tts_engine_combo", "tts_voice_combo", "_tts_test_btn",
+                     "_tts_download_btn", "tts_overlay_cb"):
+            if hasattr(self, attr):
+                getattr(self, attr).setEnabled(enabled)
+
+    def _on_mcp_toggle(self, enabled: bool):
+        if hasattr(self, "_mcp_claude_btn"):
+            self._mcp_claude_btn.setEnabled(enabled)
+        if hasattr(self, "_mcp_status_label"):
+            if enabled:
+                self._mcp_status_label.setText(
+                    "Server will start on next app launch (or restart now)."
+                )
+            else:
+                self._mcp_status_label.setText("")
+
+    def _on_tts_voice_selected(self):
+        if not hasattr(self, "tts_voice_combo"):
+            return
+        from tts_engine import VOICE_CATALOG, is_voice_downloaded
+        vid = self.tts_voice_combo.currentData()
+        if not vid:
+            return
+        downloaded = is_voice_downloaded(vid)
+        if downloaded:
+            self._tts_model_status.setText(f"✅  Voice downloaded and ready.")
+            self._tts_model_status.setStyleSheet("color:#4ade80; background:transparent; border:none;")
+            self._tts_download_btn.setEnabled(False)
+            self._tts_test_btn.setEnabled(True)
+        else:
+            self._tts_model_status.setText(
+                f"⬇  Not yet downloaded. Click 'Download Selected Voice' to install."
+            )
+            self._tts_model_status.setStyleSheet("color:#facc15; background:transparent; border:none;")
+            self._tts_download_btn.setEnabled(True)
+            self._tts_test_btn.setEnabled(False)
+
+    def _tts_download_voice(self):
+        import threading as _threading
+        from tts_engine import VOICE_CATALOG, download_voice, is_voice_downloaded
+
+        vid = self.tts_voice_combo.currentData()
+        if not vid:
+            return
+
+        self._tts_download_btn.setEnabled(False)
+        self._tts_model_status.setText(f"⏳  Downloading…")
+        self._tts_model_status.setStyleSheet("color:#e2e8f0; background:transparent; border:none;")
+        self._tts_progress.setValue(0)
+        self._tts_progress.setVisible(True)
+
+        def _do():
+            from PyQt6.QtCore import QTimer
+            try:
+                def _prog(done, total):
+                    pct = int(done * 100 / total) if total > 0 else 0
+                    QTimer.singleShot(0, lambda: self._tts_progress.setValue(pct))
+
+                download_voice(vid, progress_cb=_prog)
+
+                def _ok():
+                    self._tts_model_status.setText("✅  Download complete.")
+                    self._tts_model_status.setStyleSheet("color:#4ade80; background:transparent; border:none;")
+                    self._tts_progress.setVisible(False)
+                    self._tts_test_btn.setEnabled(True)
+                    self._tts_download_btn.setEnabled(False)
+                    # Refresh combo labels
+                    self._refresh_tts_voice_labels()
+                QTimer.singleShot(0, _ok)
+            except Exception as e:
+                def _err():
+                    self._tts_model_status.setText(f"❌  Download failed: {e}")
+                    self._tts_model_status.setStyleSheet("color:#f87171; background:transparent; border:none;")
+                    self._tts_progress.setVisible(False)
+                    self._tts_download_btn.setEnabled(True)
+                QTimer.singleShot(0, _err)
+
+        _threading.Thread(target=_do, daemon=True).start()
+
+    def _refresh_tts_voice_labels(self):
+        from tts_engine import VOICE_CATALOG, is_voice_downloaded
+        cur = self.tts_voice_combo.currentData()
+        self.tts_voice_combo.blockSignals(True)
+        self.tts_voice_combo.clear()
+        for vid, info in VOICE_CATALOG.items():
+            downloaded = is_voice_downloaded(vid)
+            label = info["display"] + ("  ✅" if downloaded else "  ⬇")
+            self.tts_voice_combo.addItem(label, vid)
+            if vid == cur:
+                self.tts_voice_combo.setCurrentIndex(self.tts_voice_combo.count() - 1)
+        self.tts_voice_combo.blockSignals(False)
+
+    def _tts_test_voice(self):
+        import threading as _threading
+        from tts_engine import TTSEngine, SAMPLE_TEXT, is_voice_downloaded
+
+        vid = self.tts_voice_combo.currentData()
+        if not vid or not is_voice_downloaded(vid):
+            return
+
+        self._tts_test_btn.setEnabled(False)
+        self._tts_test_btn.setText("▶  Playing…")
+
+        # Temporarily patch config for the test
+        orig_voice = self.config.get("tts_voice")
+        orig_engine = self.config.get("tts_engine")
+        self.config.set("tts_voice", vid)
+        self.config.set("tts_engine", self.tts_engine_combo.currentData() or "piper")
+        self.config.set("tts_enabled", True)
+
+        engine = TTSEngine(self.config)
+
+        def _run():
+            from PyQt6.QtCore import QTimer
+            engine.speak_test(vid)
+            def _done():
+                self._tts_test_btn.setEnabled(True)
+                self._tts_test_btn.setText("▶  Test Voice")
+                self.config.set("tts_voice", orig_voice)
+                self.config.set("tts_engine", orig_engine)
+            QTimer.singleShot(0, _done)
+
+        _threading.Thread(target=_run, daemon=True).start()
+
+    def _toggle_tts_stop_recording(self):
+        if self._tts_stop_record_btn.isChecked():
+            self._tts_stop_recording = True
+            self._recorded_tts_stop_keys = set()
+            self.tts_stop_key_label.setText("Press key…")
+            self._tts_stop_record_btn.setText("Done")
+            self.grabKeyboard()
+        else:
+            self._tts_stop_recording = False
+            self._tts_stop_record_btn.setText("Record")
+            self.releaseKeyboard()
+            if not self._recorded_tts_stop_keys:
+                cur = self.config.get("tts_stop_key", ["KEY_ESCAPE"])
+                self.tts_stop_key_label.setText(self._fmt_keys(cur))
+
+    def keyPressEvent(self, event):
+        # TTS stop key recording intercepts key events when active
+        if self._tts_stop_recording:
+            key = event.key()
+            mapping = {
+                Qt.Key.Key_Meta: "KEY_LEFTMETA",
+                Qt.Key.Key_Alt: "KEY_LEFTALT",
+                Qt.Key.Key_Control: "KEY_LEFTCTRL",
+                Qt.Key.Key_Shift: "KEY_LEFTSHIFT",
+                Qt.Key.Key_Space: "KEY_SPACE",
+                Qt.Key.Key_Escape: "KEY_ESCAPE",
+                Qt.Key.Key_Enter: "KEY_ENTER",
+                Qt.Key.Key_Return: "KEY_ENTER",
+            }
+            if Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
+                key_name = f"KEY_{chr(key)}"
+            else:
+                key_name = mapping.get(key)
+                if not key_name:
+                    key_name = f"KEY_{event.text().upper()}" if event.text() else None
+            if key_name:
+                self._recorded_tts_stop_keys.add(key_name)
+                self.tts_stop_key_label.setText(self._fmt_keys(sorted(self._recorded_tts_stop_keys)))
+            return
+        if not self.active_recording_mode:
+            return super().keyPressEvent(event)
+        key = event.key()
+        mapping = {
+            Qt.Key.Key_Meta: "KEY_LEFTMETA",
+            Qt.Key.Key_Alt: "KEY_LEFTALT",
+            Qt.Key.Key_Control: "KEY_LEFTCTRL",
+            Qt.Key.Key_Shift: "KEY_LEFTSHIFT",
+            Qt.Key.Key_Space: "KEY_SPACE",
+            Qt.Key.Key_Enter: "KEY_ENTER",
+            Qt.Key.Key_Return: "KEY_ENTER",
+        }
+        if Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
+            key_name = f"KEY_{chr(key)}"
+        else:
+            key_name = mapping.get(key)
+            if not key_name:
+                key_name = f"KEY_{event.text().upper()}" if event.text() else None
+        if key_name:
+            if self.active_recording_mode == "hold":
+                self.recorded_keys.add(key_name)
+                self.hotkey_label.setText(self._fmt_keys(sorted(self.recorded_keys)))
+            elif self.active_recording_mode == "toggle":
+                self.recorded_toggle_keys.add(key_name)
+                self.toggle_hotkey_label.setText(self._fmt_keys(sorted(self.recorded_toggle_keys)))
+            elif self.active_recording_mode == "double_tap":
+                self.recorded_dt_keys.add(key_name)
+                self.dt_hotkey_label.setText(self._fmt_keys(sorted(self.recorded_dt_keys)))
+            self._check_hotkey_conflicts()
+
+    def _mcp_register_claude_desktop(self):
+        try:
+            from mcp_server import WhisperMCPServer
+            path = WhisperMCPServer.write_claude_desktop_config()
+            QMessageBox.information(
+                self, "Claude Desktop Registered",
+                f"MCP entry written to:\n{path}\n\n"
+                "Restart Claude Desktop to activate.\n\n"
+                "Requires:  socat  (install via your package manager)."
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Registration Failed", str(e))
 
     # ── Routing tab ───────────────────────────────────────────────────────────
 

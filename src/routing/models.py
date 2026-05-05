@@ -50,6 +50,10 @@ class OutputTarget:
     send_on_release: bool = True
     append_newline: bool = True
     initial_prompt: Optional[str] = None
+    # TTS response loopback
+    response_pipe: Optional[str] = None   # FIFO path the AI writes responses to
+    tts_engine: str = "piper"             # per-target TTS engine override
+    tts_voice: Optional[str] = None       # per-target voice (None = use global)
 
 
 @dataclass
