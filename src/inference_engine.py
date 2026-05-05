@@ -410,5 +410,55 @@ class InferenceEngine(threading.Thread):
             except Exception as e:
                 print(f"Error in inference loop: {e}")
 
+    def transcribe_file(self, path: str) -> str:
+        """
+        Transcribe an audio file from disk and return post-processed text.
+
+        Accepts any format supported by PyAV (WAV, MP3, OGG, FLAC, M4A, …).
+        The audio is resampled to 16 kHz mono before being passed to Whisper.
+        Raises FileNotFoundError if the path does not exist.
+        Raises RuntimeError if no backend is loaded.
+        """
+        import av
+        import numpy as np
+        from scipy.signal import resample as _resample
+
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Audio file not found: {path!r}")
+
+        # Decode audio with PyAV
+        samples = []
+        sample_rate = 16000
+        with av.open(path) as container:
+            stream = container.streams.audio[0]
+            sample_rate = stream.sample_rate or 16000
+            for frame in container.decode(stream):
+                arr = frame.to_ndarray()  # shape: (channels, samples) or (samples,)
+                if arr.dtype == np.int16:
+                    arr = arr.astype(np.float32) / 32768.0
+                elif arr.dtype == np.int32:
+                    arr = arr.astype(np.float32) / 2147483648.0
+                else:
+                    arr = arr.astype(np.float32)
+                if arr.ndim > 1:
+                    arr = arr.mean(axis=0)  # stereo/multi → mono
+                samples.append(arr)
+
+        if not samples:
+            return "(no speech detected)"
+
+        audio = np.concatenate(samples)
+
+        if sample_rate != 16000:
+            audio = _resample(audio, int(len(audio) * 16000 / sample_rate)).astype(np.float32)
+
+        with self._model_lock:
+            backend = self._backend
+        if backend is None:
+            raise RuntimeError("No backend loaded")
+
+        result = backend.transcribe(audio, initial_prompt=self._build_initial_prompt())
+        return self._postprocess(result.text.strip())
+
     def stop(self):
         self.running = False

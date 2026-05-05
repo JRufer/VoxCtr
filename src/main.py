@@ -216,16 +216,16 @@ def main():
 
         # ── MCP Server ────────────────────────────────────────────────────
         _mcp_result_queue: queue.Queue = queue.Queue()
+        _mcp_history: list = []        # rolling transcript history (max 100 entries)
+        _mcp_last: list = [""]         # single-element cell for last transcript
 
         def _mcp_on_record(timeout: float) -> str:
             """Called by MCP tool — triggers a recording and waits for result."""
             import threading as _t
             _mcp_result_queue.queue.clear()
-            # Schedule on Qt main thread
             from PyQt6.QtCore import QTimer as _QT
             _QT.singleShot(0, lambda: on_press('mcp'))
 
-            # Auto-stop after timeout seconds (MCP recording has no key-release)
             def _auto_stop():
                 time.sleep(timeout)
                 from PyQt6.QtCore import QTimer as _QT2
@@ -248,10 +248,92 @@ def main():
                 "speaking": tts_engine.is_speaking,
             }
 
+        def _mcp_on_inject(text: str) -> dict:
+            from routing.targets import InjectTarget
+            from routing.models import OutputTarget, DeliveryType
+            cfg_obj = OutputTarget(
+                id="mcp-inject",
+                label="MCP inject",
+                delivery=DeliveryType.INJECT,
+                append_newline=False,
+            )
+            result = InjectTarget(cfg_obj).deliver(text)
+            return {"success": result.success, "error": result.error}
+
+        def _mcp_on_stop_tts():
+            tts_engine.stop()
+
+        def _mcp_get_last_transcript() -> str:
+            return _mcp_last[0]
+
+        def _mcp_get_history(n: int) -> list:
+            return _mcp_history[-n:]
+
+        def _mcp_list_voices() -> list:
+            from tts_engine import VOICE_CATALOG, is_voice_downloaded
+            return [
+                {
+                    "id": vid,
+                    "display": info["display"],
+                    "lang": info["lang"],
+                    "quality": info["quality"],
+                    "downloaded": is_voice_downloaded(vid),
+                }
+                for vid, info in VOICE_CATALOG.items()
+            ]
+
+        def _mcp_on_set_voice(voice_id: str) -> str:
+            from tts_engine import VOICE_CATALOG, is_voice_downloaded
+            if voice_id not in VOICE_CATALOG:
+                raise ValueError(
+                    f"Unknown voice: {voice_id!r}. "
+                    f"Call list_voices to see valid IDs."
+                )
+            if not is_voice_downloaded(voice_id):
+                raise ValueError(
+                    f"Voice not downloaded: {voice_id!r}. "
+                    f"Download it first in Settings → Voice Output."
+                )
+            config.set("tts_voice", voice_id)
+            return f"voice set to {voice_id}"
+
+        def _mcp_on_transcribe_file(path: str) -> str:
+            return inference.transcribe_file(path)
+
+        _MCP_SETTABLE_KEYS = {
+            "tts_enabled", "tts_engine", "tts_voice", "tts_response_overlay",
+            "vad_threshold", "min_silence_duration_ms", "mcp_record_timeout",
+            "remove_fillers", "spoken_punctuation", "auto_format_lists",
+            "quiet_mode", "dictation_mode", "inference_mode",
+            "overlay_style", "show_overlay",
+            "ollama_enabled", "ollama_model", "ollama_mode",
+        }
+
+        def _mcp_get_config(key: str):
+            return config.get(key)
+
+        def _mcp_on_set_config(key: str, value) -> str:
+            if key not in _MCP_SETTABLE_KEYS:
+                raise ValueError(
+                    f"Key {key!r} is not writable via MCP. "
+                    f"Writable keys: {sorted(_MCP_SETTABLE_KEYS)}"
+                )
+            config.set(key, value)
+            return f"config.{key} = {value!r}"
+
         mcp_server = WhisperMCPServer(
             on_record=_mcp_on_record,
             on_speak=_mcp_on_speak,
             get_status=_mcp_get_status,
+            on_inject=_mcp_on_inject,
+            on_stop_tts=_mcp_on_stop_tts,
+            get_last_transcript=_mcp_get_last_transcript,
+            list_voices=_mcp_list_voices,
+            on_set_voice=_mcp_on_set_voice,
+            on_transcribe_file=_mcp_on_transcribe_file,
+            get_config=_mcp_get_config,
+            on_set_config=_mcp_on_set_config,
+            get_history=_mcp_get_history,
         )
         if config.get("mcp_server_enabled", False):
             mcp_server.start()
@@ -290,6 +372,11 @@ def main():
             dbus_svc.set_status("idle")
             dbus_svc.set_word_count(total_words)
             dbus_svc.notify_text(text)
+            # Maintain MCP transcript history
+            _mcp_last[0] = text
+            _mcp_history.append(text)
+            if len(_mcp_history) > 100:
+                _mcp_history.pop(0)
             # Feed MCP result queue if recording was triggered by MCP
             _mcp_result_queue.put(text)
 
