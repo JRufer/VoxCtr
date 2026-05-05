@@ -358,7 +358,7 @@ class TestTTSEngine(unittest.TestCase):
             call_order.append("speak")
 
         with patch.object(eng, "_speak_espeak", side_effect=slow_espeak), \
-             patch("shutil.which", return_value=None):
+             patch("shutil.which", side_effect=lambda x: "/usr/bin/espeak-ng" if x == "espeak-ng" else None):
             eng.speak_test("en-us-lessac-medium", text="hi")
             call_order.append("after")
 
