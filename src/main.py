@@ -45,6 +45,8 @@ class AppState(QObject):
     text_updated = pyqtSignal(str)
     # Emitted from injector thread → connected to main-thread slots
     text_injected = pyqtSignal(int, str)  # (total_words, text)
+    mcp_record_requested = pyqtSignal()
+    mcp_stop_requested = pyqtSignal()
 
 def ensure_single_instance():
     lock_file = os.path.join(os.path.expanduser("~"), ".local", "share", "whisper-wayland", "app.pid")
@@ -200,6 +202,10 @@ def main():
             recorder.stop_recording()
             inference.set_recording(False)
 
+        from PyQt6.QtCore import Qt
+        state.mcp_record_requested.connect(lambda: on_press('mcp'), Qt.ConnectionType.QueuedConnection)
+        state.mcp_stop_requested.connect(lambda: on_release('mcp'), Qt.ConnectionType.QueuedConnection)
+
         def on_toggle():
             """Called by DBus ToggleRecording() from an external tool."""
             from PyQt6.QtCore import QTimer as _QTimer
@@ -223,13 +229,12 @@ def main():
             """Called by MCP tool — triggers a recording and waits for result."""
             import threading as _t
             _mcp_result_queue.queue.clear()
-            from PyQt6.QtCore import QTimer as _QT
-            _QT.singleShot(0, lambda: on_press('mcp'))
+            
+            state.mcp_record_requested.emit()
 
             def _auto_stop():
                 time.sleep(timeout)
-                from PyQt6.QtCore import QTimer as _QT2
-                _QT2.singleShot(0, lambda: on_release('mcp'))
+                state.mcp_stop_requested.emit()
 
             _t.Thread(target=_auto_stop, daemon=True).start()
 
