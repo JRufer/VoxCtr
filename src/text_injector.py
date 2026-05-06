@@ -11,6 +11,12 @@ try:
 except ImportError:
     _HAS_PORTAL = False
 
+try:
+    import atspi_context as _atspi
+    _HAS_ATSPI = True
+except ImportError:
+    _HAS_ATSPI = False
+
 # Word count accumulator for P0.6 (session stats)
 _session_word_count = 0
 
@@ -81,6 +87,11 @@ class TextInjector(threading.Thread):
         # Short pause so the hotkey's physical key-up events propagate to the
         # compositor before we send virtual keyboard events on top of them.
         time.sleep(0.12)
+
+        # --- AT-SPI2: direct Text.insertText (no keystrokes, no modifier issues) ---
+        if not injected and _HAS_ATSPI and self.config.get('atspi_injection', True):
+            if _atspi.is_available() and _atspi.inject_text(text):
+                injected = True
 
         # --- Wayland: release modifiers first, then type ---
         if is_wayland and shutil.which('wtype'):

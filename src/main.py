@@ -26,6 +26,12 @@ from gui.overlay_manager import OverlayManager, OverlayProxy
 from gui.setup_dialog import needs_setup, PermissionsSetupDialog
 from gui.overlays.tts_response import TTSResponseOverlay
 
+try:
+    import atspi_context
+    _HAS_ATSPI = True
+except ImportError:
+    _HAS_ATSPI = False
+
 @contextlib.contextmanager
 def ignore_stderr():
     devnull = os.open(os.devnull, os.O_WRONLY)
@@ -309,6 +315,10 @@ def main():
         else:
             tray.show()
 
+        # Start AT-SPI2 focus tracker (no-op when pyatspi is not installed)
+        if _HAS_ATSPI:
+            atspi_context.start()
+
         # Start threads
         recorder.start()
         inference.start()
@@ -327,6 +337,8 @@ def main():
         sys.exit(1)
     finally:
         try:
+            if _HAS_ATSPI:
+                atspi_context.stop()
             listener.stop()
             recorder.stop()
             inference.stop()

@@ -56,3 +56,6 @@ typer==0.24.1
 typing_extensions==4.15.0
 # Optional: install for in-process whisper.cpp (lower latency than subprocess)
 # pywhispercpp>=1.2.0
+# Optional: install for AT-SPI2 accessibility integration (focus tracking, context-aware
+# transcription, direct text insertion). Arch: python-atspi; Debian/Ubuntu: python3-pyatspi
+# pyatspi

@@ -45,6 +45,11 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 - **Response loopback** — per-target `response_pipe` FIFO: agents write responses there and they are spoken automatically
 - Full documentation: **[docs/mcp_documentation.md](docs/mcp_documentation.md)**
 
+### AT-SPI2 Accessibility Integration (optional)
+- **Direct text insertion** — injects transcribed text via `AT-SPI2 Text.insertText` instead of simulating keystrokes; no modifier-key conflicts, no need for `wtype` or `xdotool`
+- **Context-aware transcription** — reads the text preceding your cursor at recording start and passes it to Whisper as an `initial_prompt`, improving accuracy by priming the model with your document's vocabulary and style
+- **Auto code mode** — automatically switches to code dictation mode when a terminal or IDE text widget is focused, without changing your global Settings
+
 ### System & UI
 - **Transcription history** — persistent, searchable panel with one-click copy
 - **Swappable recording overlays** — Waveform, Pulse Circle, Voice Card, or drop in your own; each displays a **routing indicator badge** showing exactly which output target is active while you record
@@ -102,6 +107,13 @@ pip install noisereduce
 
 # Optional: DBus control interface
 pip install dbus-python
+
+# Optional: AT-SPI2 accessibility integration (focus tracking, context-aware
+# transcription, direct text insertion — see section below)
+# Arch Linux:
+sudo pacman -S python-atspi
+# Debian / Ubuntu:
+# sudo apt install python3-pyatspi
 
 # Optional: NVIDIA GPU acceleration
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
@@ -186,6 +198,58 @@ pip install pywhispercpp
 # For Vulkan-enabled builds, install from source:
 GGML_VULKAN=1 pip install git+https://github.com/abdeladim-s/pywhispercpp
 ```
+
+---
+
+## AT-SPI2 Accessibility Integration
+
+AT-SPI2 (Assistive Technology Service Provider Interface) is the standard Linux accessibility bus. When the optional `pyatspi` library is installed, Whisper-Wayland gains three capabilities that work transparently alongside the existing injection chain.
+
+### Installation
+
+```bash
+# Arch Linux
+sudo pacman -S python-atspi
+
+# Debian / Ubuntu
+sudo apt install python3-pyatspi
+```
+
+No restart is needed — the module is loaded at startup and gracefully disabled when the library is absent.
+
+### What it does
+
+#### 1. Direct text insertion (no keystrokes)
+
+When AT-SPI2 is available, transcribed text is inserted directly into the focused widget via the `AT-SPI2 Text.insertText` interface instead of simulating key events with `wtype` or `xdotool`. This eliminates the modifier-key conflicts that can occur when a hotkey is released at the same time virtual keyboard events are sent.
+
+The app falls back automatically to `wtype` → portal → `xdotool` → clipboard for widgets that do not expose the `Text` interface (e.g. Electron apps, native terminal emulators using raw PTY I/O).
+
+#### 2. Context-aware transcription
+
+When you press your recording hotkey, Whisper-Wayland reads up to 300 characters of text immediately before the cursor in the focused widget and passes it to Whisper as an `initial_prompt`. This primes the model with your document's vocabulary, spelling, and sentence style, reducing errors on specialised terminology and proper nouns without any manual prompt configuration.
+
+#### 3. Auto code mode
+
+When the focused widget is a terminal or IDE text area (AT-SPI2 role `terminal` or `text`), the app automatically switches to **code dictation mode** for that recording session. Spoken constructs are converted to syntax (`"get underscore user dot name"` → `get_user.name`) without changing your global Settings. The mode resets to your configured default on the next recording.
+
+### Configuration
+
+All three behaviours are individually switchable in `~/.config/whisper-wayland/config.json`:
+
+```json
+{
+  "atspi_injection":       true,
+  "atspi_context_prompt":  true,
+  "atspi_auto_code_mode":  true
+}
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `atspi_injection` | `true` | Try AT-SPI2 `insertText` before falling back to `wtype`/`xdotool` |
+| `atspi_context_prompt` | `true` | Feed surrounding text to Whisper as `initial_prompt` at recording start |
+| `atspi_auto_code_mode` | `true` | Switch to code dictation mode when a terminal/IDE widget is focused |
 
 ---
 

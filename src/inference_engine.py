@@ -97,6 +97,7 @@ class InferenceEngine(threading.Thread):
         self._current_target_id: str = 'default'
         self._current_post_processing: str = 'default'
         self._current_initial_prompt_override: str | None = None
+        self._atspi_context_at_start = None  # FocusContext snapshot taken on recording start
 
         # P2.1: LLM post-processor (probe happens lazily on first use)
         self.llm = LLMPostprocessor(config)
@@ -230,10 +231,20 @@ class InferenceEngine(threading.Thread):
     def _build_initial_prompt(self):
         if self._current_initial_prompt_override is not None:
             return self._current_initial_prompt_override
+
+        parts = []
+
+        # Prepend surrounding text captured at recording start so Whisper can
+        # match vocabulary and sentence style to the current document context.
+        ctx = self._atspi_context_at_start
+        if ctx and ctx.surrounding_text.strip():
+            parts.append(ctx.surrounding_text.strip())
+
         vocab = self.config.get("custom_vocabulary", [])
-        if not vocab:
-            return None
-        return ", ".join(vocab)
+        if vocab:
+            parts.append(", ".join(vocab))
+
+        return " ".join(parts) if parts else None
 
     def _apply_spoken_punctuation(self, text):
         for pattern, symbol in _PUNCT_MAP:
@@ -284,6 +295,8 @@ class InferenceEngine(threading.Thread):
 
         # 'default' or unknown: full pipeline
         mode = self.config.get("dictation_mode", "normal")
+        if getattr(self, '_atspi_forced_code_mode', False):
+            mode = "code"
         if mode == "code":
             text = self._apply_code_mode(text)
         else:
@@ -307,10 +320,32 @@ class InferenceEngine(threading.Thread):
             self._current_target_id = target_id
             self._current_post_processing = post_processing
             self._current_initial_prompt_override = initial_prompt_override
+            self._atspi_context_at_start = self._capture_atspi_context()
         else:
             self.process_buffer(incremental=False)
             with self._buffer_lock:
                 self.buffer.clear()
+
+    def _capture_atspi_context(self):
+        """Snapshot the focused widget's AT-SPI2 context at the moment recording starts."""
+        if not self.config.get('atspi_context_prompt', True):
+            return None
+        try:
+            import atspi_context
+            ctx = atspi_context.get_focused_context(max_chars=300)
+            if ctx is None:
+                return None
+            # Auto-switch to code mode when focused on a terminal or IDE text widget,
+            # unless the user has explicitly overridden dictation_mode in settings.
+            if (ctx.is_code_context
+                    and self.config.get('atspi_auto_code_mode', True)
+                    and self.config.get('dictation_mode', 'normal') == 'normal'):
+                self._atspi_forced_code_mode = True
+            else:
+                self._atspi_forced_code_mode = False
+            return ctx
+        except Exception:
+            return None
 
     @property
     def last_language(self):

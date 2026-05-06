@@ -49,6 +49,10 @@ DEFAULT_CONFIG = {
     # MCP Server
     "mcp_server_enabled": False,
     "mcp_record_timeout": 15.0,         # max seconds for MCP-triggered recording
+    # AT-SPI2 accessibility integration (requires: pip install pyatspi)
+    "atspi_injection": True,            # try AT-SPI2 Text.insertText before wtype/xdotool
+    "atspi_context_prompt": True,       # feed surrounding text to Whisper as initial_prompt
+    "atspi_auto_code_mode": True,       # auto-switch to code mode for terminal/IDE widgets
 }
 
 CONFIG_PATH = Path.home() / ".config" / "whisper-wayland" / "config.json"
