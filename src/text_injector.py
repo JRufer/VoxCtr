@@ -6,6 +6,13 @@ import subprocess
 import os
 
 try:
+    from evdev import ecodes as _ecodes
+    _HAS_EVDEV = True
+except ImportError:
+    _ecodes = None
+    _HAS_EVDEV = False
+
+try:
     from portal_injector import PortalInjector
     _HAS_PORTAL = True
 except ImportError:
@@ -146,11 +153,19 @@ class TextInjector(threading.Thread):
             if copied:
                 time.sleep(0.05)
                 if is_wayland and shutil.which('ydotool'):
-                    # Release stuck modifiers (keycodes: 29=Ctrl, 125=Super, 56=Alt)
-                    # before sending Ctrl+V so the compositor doesn't see doubled modifiers.
-                    for kc in ['29:0', '125:0', '56:0']:
+                    # Release stuck modifiers before sending Ctrl+V so the compositor
+                    # doesn't see doubled modifiers.
+                    if _HAS_EVDEV:
+                        _mod_kcs = [
+                            _ecodes.KEY_LEFTCTRL,
+                            _ecodes.KEY_LEFTMETA,
+                            _ecodes.KEY_LEFTALT,
+                        ]
+                    else:
+                        _mod_kcs = [29, 125, 56]  # KEY_LEFTCTRL, KEY_LEFTMETA, KEY_LEFTALT
+                    for kc in _mod_kcs:
                         subprocess.run(
-                            ['ydotool', 'key', kc], env=env,
+                            ['ydotool', 'key', f'{kc}:0'], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                         )
                     subprocess.run(['ydotool', 'key', 'ctrl+v'], env=env, stderr=subprocess.DEVNULL)

@@ -23,9 +23,8 @@ from config_validator import validate_all, ConfigValidationError
 from gui.tray_icon import WhisperTrayIcon
 from gui.settings_window import SettingsWindow
 from gui.history_window import HistoryWindow
-from gui.overlay_manager import OverlayManager, OverlayProxy
+from gui.overlay_manager import OverlayManager, OverlayProxy, OverlaySubprocessProxy
 from gui.setup_dialog import needs_setup, PermissionsSetupDialog
-from gui.overlays.tts_response import TTSResponseOverlay
 
 try:
     import atspi_context
@@ -123,35 +122,58 @@ def main():
         text_queue = queue.Queue()
         realtime_text_queue = queue.Queue()
 
-        # Initialize overlay manager and load the user-selected overlay
+        # Initialize overlay manager.
+        # On Wayland, overlays run in a dedicated subprocess with
+        # QT_WAYLAND_SHELL_INTEGRATION=layer-shell for native layer-shell support.
+        # On X11, overlays run in-process as before.
         overlay_manager = OverlayManager()
         _initial_style  = config.get("overlay_style", "voice_card")
-        _active_overlay = overlay_manager.load(_initial_style)
-        overlay_proxy   = OverlayProxy(_active_overlay)
-        _active_style   = [_initial_style]   # mutable cell for the closure below
+        _active_style   = [_initial_style]
+
+        _on_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+        if _on_wayland:
+            overlay_proxy: OverlaySubprocessProxy | OverlayProxy = OverlaySubprocessProxy(_initial_style)
+        else:
+            _active_overlay = overlay_manager.load(_initial_style)
+            overlay_proxy   = OverlayProxy(_active_overlay)
 
         def _update_overlay():
             new_style = config.get("overlay_style", "voice_card")
             if new_style != _active_style[0]:
                 print(f"[Main] Swapping overlay style: {_active_style[0]} -> {new_style}")
-                new_overlay = overlay_manager.load(new_style)
-                if new_overlay:
-                    overlay_proxy.swap(new_overlay)
-                    _active_style[0] = new_style
+                if _on_wayland:
+                    overlay_proxy.swap(new_style)
+                else:
+                    new_overlay = overlay_manager.load(new_style)
+                    if new_overlay:
+                        overlay_proxy.swap(new_overlay)
+                _active_style[0] = new_style
 
         # P3.1: Routing system
         router = OutputTargetRouter(load_targets())
 
         # ── TTS engine + response overlay ─────────────────────────────────
+        # On Wayland the TTS overlay lives inside the overlay subprocess.
+        # On X11 it is instantiated here in-process.
         tts_engine = TTSEngine(config)
-        tts_overlay = TTSResponseOverlay()
 
-        def _on_tts_started(text: str, source_label: str = ""):
-            if config.get("tts_response_overlay", True):
-                tts_overlay.show_response(text, source_label=source_label)
+        if _on_wayland:
+            def _on_tts_started(text: str, source_label: str = ""):
+                if config.get("tts_response_overlay", True):
+                    overlay_proxy.show_tts(text, source_label)
 
-        def _on_tts_finished():
-            tts_overlay.hide_response()
+            def _on_tts_finished():
+                overlay_proxy.hide_tts()
+        else:
+            from gui.overlays.tts_response import TTSResponseOverlay
+            _tts_overlay_widget = TTSResponseOverlay()
+
+            def _on_tts_started(text: str, source_label: str = ""):
+                if config.get("tts_response_overlay", True):
+                    _tts_overlay_widget.show_response(text, source_label=source_label)
+
+            def _on_tts_finished():
+                _tts_overlay_widget.hide_response()
 
         tts_engine.on_started  = _on_tts_started
         tts_engine.on_finished = _on_tts_finished
@@ -349,6 +371,8 @@ def main():
             mcp_server.stop()
             for rl in _response_listeners:
                 rl.stop()
+            if isinstance(overlay_proxy, OverlaySubprocessProxy):
+                overlay_proxy.stop()
         except:
             pass
 

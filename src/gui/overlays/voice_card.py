@@ -30,10 +30,8 @@ class OverlayUI(OverlayUIBase):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(
-            Qt.WindowType.ToolTip |
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.X11BypassWindowManagerHint |
             Qt.WindowType.WindowTransparentForInput
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)

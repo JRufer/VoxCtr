@@ -13,7 +13,18 @@ Each overlay file must expose:
 import os
 import sys
 import importlib.util
+import multiprocessing.connection
+import multiprocessing.shared_memory
+import subprocess as _subprocess
 from pathlib import Path
+
+# Lazy numpy — only needed inside OverlaySubprocessProxy.update_audio/_start
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:
+    np = None
+    _HAS_NUMPY = False
 
 _BUILTIN_DIR = Path(__file__).parent / "overlays"
 _USER_DIR    = Path.home() / ".config" / "whisper-wayland" / "overlays"
@@ -47,10 +58,8 @@ class OverlayUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowFlags(
-            Qt.WindowType.ToolTip |
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
-            Qt.WindowType.X11BypassWindowManagerHint |
             Qt.WindowType.WindowTransparentForInput
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -247,3 +256,143 @@ class OverlayManager:
         if not template.exists():
             template.write_text(_TEMPLATE_CONTENT)
         return _USER_DIR
+
+
+# ── Audio dimensions shared between proxy and subprocess ─────────────────────
+
+_AUDIO_SAMPLES = 1024
+_AUDIO_BYTES   = _AUDIO_SAMPLES * 4   # float32
+
+
+class OverlaySubprocessProxy:
+    """
+    Manages the overlay subprocess (which runs with QT_WAYLAND_SHELL_INTEGRATION=layer-shell)
+    and exposes the same show_mode / hide_mode / update_audio / swap / stop interface as
+    OverlayProxy.
+
+    The subprocess is started lazily on the first call to show_mode() so that app startup
+    time is unaffected.  If the subprocess exits unexpectedly it is restarted automatically
+    on the next command.
+    """
+
+    def __init__(self, initial_overlay_id: str = "voice_card"):
+        self._overlay_id  = initial_overlay_id
+        self._proc: _subprocess.Popen | None = None
+        self._conn: multiprocessing.connection.Connection | None = None
+        self._shm:  multiprocessing.shared_memory.SharedMemory | None = None
+        self._shm_buf = None
+        self._seq = 0
+
+    # ── Internal lifecycle ────────────────────────────────────────────────────
+
+    def _start(self) -> None:
+        if self._proc is not None and self._proc.poll() is None:
+            return   # already running
+
+        # Create shared memory with a unique name based on our PID
+        shm_name = f"whisper_overlay_{os.getpid()}"
+        try:
+            # Clean up any leftover shm from a previous crash
+            old = multiprocessing.shared_memory.SharedMemory(name=shm_name)
+            old.close()
+            old.unlink()
+        except Exception:
+            pass
+        self._shm    = multiprocessing.shared_memory.SharedMemory(create=True, size=_AUDIO_BYTES, name=shm_name)
+        if _HAS_NUMPY:
+            self._shm_buf = np.frombuffer(self._shm.buf, dtype=np.float32)
+        else:
+            self._shm_buf = None
+
+        # One-directional pipe: parent writes, child reads
+        parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
+        self._conn = parent_conn
+        child_fd   = child_conn.fileno()
+
+        subprocess_script = str(Path(__file__).parent / "overlay_subprocess.py")
+
+        self._proc = _subprocess.Popen(
+            [
+                sys.executable,
+                subprocess_script,
+                self._overlay_id,
+                str(child_fd),
+                shm_name,
+                str(_AUDIO_BYTES),
+            ],
+            pass_fds=(child_fd,),
+            env=os.environ.copy(),
+        )
+        child_conn.close()   # close child end in parent
+
+    def _send(self, msg: tuple) -> None:
+        if self._proc is None or self._proc.poll() is not None:
+            self._start()
+        try:
+            self._conn.send(msg)
+        except (BrokenPipeError, OSError):
+            self._cleanup()
+            self._start()
+            try:
+                self._conn.send(msg)
+            except Exception:
+                pass
+
+    def _cleanup(self) -> None:
+        if self._conn:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+        if self._shm:
+            try:
+                self._shm.close()
+                self._shm.unlink()
+            except Exception:
+                pass
+            self._shm     = None
+            self._shm_buf = None
+
+    # ── Public interface ──────────────────────────────────────────────────────
+
+    def update_audio(self, data) -> None:
+        if self._shm_buf is None:
+            return
+        try:
+            length = min(len(data), _AUDIO_SAMPLES)
+            self._shm_buf[:length] = data[:length]
+            self._seq += 1
+            self._send(("audio", self._seq))
+        except Exception:
+            pass
+
+    def show_mode(self, label: str = "") -> None:
+        self._send(("show", label))
+
+    def hide_mode(self) -> None:
+        self._send(("hide",))
+
+    def swap(self, overlay_id: str) -> None:
+        """Hot-swap recording overlay by ID string (not widget instance)."""
+        self._overlay_id = overlay_id
+        self._send(("swap", overlay_id))
+
+    def show_tts(self, text: str, source_label: str = "") -> None:
+        self._send(("tts_show", text, source_label))
+
+    def hide_tts(self) -> None:
+        self._send(("tts_hide",))
+
+    def stop(self) -> None:
+        """Cleanly shut down the subprocess."""
+        try:
+            self._send(("quit",))
+        except Exception:
+            pass
+        if self._proc:
+            try:
+                self._proc.wait(timeout=3)
+            except _subprocess.TimeoutExpired:
+                self._proc.kill()
+        self._cleanup()

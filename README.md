@@ -1,6 +1,8 @@
 # Whisper-Wayland
 
-A native, on-device voice-to-text tool for Linux with first-class Wayland support (and X11 compatibility). Uses OpenAI's Whisper model for fast, private, offline transcription — and acts as a programmable **voice input broker** that routes speech to any destination: a focused window, a terminal agent, a file, a socket, or a shell command.
+A native, on-device voice-to-text tool for Linux with **full Wayland-native support**. Uses OpenAI's Whisper model for fast, private, offline transcription — and acts as a programmable **voice input broker** that routes speech to any destination: a focused window, a terminal agent, a file, a socket, or a shell command.
+
+Runs entirely without X11 or XWayland. Overlays use `zwlr_layer_shell_v1` on compositors that support it (KDE Plasma, Sway, Hyprland); text injection uses `wtype` (Wayland virtual keyboard) or the xdg-desktop-portal RemoteDesktop interface; hotkeys are captured via `evdev` directly from the kernel input layer.
 
 ![Banner](assets/banner.png)
 
@@ -397,6 +399,14 @@ The visual overlay shown while recording is fully swappable. Three styles ship o
 
 Switch styles in **Settings → Appearance → Recording Overlay**. Changes take effect immediately — no restart needed.
 
+### Wayland Layer-Shell Architecture
+
+On Wayland, overlay windows run in a **dedicated subprocess** (`src/gui/overlay_subprocess.py`) that sets `QT_WAYLAND_SHELL_INTEGRATION=layer-shell` before creating its `QApplication`. This activates Qt's native `zwlr_layer_shell_v1` protocol support, placing overlays at the compositor's **Overlay layer** — guaranteed to appear above fullscreen windows on KDE Plasma, Sway, Hyprland, and all wlroots-based compositors.
+
+The main process (settings window, system tray) is entirely unaffected by this setting. The subprocess communicates via a `multiprocessing.Pipe` for commands (show, hide, swap, TTS) and a shared-memory block for audio data frames.
+
+On GNOME Wayland (which does not implement `zwlr_layer_shell_v1`), Qt falls back silently to `xdg_toplevel` with `WindowStaysOnTopHint` — the overlay still appears, just without compositor-guaranteed z-ordering above fullscreen content.
+
 ### Routing Indicator Badge
 
 Every overlay displays a **routing indicator badge** while recording — a small label showing the human-readable name of the active output target (e.g. `Focused Window`, `Hermes Agent`, `Voice Journal`). This gives you an unambiguous, at-a-glance confirmation of where your speech is being sent before you say a word.
@@ -535,7 +545,7 @@ Post-Processing (per target_id setting)
         │
         ▼
 OutputTargetRouter
-  ├── inject    → wtype / xdotool / clipboard+paste
+  ├── inject    → AT-SPI2 insertText → wtype → portal RemoteDesktop → clipboard+paste
   ├── clipboard → wl-copy
   ├── exec      → subprocess (shell=False)
   ├── pipe      → O_NONBLOCK write to FIFO
@@ -550,9 +560,12 @@ ResponseListener(s)  ←── agent writes response text to FIFO
 TTSEngine (queue + worker thread)
   ├── piper --model … --output_raw | aplay …
   └── espeak-ng fallback
-        │ on_started / on_finished callbacks
+        │ on_started / on_finished callbacks (IPC on Wayland)
         ▼
-TTSResponseOverlay (teal floating widget, shown while speaking)
+OverlaySubprocessProxy  ──multiprocessing.Pipe──▶  overlay_subprocess.py
+  (main process)                                     QT_WAYLAND_SHELL_INTEGRATION=layer-shell
+                                                     ├── RecordingOverlay  (zwlr_layer_shell_v1)
+                                                     └── TTSResponseOverlay (teal, while speaking)
 
                  ┌─────────────────────────┐
                  │    MCP Server           │
@@ -577,7 +590,7 @@ src/
 ├── text_injector.py          # Text delivery thread (inject + routing dispatch)
 ├── llm_postprocessor.py      # Ollama integration
 ├── dbus_service.py           # DBus control interface
-├── portal_injector.py        # Wayland RemoteDesktop portal fallback
+├── portal_injector.py        # xdg-desktop-portal RemoteDesktop (async init, full Unicode)
 ├── tts_engine.py             # Piper/espeak TTS engine, voice catalog, model download
 ├── tts_responder.py          # ResponseListener — reads agent FIFO → TTSEngine
 ├── mcp_server.py             # MCP JSON-RPC server (Unix socket)
@@ -591,9 +604,13 @@ src/
 └── gui/
     ├── settings_window.py    # PyQt6 settings dialog (tabbed, incl. Voice Output tab)
     ├── tray_icon.py          # System tray icon
-    ├── waveform_overlay.py   # OpenGL recording overlay
     ├── history_window.py     # Transcription history panel
+    ├── overlay_manager.py    # OverlayManager + OverlayProxy + OverlaySubprocessProxy
+    ├── overlay_subprocess.py # Wayland overlay process (layer-shell QApplication)
     └── overlays/
+        ├── voice_card.py     # Scrolling bar waveform card
+        ├── pulse.py          # Glowing pulse circle
+        ├── waveform.py       # OpenGL oscilloscope
         └── tts_response.py   # Teal TTS response overlay widget
 docs/
 ├── overlays.md               # Custom overlay specification
@@ -626,6 +643,7 @@ The test suite covers:
 | `test_tts_engine.py` | Voice catalog validation, path helpers, download extraction, TTSEngine (30 tests) |
 | `test_tts_responder.py` | ResponseListener FIFO reading, ordering, empty-line skip, late FIFO (6 tests) |
 | `test_mcp_server.py` | JSON-RPC dispatch, all tools, error codes, socket server integration (16 tests) |
+| `test_wayland_native.py` | Portal keysym map (ASCII, control chars, Unicode, emoji), `OverlaySubprocessProxy` IPC interface, layer-shell subprocess structure, Flatpak manifest, evdev constants (36 tests) |
 
 ---
 
