@@ -54,7 +54,7 @@ class ResponseListener(threading.Thread):
                         if not text:
                             continue
                         print(f"[ResponseListener:{self.label}] → TTS: {text[:80]!r}")
-                        self.tts_speak(text)
+                        self.tts_speak(text, self.label)
                         if self.on_response:
                             try:
                                 self.on_response(text)

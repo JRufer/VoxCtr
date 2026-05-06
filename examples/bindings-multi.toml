@@ -1,0 +1,109 @@
+## bindings-multi.toml — Hotkey binding examples
+##
+## Maps keyboard gestures to output targets.  Combine with targets-multi.toml
+## for a complete setup.
+##
+## Copy to ~/.config/whisper-wayland/bindings.toml
+
+format_version = "1.1"
+
+# ── Hold Meta+Space → default inject ─────────────────────────────────────────
+[[binding]]
+id = "default_hold"
+label = "Dictate (Hold)"
+keys = ["KEY_LEFTMETA", "KEY_SPACE"]
+gesture = "hold"
+target_id = "default"
+tap_ms = 250
+hold_threshold_ms = 200
+
+# ── Toggle Ctrl+Meta+Space → default inject ──────────────────────────────────
+[[binding]]
+id = "default_toggle"
+label = "Dictate (Toggle)"
+keys = ["KEY_LEFTCTRL", "KEY_LEFTMETA", "KEY_SPACE"]
+gesture = "toggle"
+target_id = "default"
+tap_ms = 250
+hold_threshold_ms = 200
+
+# ── Hold F13 → verbatim inject (no processing) ───────────────────────────────
+[[binding]]
+id = "verbatim_hold"
+label = "Verbatim Dictation"
+keys = ["KEY_F13"]
+gesture = "hold"
+target_id = "verbatim"
+tap_ms = 250
+hold_threshold_ms = 200
+
+# ── Hold F14 → code mode ─────────────────────────────────────────────────────
+[[binding]]
+id = "code_hold"
+label = "Code Mode"
+keys = ["KEY_F14"]
+gesture = "hold"
+target_id = "code"
+tap_ms = 250
+hold_threshold_ms = 200
+
+# ── Double-tap Ctrl → clipboard with AI cleanup ───────────────────────────────
+[[binding]]
+id = "clipboard_dt"
+label = "AI Clipboard (Double-tap)"
+keys = ["KEY_LEFTCTRL"]
+gesture = "double_tap"
+target_id = "clipboard_clean"
+tap_ms = 300
+hold_threshold_ms = 200
+
+# ── Hold F15 → formal email to clipboard ─────────────────────────────────────
+[[binding]]
+id = "formal_hold"
+label = "Formal Email"
+keys = ["KEY_F15"]
+gesture = "hold"
+target_id = "formal_email"
+tap_ms = 250
+hold_threshold_ms = 200
+
+# ── Hold F16 → meeting notes (bullets) ───────────────────────────────────────
+[[binding]]
+id = "meeting_hold"
+label = "Meeting Notes"
+keys = ["KEY_F16"]
+gesture = "hold"
+target_id = "meeting_notes"
+tap_ms = 250
+hold_threshold_ms = 200
+
+# ── Toggle F17 → agent pipe (disabled by default — enable when pipe ready) ───
+[[binding]]
+id = "agent_toggle"
+label = "Agent Pipe (Toggle)"
+keys = ["KEY_F17"]
+gesture = "toggle"
+target_id = "agent_pipe"
+tap_ms = 250
+hold_threshold_ms = 200
+disabled = true
+
+# ── Hold F18 → daily journal ──────────────────────────────────────────────────
+[[binding]]
+id = "journal_hold"
+label = "Journal"
+keys = ["KEY_F18"]
+gesture = "hold"
+target_id = "journal"
+tap_ms = 250
+hold_threshold_ms = 200
+
+# ── Hold F19 → office quiet mode ─────────────────────────────────────────────
+[[binding]]
+id = "office_hold"
+label = "Office (Noise Suppressed)"
+keys = ["KEY_F19"]
+gesture = "hold"
+target_id = "office_quiet"
+tap_ms = 250
+hold_threshold_ms = 200

@@ -40,6 +40,7 @@ class TTSResponseOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
         self._text: str = ""
+        self._source_label: str = ""   # routing target label (e.g. "Hermes Agent")
         self._phase: float = 0.0   # drives the wave animation
         self._visible: bool = False
 
@@ -50,9 +51,15 @@ class TTSResponseOverlay(QWidget):
 
     # ── Public interface ──────────────────────────────────────────────────────
 
-    def show_response(self, text: str = ""):
-        """Call from any thread — schedules show on the Qt main thread."""
+    def show_response(self, text: str = "", source_label: str = ""):
+        """Call from any thread — schedules show on the Qt main thread.
+
+        Args:
+            text: The text being spoken by the TTS engine.
+            source_label: Human-readable name of the routing target (e.g. "Hermes Agent").
+        """
         self._text = text
+        self._source_label = source_label
         QMetaObject.invokeMethod(self, "_do_show", Qt.ConnectionType.QueuedConnection)
 
     def hide_response(self):
@@ -103,10 +110,11 @@ class TTSResponseOverlay(QWidget):
         painter.setPen(QPen(QColor(30, 140, 160, 160), 1))
         painter.drawRoundedRect(card_rect, 12, 12)
 
-        # ── "AI Speaking" label (top-left) ────────────────────────────────
+        # ── "AI Speaking" label (top-left) with optional source name ─────
         painter.setFont(QFont("Segoe UI", 9))
         painter.setPen(QPen(QColor(80, 200, 210, 200)))
-        painter.drawText(int(card_x) + _PAD, int(card_y) + 22, "AI Speaking")
+        speaking_label = f"AI Speaking — {self._source_label}" if self._source_label else "AI Speaking"
+        painter.drawText(int(card_x) + _PAD, int(card_y) + 22, speaking_label)
 
         # ── Animated wave dots (top-right badge) ─────────────────────────
         badge_cx = card_x + _CARD_W - _PAD - (_N_DOTS * 16)

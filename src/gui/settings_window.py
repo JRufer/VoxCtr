@@ -172,6 +172,14 @@ def _hint(text):
     return lbl
 
 
+def _hint_warn(text):
+    """Like _hint but styled in amber to draw attention to a warning."""
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet("color: #f59e0b; font-size: 11px;")
+    return lbl
+
+
 def _section(title):
     box = QGroupBox(title)
     box.setLayout(QVBoxLayout())
@@ -774,92 +782,121 @@ class SettingsWindow(QWidget):
 
     # ── Tab: Hotkeys ──────────────────────────────────────────────────────
     def _tab_hotkeys(self):
-        w = self._scrollable()
-        lay = w.layout()
+        """Full binding manager — create, edit, disable and assign all hotkey bindings."""
+        tab = QWidget()
+        lay = QVBoxLayout(tab)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(10)
 
-        _conflict_style = (
-            "color:#f5a34f; font-size:12px; padding:3px 2px 0 2px;"
-        )
-
-        hold_box = _section("Hold-to-Talk")
-        hold_box.layout().addWidget(_hint(
-            "Hold this key combination to record. Release to transcribe and type."
+        lay.addWidget(_hint(
+            "Create hotkey bindings and assign them to output targets.  "
+            "Each binding can use a different gesture and be independently enabled or disabled.  "
+            "Bindings are saved to ~/.config/whisper-wayland/bindings.toml."
         ))
-        hold_row = QHBoxLayout()
-        self.hotkey_label = QLabel(self._fmt_keys(self.config.get("hotkey", [])))
-        self.hotkey_label.setObjectName("hotkey_pill")
-        self.hotkey_label.setFrameShape(QFrame.Shape.StyledPanel)
-        self.hotkey_label.setStyleSheet(
-            "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
-            "padding:7px 12px; color:#4a9eff; font-weight:600;"
-        )
-        self.record_btn_hold = QPushButton("Record")
-        self.record_btn_hold.setObjectName("btn_record")
-        self.record_btn_hold.setCheckable(True)
-        self.record_btn_hold.clicked.connect(lambda: self.toggle_recording("hold"))
-        hold_row.addWidget(self.hotkey_label, 1)
-        hold_row.addWidget(self.record_btn_hold)
-        hold_box.layout().addLayout(hold_row)
-        self.hold_conflict_label = QLabel()
-        self.hold_conflict_label.setStyleSheet(_conflict_style)
-        self.hold_conflict_label.setWordWrap(True)
-        self.hold_conflict_label.setVisible(False)
-        hold_box.layout().addWidget(self.hold_conflict_label)
-        lay.addWidget(hold_box)
 
-        toggle_box = _section("Toggle-to-Talk")
-        toggle_box.layout().addWidget(_hint(
-            "Tap once to start recording, tap again to stop. Great for long dictation."
-        ))
-        toggle_row = QHBoxLayout()
-        self.toggle_hotkey_label = QLabel(self._fmt_keys(self.config.get("toggle_hotkey", [])))
-        self.toggle_hotkey_label.setFrameShape(QFrame.Shape.StyledPanel)
-        self.toggle_hotkey_label.setStyleSheet(
-            "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
-            "padding:7px 12px; color:#4a9eff; font-weight:600;"
-        )
-        self.record_btn_toggle = QPushButton("Record")
-        self.record_btn_toggle.setObjectName("btn_record")
-        self.record_btn_toggle.setCheckable(True)
-        self.record_btn_toggle.clicked.connect(lambda: self.toggle_recording("toggle"))
-        toggle_row.addWidget(self.toggle_hotkey_label, 1)
-        toggle_row.addWidget(self.record_btn_toggle)
-        toggle_box.layout().addLayout(toggle_row)
-        self.toggle_conflict_label = QLabel()
-        self.toggle_conflict_label.setStyleSheet(_conflict_style)
-        self.toggle_conflict_label.setWordWrap(True)
-        self.toggle_conflict_label.setVisible(False)
-        toggle_box.layout().addWidget(self.toggle_conflict_label)
-        lay.addWidget(toggle_box)
+        # ── Gesture guide ─────────────────────────────────────────────────
+        guide = QGroupBox("Gesture Types")
+        guide_lay = QFormLayout(guide)
+        guide_lay.setSpacing(4)
+        for name, desc in [
+            ("hold",       "Hold keys → record; release → transcribe"),
+            ("toggle",     "Tap once to start, tap again to stop"),
+            ("double_tap", "Double-tap keys to start recording"),
+            ("chord",      "Press an additional key while base keys are held"),
+        ]:
+            lbl = QLabel(name)
+            lbl.setStyleSheet("color:#4a9eff; font-weight:600;")
+            guide_lay.addRow(lbl, QLabel(desc))
+        lay.addWidget(guide)
 
-        dt_box = _section("Double-Tap to Talk")
-        dt_box.layout().addWidget(_hint(
-            "Quickly tap the hotkey twice to start recording. Great for hands-free use."
-        ))
-        dt_row = QHBoxLayout()
-        self.dt_hotkey_label = QLabel(self._fmt_keys(self.config.get("double_tap_hotkey", ["KEY_LEFTALT"])))
-        self.dt_hotkey_label.setFrameShape(QFrame.Shape.StyledPanel)
-        self.dt_hotkey_label.setStyleSheet(
-            "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
-            "padding:7px 12px; color:#4a9eff; font-weight:600;"
-        )
-        self.record_btn_dt = QPushButton("Record")
-        self.record_btn_dt.setObjectName("btn_record")
-        self.record_btn_dt.setCheckable(True)
-        self.record_btn_dt.clicked.connect(lambda: self.toggle_recording("double_tap"))
-        dt_row.addWidget(self.dt_hotkey_label, 1)
-        dt_row.addWidget(self.record_btn_dt)
-        dt_box.layout().addLayout(dt_row)
-        self.dt_conflict_label = QLabel()
-        self.dt_conflict_label.setStyleSheet(_conflict_style)
-        self.dt_conflict_label.setWordWrap(True)
-        self.dt_conflict_label.setVisible(False)
-        dt_box.layout().addWidget(self.dt_conflict_label)
-        lay.addWidget(dt_box)
+        # ── Binding list ──────────────────────────────────────────────────
+        head = QLabel("Hotkey Bindings")
+        head.setObjectName("section_head")
+        lay.addWidget(head)
 
-        self._check_hotkey_conflicts()
-        lay.addStretch()
-        return w
+        self._binding_list = QListWidget()
+        self._binding_list.setAlternatingRowColors(True)
+        lay.addWidget(self._binding_list, 1)
+
+        # ── Buttons ───────────────────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        for label, slot in [
+            ("Add",     self._hotkey_add_binding),
+            ("Edit",    self._hotkey_edit_binding),
+            ("Delete",  self._hotkey_delete_binding),
+            ("Toggle Disabled", self._hotkey_toggle_disabled),
+        ]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(30)
+            btn.clicked.connect(slot)
+            btn_row.addWidget(btn)
+        lay.addLayout(btn_row)
+
+        # Load bindings (targets must be loaded first for the editor combo)
+        try:
+            from routing.loader import load_targets, load_bindings
+            if not hasattr(self, '_routing_targets') or not self._routing_targets:
+                self._routing_targets = load_targets()
+            if not hasattr(self, '_routing_bindings') or not self._routing_bindings:
+                self._routing_bindings = load_bindings()
+        except Exception:
+            pass
+
+        self._routing_render_bindings()
+        return tab
+
+    # ── Hotkey binding CRUD (used from Hotkeys tab) ───────────────────────────
+
+    def _hotkey_add_binding(self):
+        if not getattr(self, '_routing_targets', []):
+            QMessageBox.warning(self, "No Targets",
+                                "Add at least one output target in the Routing tab first.")
+            return
+        dlg = _BindingEditorDialog(targets=self._routing_targets, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._routing_bindings.append(dlg.result_binding)
+            self._routing_save_bindings()
+            self._routing_render_bindings()
+            self.settings_saved.emit()
+
+    def _hotkey_edit_binding(self):
+        b = self._routing_selected_binding()
+        if b is None:
+            return
+        dlg = _BindingEditorDialog(binding=b, targets=self._routing_targets, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            idx = next((i for i, x in enumerate(self._routing_bindings) if x.id == b.id), None)
+            if idx is not None:
+                self._routing_bindings[idx] = dlg.result_binding
+            self._routing_save_bindings()
+            self._routing_render_bindings()
+            self.settings_saved.emit()
+
+    def _hotkey_delete_binding(self):
+        b = self._routing_selected_binding()
+        if b is None:
+            return
+        if QMessageBox.question(
+            self, "Delete Binding",
+            f"Delete binding '{b.label or b.id}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        ) == QMessageBox.StandardButton.Yes:
+            self._routing_bindings = [x for x in self._routing_bindings if x.id != b.id]
+            self._routing_save_bindings()
+            self._routing_render_bindings()
+            self.settings_saved.emit()
+
+    def _hotkey_toggle_disabled(self):
+        """Toggle the disabled flag on the selected binding without opening the editor."""
+        b = self._routing_selected_binding()
+        if b is None:
+            return
+        idx = next((i for i, x in enumerate(self._routing_bindings) if x.id == b.id), None)
+        if idx is not None:
+            self._routing_bindings[idx].disabled = not self._routing_bindings[idx].disabled
+            self._routing_save_bindings()
+            self._routing_render_bindings()
+            self.settings_saved.emit()
 
     # ── Tab: Dictation ────────────────────────────────────────────────────
     def _tab_dictation(self):
@@ -1426,53 +1463,294 @@ class SettingsWindow(QWidget):
     # ── System check ──────────────────────────────────────────────────────
     def run_system_check(self):
         import shutil, grp
-        report = []
-        ok = True
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QScrollArea, QWidget, QLabel, QPushButton, QHBoxLayout
+        from PyQt6.QtCore import Qt
 
+        sections: list[tuple[str, list[tuple[str, str, str]]]] = []
+        # Each entry: (icon, label, detail/fix hint)
+
+        # ── Permissions & devices ──────────────────────────────────────────
+        perm_rows: list[tuple[str, str, str]] = []
         if os.path.exists("/dev/uinput"):
             if os.access("/dev/uinput", os.W_OK):
-                report.append("✅  /dev/uinput: Writable")
+                perm_rows.append(("✅", "/dev/uinput", "Writable — key injection available"))
             else:
-                report.append("❌  /dev/uinput: Permission denied"); ok = False
+                perm_rows.append(("❌", "/dev/uinput",
+                    "Permission denied\n    Fix: sudo usermod -aG input,uinput $USER  (then log out/in)"))
         else:
-            report.append("❌  /dev/uinput: Not found"); ok = False
+            perm_rows.append(("❌", "/dev/uinput",
+                "Device not found — uinput kernel module may not be loaded\n    Fix: sudo modprobe uinput"))
 
         try:
             groups = [grp.getgrgid(g).gr_name for g in os.getgroups()]
             if "input" in groups:
-                report.append("✅  User is in 'input' group")
+                perm_rows.append(("✅", "'input' group", "User is a member"))
             else:
-                report.append("❌  User NOT in 'input' group"); ok = False
+                perm_rows.append(("❌", "'input' group",
+                    "User is NOT in 'input' group — evdev hotkeys will not work\n    Fix: sudo usermod -aG input $USER  (then log out/in)"))
         except Exception:
-            report.append("⚠️  Could not verify group membership")
+            perm_rows.append(("⚠️", "'input' group", "Could not verify group membership"))
+
+        xdg_cfg = os.path.expanduser("~/.config/whisper-wayland")
+        if os.path.isdir(xdg_cfg):
+            perm_rows.append(("✅", "Config directory", f"{xdg_cfg}"))
+        else:
+            perm_rows.append(("⚠️", "Config directory",
+                f"{xdg_cfg} does not exist yet — will be created on first save"))
+
+        sections.append(("Permissions & Devices", perm_rows))
+
+        # ── Required Python packages ───────────────────────────────────────
+        req_rows: list[tuple[str, str, str]] = []
+
+        def _pkg(import_name, display, install_hint):
+            try:
+                __import__(import_name)
+                req_rows.append(("✅", display, "Installed"))
+            except ImportError:
+                req_rows.append(("❌", display, f"Missing — {install_hint}"))
+
+        _pkg("PyQt6",         "PyQt6",          "pip install PyQt6")
+        _pkg("sounddevice",   "sounddevice",     "pip install sounddevice")
+        _pkg("numpy",         "numpy",           "pip install numpy")
+        _pkg("scipy",         "scipy",           "pip install scipy")
+
+        sections.append(("Required Python Packages", req_rows))
+
+        # ── ASR backends ──────────────────────────────────────────────────
+        asr_rows: list[tuple[str, str, str]] = []
+
+        def _try_import(name):
+            try:
+                __import__(name)
+                return True
+            except ImportError:
+                return False
+
+        if _try_import("faster_whisper"):
+            cuda_note = ""
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    cuda_note = " + CUDA GPU available"
+                else:
+                    cuda_note = " (CPU only — no CUDA)"
+            except ImportError:
+                cuda_note = " (torch not installed — GPU status unknown)"
+            asr_rows.append(("✅", "faster-whisper", f"Installed{cuda_note}"))
+        else:
+            asr_rows.append(("⚠️", "faster-whisper",
+                "Not installed — pip install faster-whisper\n    Required for faster-whisper backend"))
+
+        whisper_cpp_bin = self.config.get("whisper_cpp_binary", "whisper-cli") if hasattr(self, 'config') else "whisper-cli"
+        if shutil.which(whisper_cpp_bin) or shutil.which("whisper-cli") or shutil.which("main"):
+            found = shutil.which(whisper_cpp_bin) or shutil.which("whisper-cli") or shutil.which("main")
+            asr_rows.append(("✅", "whisper.cpp", f"Binary found: {found}"))
+        else:
+            asr_rows.append(("⚠️", "whisper.cpp",
+                f"Binary '{whisper_cpp_bin}' not found in PATH\n"
+                "    Required for whisper-cpp backend\n"
+                "    Build from: https://github.com/ggerganov/whisper.cpp"))
+
+        if self.inference_engine and getattr(self.inference_engine, 'actual_device', None) == "cuda":
+            asr_rows.append(("✅", "GPU / CUDA", "Active — using GPU acceleration"))
+        else:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    asr_rows.append(("ℹ️", "GPU / CUDA",
+                        "Available but not currently active — set device=cuda in config"))
+                else:
+                    asr_rows.append(("ℹ️", "GPU / CUDA",
+                        "Not available — running on CPU (install CUDA + torch with CUDA support)"))
+            except ImportError:
+                asr_rows.append(("ℹ️", "GPU / CUDA",
+                    "torch not installed — GPU detection unavailable\n    pip install torch"))
+
+        sections.append(("ASR Backends", asr_rows))
+
+        # ── Clipboard & text injection ─────────────────────────────────────
+        clip_rows: list[tuple[str, str, str]] = []
 
         if shutil.which("wl-copy"):
-            report.append("✅  wl-clipboard: installed")
+            clip_rows.append(("✅", "wl-copy (wl-clipboard)", "Installed — clipboard delivery available"))
         else:
-            report.append("❌  wl-clipboard: not found"); ok = False
+            clip_rows.append(("❌", "wl-copy (wl-clipboard)",
+                "Not found — clipboard targets will not work\n"
+                "    Install: sudo pacman -S wl-clipboard  or  sudo apt install wl-clipboard"))
 
-        if self.inference_engine and self.inference_engine.actual_device == "cuda":
-            report.append("✅  GPU (CUDA): active")
-
-        from audio_recorder import _HAS_NOISEREDUCE
-        if _HAS_NOISEREDUCE:
-            report.append("✅  noisereduce: installed (noise suppression available)")
+        if shutil.which("wl-paste"):
+            clip_rows.append(("✅", "wl-paste (wl-clipboard)", "Installed"))
         else:
-            report.append("ℹ️  noisereduce: not installed  (pip install noisereduce)")
+            clip_rows.append(("⚠️", "wl-paste (wl-clipboard)",
+                "Not found (part of wl-clipboard package)"))
+
+        if shutil.which("xdotool"):
+            clip_rows.append(("✅", "xdotool", "Installed — X11 injection fallback available"))
+        else:
+            clip_rows.append(("ℹ️", "xdotool",
+                "Not found — optional X11 text injection fallback\n"
+                "    Install: sudo pacman -S xdotool  or  sudo apt install xdotool"))
+
+        if shutil.which("ydotool"):
+            clip_rows.append(("✅", "ydotool", "Installed — Wayland uinput injection available"))
+        else:
+            clip_rows.append(("ℹ️", "ydotool",
+                "Not found — optional Wayland text injection tool\n"
+                "    Install: sudo pacman -S ydotool  or  build from source"))
+
+        sections.append(("Clipboard & Text Injection", clip_rows))
+
+        # ── Optional Python packages ───────────────────────────────────────
+        opt_rows: list[tuple[str, str, str]] = []
+
+        try:
+            from audio_recorder import _HAS_NOISEREDUCE
+            if _HAS_NOISEREDUCE:
+                opt_rows.append(("✅", "noisereduce", "Installed — noise suppression available"))
+            else:
+                opt_rows.append(("ℹ️", "noisereduce",
+                    "Not installed — noise suppression unavailable\n    pip install noisereduce"))
+        except ImportError:
+            opt_rows.append(("ℹ️", "noisereduce",
+                "Not installed\n    pip install noisereduce"))
 
         try:
             import dbus
-            report.append("✅  dbus-python: installed (DBus control interface active)")
+            opt_rows.append(("✅", "dbus-python", "Installed — DBus control interface active"))
         except ImportError:
-            report.append("ℹ️  dbus-python: not installed  (pip install dbus-python)")
+            opt_rows.append(("ℹ️", "dbus-python",
+                "Not installed — DBus interface unavailable\n"
+                "    pip install dbus-python  or  sudo pacman -S python-dbus"))
 
+        try:
+            import pyatspi
+            opt_rows.append(("✅", "pyatspi", "Installed — AT-SPI2 context tracking active"))
+        except ImportError:
+            opt_rows.append(("ℹ️", "pyatspi",
+                "Not installed — focused-window context for transcription unavailable\n"
+                "    pip install pyatspi  or  sudo pacman -S python-pyatspi"))
 
-        msg = "\n".join(report)
-        if ok:
-            QMessageBox.information(self, "System Check", f"Everything looks good!\n\n{msg}")
+        try:
+            import mcp
+            opt_rows.append(("✅", "mcp", "Installed — MCP server available"))
+        except ImportError:
+            opt_rows.append(("ℹ️", "mcp",
+                "Not installed — MCP server feature unavailable\n    pip install mcp"))
+
+        try:
+            import websockets
+            opt_rows.append(("✅", "websockets", "Installed — WebSocket targets available"))
+        except ImportError:
+            opt_rows.append(("ℹ️", "websockets",
+                "Not installed — WebSocket delivery unavailable\n    pip install websockets"))
+
+        sections.append(("Optional Python Packages", opt_rows))
+
+        # ── TTS engines ───────────────────────────────────────────────────
+        tts_rows: list[tuple[str, str, str]] = []
+
+        if shutil.which("piper") or shutil.which("piper-tts"):
+            found = shutil.which("piper") or shutil.which("piper-tts")
+            tts_rows.append(("✅", "piper (TTS)", f"Binary found: {found}"))
         else:
-            fix = "\n\nTo fix permissions:\n  sudo usermod -aG input,uinput $USER\n(Log out and back in after running this)"
-            QMessageBox.warning(self, "System Check", f"Issues found:\n\n{msg}{fix}")
+            tts_rows.append(("ℹ️", "piper (TTS)",
+                "Not found — Piper TTS engine unavailable\n"
+                "    Install: https://github.com/rhasspy/piper/releases\n"
+                "    Or: pip install piper-tts"))
+
+        if shutil.which("espeak") or shutil.which("espeak-ng"):
+            found = shutil.which("espeak-ng") or shutil.which("espeak")
+            tts_rows.append(("✅", "espeak-ng (TTS)", f"Binary found: {found}"))
+        else:
+            tts_rows.append(("ℹ️", "espeak-ng (TTS)",
+                "Not found — espeak TTS engine unavailable\n"
+                "    Install: sudo pacman -S espeak-ng  or  sudo apt install espeak-ng"))
+
+        sections.append(("Text-to-Speech Engines", tts_rows))
+
+        # ── LLM / Ollama ──────────────────────────────────────────────────
+        llm_rows: list[tuple[str, str, str]] = []
+
+        if shutil.which("ollama"):
+            llm_rows.append(("✅", "ollama", "Binary found — LLM postprocessing available"))
+            # Try pinging ollama service
+            try:
+                import urllib.request
+                urllib.request.urlopen("http://localhost:11434/api/tags", timeout=1)
+                llm_rows.append(("✅", "Ollama service", "Running on localhost:11434"))
+            except Exception:
+                llm_rows.append(("⚠️", "Ollama service",
+                    "Not responding on localhost:11434\n    Start with: ollama serve"))
+        else:
+            llm_rows.append(("ℹ️", "ollama",
+                "Not found — LLM postprocessing (ollama_enabled) unavailable\n"
+                "    Install: https://ollama.ai  or  curl -fsSL https://ollama.ai/install.sh | sh"))
+
+        sections.append(("LLM / Ollama", llm_rows))
+
+        # ── Build the dialog ──────────────────────────────────────────────
+        dlg = QDialog(self)
+        dlg.setWindowTitle("System Check — Dependencies & Status")
+        dlg.resize(640, 560)
+        dlg_layout = QVBoxLayout(dlg)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        c_layout = QVBoxLayout(container)
+        c_layout.setSpacing(6)
+
+        has_errors = False
+        for section_title, rows in sections:
+            sec_label = QLabel(f"<b>{section_title}</b>")
+            sec_label.setStyleSheet("font-size: 12px; margin-top: 10px;")
+            c_layout.addWidget(sec_label)
+
+            for icon, name, detail in rows:
+                if icon == "❌":
+                    has_errors = True
+                row_widget = QWidget()
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(8, 2, 4, 2)
+                row_layout.setSpacing(8)
+
+                icon_lbl = QLabel(icon)
+                icon_lbl.setFixedWidth(22)
+                name_lbl = QLabel(f"<b>{name}</b>")
+                name_lbl.setFixedWidth(200)
+                detail_lbl = QLabel(detail)
+                detail_lbl.setWordWrap(True)
+                detail_lbl.setStyleSheet(
+                    "color: #cc0000;" if icon == "❌" else
+                    "color: #aa6600;" if icon == "⚠️" else
+                    "color: #555555;" if icon == "ℹ️" else ""
+                )
+
+                row_layout.addWidget(icon_lbl)
+                row_layout.addWidget(name_lbl)
+                row_layout.addWidget(detail_lbl, 1)
+                c_layout.addWidget(row_widget)
+
+        c_layout.addStretch()
+        scroll.setWidget(container)
+        dlg_layout.addWidget(scroll)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dlg.accept)
+        btn_box.addWidget(close_btn)
+        dlg_layout.addLayout(btn_box)
+
+        if not has_errors:
+            status_lbl = QLabel("✅  No critical issues found.")
+        else:
+            status_lbl = QLabel("❌  Critical issues detected — see items marked with ❌ above.")
+            status_lbl.setStyleSheet("color: #cc0000; font-weight: bold;")
+        dlg_layout.insertWidget(0, status_lbl)
+
+        dlg.exec()
 
     # ── Save ──────────────────────────────────────────────────────────────
     def save_settings(self):
@@ -1511,43 +1789,18 @@ class SettingsWindow(QWidget):
         if hasattr(self, "noise_suppression_cb"):
             self.config.set("noise_suppression", self.noise_suppression_cb.isChecked())
 
-        # Hotkeys (Sync to both config.json and bindings.toml)
-        from routing.loader import save_bindings
-        bindings_changed = False
-        
-        if self.recorded_keys:
-            self.config.set("hotkey", sorted(self.recorded_keys))
-            for b in self._routing_bindings:
-                if b.id == 'default_hold':
-                    b.keys = sorted(self.recorded_keys)
-                    bindings_changed = True
-                    
-        if self.recorded_toggle_keys:
-            self.config.set("toggle_hotkey", sorted(self.recorded_toggle_keys))
-            for b in self._routing_bindings:
-                if b.id == 'default_toggle':
-                    b.keys = sorted(self.recorded_toggle_keys)
-                    bindings_changed = True
-                    
-        if self.recorded_dt_keys:
-            self.config.set("double_tap_hotkey", sorted(self.recorded_dt_keys))
-            dt_b = next((b for b in self._routing_bindings if b.id == 'default_dt'), None)
-            if dt_b:
-                dt_b.keys = sorted(self.recorded_dt_keys)
-            else:
-                from routing.models import HotkeyBinding, GestureType
-                self._routing_bindings.append(HotkeyBinding(
-                    id='default_dt', label='Dictate (Double-Tap)',
-                    keys=sorted(self.recorded_dt_keys),
-                    gesture=GestureType.DOUBLE_TAP, target_id='default',
-                ))
-            bindings_changed = True
-
-        if bindings_changed:
-            save_bindings(self._routing_bindings)
-            # Re-render routing tab if it has been instantiated
-            if hasattr(self, '_routing_render_bindings'):
-                self._routing_render_bindings()
+        # Hotkeys: bindings are now managed exclusively through bindings.toml
+        # via the Hotkeys tab CRUD UI.  Keep legacy config.json keys in sync
+        # by reading the current bindings list for backward compat.
+        _hold_b   = next((b for b in self._routing_bindings if b.gesture.value == 'hold'    and not b.disabled), None)
+        _toggle_b = next((b for b in self._routing_bindings if b.gesture.value == 'toggle'  and not b.disabled), None)
+        _dt_b     = next((b for b in self._routing_bindings if b.gesture.value == 'double_tap' and not b.disabled), None)
+        if _hold_b:
+            self.config.set("hotkey", _hold_b.keys)
+        if _toggle_b:
+            self.config.set("toggle_hotkey", _toggle_b.keys)
+        if _dt_b:
+            self.config.set("double_tap_hotkey", _dt_b.keys)
 
         # Dictation
         self.config.set("remove_fillers", self.filler_checkbox.isChecked())
@@ -2049,63 +2302,33 @@ class SettingsWindow(QWidget):
         lay.setSpacing(10)
 
         lay.addWidget(_hint(
-            "Define output targets and map hotkey gestures to them. "
-            "Changes are saved to ~/.config/whisper-wayland/targets.toml and bindings.toml."
+            "Define output targets that receive transcribed text.  "
+            "Each target controls where text goes and how it is processed.  "
+            "Hotkey bindings are managed in the Hotkeys tab.  "
+            "Changes are saved to ~/.config/whisper-wayland/targets.toml."
         ))
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # ── Targets panel ──────────────────────────────────────────────────
-        targets_panel = QWidget()
-        tp_lay = QVBoxLayout(targets_panel)
-        tp_lay.setContentsMargins(0, 0, 0, 0)
-        tp_lay.setSpacing(6)
+        # ── Targets panel (full width) ─────────────────────────────────────
         tp_head = QLabel("Output Targets")
         tp_head.setObjectName("section_head")
-        tp_lay.addWidget(tp_head)
+        lay.addWidget(tp_head)
+
         self._target_list = QListWidget()
         self._target_list.setAlternatingRowColors(True)
-        tp_lay.addWidget(self._target_list)
+        lay.addWidget(self._target_list, 1)
+
         tp_btns = QHBoxLayout()
         for label, slot in [
-            ("Add", lambda: self._routing_add_target()),
-            ("Edit", lambda: self._routing_edit_target()),
+            ("Add",    lambda: self._routing_add_target()),
+            ("Edit",   lambda: self._routing_edit_target()),
             ("Delete", lambda: self._routing_delete_target()),
-            ("Test", lambda: self._routing_test_target()),
+            ("Test",   lambda: self._routing_test_target()),
         ]:
             btn = QPushButton(label)
             btn.setFixedHeight(30)
             tp_btns.addWidget(btn)
             btn.clicked.connect(slot)
-        tp_lay.addLayout(tp_btns)
-
-        # ── Bindings panel ─────────────────────────────────────────────────
-        bindings_panel = QWidget()
-        bp_lay = QVBoxLayout(bindings_panel)
-        bp_lay.setContentsMargins(0, 0, 0, 0)
-        bp_lay.setSpacing(6)
-        bp_head = QLabel("Hotkey Bindings")
-        bp_head.setObjectName("section_head")
-        bp_lay.addWidget(bp_head)
-        self._binding_list = QListWidget()
-        self._binding_list.setAlternatingRowColors(True)
-        bp_lay.addWidget(self._binding_list)
-        bp_btns = QHBoxLayout()
-        for label, slot in [
-            ("Add", lambda: self._routing_add_binding()),
-            ("Edit", lambda: self._routing_edit_binding()),
-            ("Delete", lambda: self._routing_delete_binding()),
-        ]:
-            btn = QPushButton(label)
-            btn.setFixedHeight(30)
-            bp_btns.addWidget(btn)
-            btn.clicked.connect(slot)
-        bp_lay.addLayout(bp_btns)
-
-        splitter.addWidget(targets_panel)
-        splitter.addWidget(bindings_panel)
-        splitter.setSizes([260, 320])
-        lay.addWidget(splitter, 1)
+        lay.addLayout(tp_btns)
 
         # Reload from disk when tab is shown
         self._routing_refresh()
@@ -2118,17 +2341,32 @@ class SettingsWindow(QWidget):
         except Exception:
             self._routing_targets = []
         try:
-            self._routing_bindings = load_bindings()
+            if not hasattr(self, '_routing_bindings') or not self._routing_bindings:
+                self._routing_bindings = load_bindings()
         except Exception:
             self._routing_bindings = []
         self._routing_render_targets()
-        self._routing_render_bindings()
+        # Bindings are rendered in the Hotkeys tab; refresh if the widget exists
+        if hasattr(self, '_binding_list') and self._binding_list is not None:
+            self._routing_render_bindings()
 
     def _routing_render_targets(self):
         self._target_list.clear()
         for t in self._routing_targets:
-            item = QListWidgetItem(f"{t.label}  [{t.delivery.value}]  id={t.id!r}")
+            label = f"{t.label}  [{t.delivery.value}]  id={t.id!r}"
+            # Compute feature warnings: features the target wants but are globally off
+            warnings = t.processing.get_feature_warnings(self.config.config)
+            # Also warn if target has a response_pipe but TTS is globally disabled
+            if t.response_pipe and not self.config.get("tts_enabled", False):
+                from routing.models import FEATURE_LABELS
+                warnings.append(("tts", FEATURE_LABELS.get("tts", "TTS / Voice Out")))
+            if warnings:
+                badge = "  ⚠ " + ", ".join(lbl for _, lbl in warnings) + " disabled"
+                label += badge
+            item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, t)
+            if warnings:
+                item.setForeground(QColor('#f59e0b'))  # amber warning colour
             self._target_list.addItem(item)
 
     def _routing_render_bindings(self):
@@ -2173,7 +2411,7 @@ class SettingsWindow(QWidget):
             QMessageBox.warning(self, "Save Error", f"Could not save bindings.toml:\n{e}")
 
     def _routing_add_target(self):
-        dlg = _TargetEditorDialog(parent=self)
+        dlg = _TargetEditorDialog(config=self.config, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._routing_targets.append(dlg.result_target)
             self._routing_save_targets()
@@ -2185,7 +2423,7 @@ class SettingsWindow(QWidget):
         tgt = self._routing_selected_target()
         if tgt is None:
             return
-        dlg = _TargetEditorDialog(target=tgt, parent=self)
+        dlg = _TargetEditorDialog(target=tgt, config=self.config, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             idx = next((i for i, t in enumerate(self._routing_targets) if t.id == tgt.id), None)
             if idx is not None:
@@ -2229,65 +2467,65 @@ class SettingsWindow(QWidget):
         else:
             QMessageBox.information(self, "Target Test", "Router not available.")
 
-    def _routing_add_binding(self):
-        if not self._routing_targets:
-            QMessageBox.warning(self, "No Targets", "Add at least one output target first.")
-            return
-        dlg = _BindingEditorDialog(targets=self._routing_targets, parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._routing_bindings.append(dlg.result_binding)
-            self._routing_save_bindings()
-            self._routing_render_bindings()
-            self.settings_saved.emit()
+    # Binding CRUD is in _hotkey_add/edit/delete_binding (Hotkeys tab).
+    # These aliases kept so any external caller/test can still reference them.
 
-    def _routing_edit_binding(self):
-        b = self._routing_selected_binding()
-        if b is None:
-            return
-        dlg = _BindingEditorDialog(binding=b, targets=self._routing_targets, parent=self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            idx = next((i for i, x in enumerate(self._routing_bindings) if x.id == b.id), None)
-            if idx is not None:
-                self._routing_bindings[idx] = dlg.result_binding
-            self._routing_save_bindings()
-            self._routing_render_bindings()
-            self.settings_saved.emit()
 
-    def _routing_delete_binding(self):
-        b = self._routing_selected_binding()
-        if b is None:
-            return
-        if QMessageBox.question(
-            self, "Delete Binding",
-            f"Delete binding '{b.label or b.id}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        ) == QMessageBox.StandardButton.Yes:
-            self._routing_bindings = [x for x in self._routing_bindings if x.id != b.id]
-            self._routing_save_bindings()
-            self._routing_render_bindings()
-            self.settings_saved.emit()
+# ── Helpers for 3-state (None / True / False) combos ─────────────────────────
+
+def _make_tristate_combo(value=None) -> QComboBox:
+    """Return a QComboBox with Default / Enabled / Disabled options.
+
+    value: None → 'Default (global)', True → 'Enabled', False → 'Disabled'
+    """
+    cb = QComboBox()
+    cb.addItem("Default (global)", None)
+    cb.addItem("Enabled", True)
+    cb.addItem("Disabled", False)
+    if value is True:
+        cb.setCurrentIndex(1)
+    elif value is False:
+        cb.setCurrentIndex(2)
+    else:
+        cb.setCurrentIndex(0)
+    return cb
 
 
 # ── Target Editor Dialog ──────────────────────────────────────────────────────
 
 class _TargetEditorDialog(QDialog):
-    def __init__(self, target=None, parent=None):
+    def __init__(self, target=None, config=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Target" if target else "Add Target")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(520)
+        self.setMinimumHeight(600)
         self.setStyleSheet(QSS)
         self.result_target = None
+        self._config = config  # global Config object for showing default values
         self._build_ui(target)
 
     def _build_ui(self, tgt):
         from routing.models import DeliveryType
-        lay = QVBoxLayout(self)
-        form = QFormLayout()
-        form.setSpacing(8)
+        p = tgt.processing if tgt else None  # TargetProcessingConfig | None
 
+        outer = QVBoxLayout(self)
+        outer.setSpacing(8)
+        outer.setContentsMargins(12, 12, 12, 12)
+
+        # ── Scrollable content ─────────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        lay = QVBoxLayout(content)
+        lay.setSpacing(10)
+        lay.setContentsMargins(0, 0, 8, 0)
+
+        # ── Identity ───────────────────────────────────────────────────────
+        id_form = QFormLayout()
+        id_form.setSpacing(6)
         self._id_edit = QLineEdit(tgt.id if tgt else "")
         self._label_edit = QLineEdit(tgt.label if tgt else "")
-
         self._delivery_combo = QComboBox()
         for dt in DeliveryType:
             self._delivery_combo.addItem(dt.value, dt)
@@ -2295,68 +2533,148 @@ class _TargetEditorDialog(QDialog):
             idx = self._delivery_combo.findData(tgt.delivery)
             if idx >= 0:
                 self._delivery_combo.setCurrentIndex(idx)
-
-        self._pp_combo = QComboBox()
-        for pp in ("default", "none", "strip_fillers", "ollama_only", "snippets_only"):
-            self._pp_combo.addItem(pp, pp)
-        if tgt:
-            idx = self._pp_combo.findData(tgt.post_processing)
-            if idx >= 0:
-                self._pp_combo.setCurrentIndex(idx)
-
-        self._append_newline_cb = QCheckBox("Append newline")
+        self._append_newline_cb = QCheckBox("Append newline after text")
         self._append_newline_cb.setChecked(tgt.append_newline if tgt else True)
 
-        # Delivery-specific fields
+        id_form.addRow("ID:", self._id_edit)
+        id_form.addRow("Label:", self._label_edit)
+        id_form.addRow("Delivery:", self._delivery_combo)
+        id_form.addRow("", self._append_newline_cb)
+        lay.addLayout(id_form)
+
+        # ── Delivery-specific fields ───────────────────────────────────────
+        self._delivery_group = QGroupBox("Delivery Settings")
+        df_lay = QFormLayout(self._delivery_group)
+        df_lay.setSpacing(6)
+        self._df_lay = df_lay
+
         self._command_edit = QLineEdit(tgt.command or "" if tgt else "")
+        self._command_edit.setPlaceholderText("e.g. xdg-open {TEXT}")
         self._pipe_path_edit = QLineEdit(tgt.pipe_path or "" if tgt else "")
+        self._pipe_path_edit.setPlaceholderText("/tmp/myfifo")
         self._socket_host_edit = QLineEdit(tgt.socket_host or "localhost" if tgt else "localhost")
         self._socket_port_spin = QSpinBox()
         self._socket_port_spin.setRange(1, 65535)
         self._socket_port_spin.setValue(tgt.socket_port or 9000 if tgt else 9000)
         self._socket_unix_edit = QLineEdit(tgt.socket_unix or "" if tgt else "")
+        self._socket_unix_edit.setPlaceholderText("/tmp/app.sock")
         self._file_path_edit = QLineEdit(tgt.file_path or "" if tgt else "")
+        self._file_path_edit.setPlaceholderText("~/notes.md")
         self._file_prefix_edit = QLineEdit(tgt.file_prefix or "" if tgt else "")
+        self._file_prefix_edit.setPlaceholderText("- ")
         self._file_ts_cb = QCheckBox("Include timestamp")
         self._file_ts_cb.setChecked(tgt.file_timestamp if tgt else True)
         self._dbus_signal_edit = QLineEdit(tgt.dbus_signal or "" if tgt else "")
+        self._dbus_signal_edit.setPlaceholderText("com.example.App.TextReady")
+
+        df_lay.addRow("Command {TEXT}:", self._command_edit)
+        df_lay.addRow("Pipe path:", self._pipe_path_edit)
+        df_lay.addRow("Socket host:", self._socket_host_edit)
+        df_lay.addRow("Socket port:", self._socket_port_spin)
+        df_lay.addRow("Unix socket:", self._socket_unix_edit)
+        df_lay.addRow("File path:", self._file_path_edit)
+        df_lay.addRow("File prefix:", self._file_prefix_edit)
+        df_lay.addRow("", self._file_ts_cb)
+        df_lay.addRow("DBus signal:", self._dbus_signal_edit)
+        lay.addWidget(self._delivery_group)
+
+        # ── Preprocessing ──────────────────────────────────────────────────
+        pre_group = QGroupBox("Preprocessing  (None = use global setting)")
+        pre_form = QFormLayout(pre_group)
+        pre_form.setSpacing(6)
+
+        self._noise_suppression_combo = _make_tristate_combo(p.noise_suppression if p else None)
+        self._quiet_mode_combo = _make_tristate_combo(p.quiet_mode if p else None)
+        self._atspi_context_combo = _make_tristate_combo(p.atspi_context if p else None)
         self._initial_prompt_edit = QLineEdit(tgt.initial_prompt or "" if tgt else "")
+        self._initial_prompt_edit.setPlaceholderText("Whisper context (leave blank = auto)")
 
-        form.addRow("ID:", self._id_edit)
-        form.addRow("Label:", self._label_edit)
-        form.addRow("Delivery:", self._delivery_combo)
-        form.addRow("Post-processing:", self._pp_combo)
-        form.addRow("", self._append_newline_cb)
+        pre_form.addRow("Noise suppression:", self._noise_suppression_combo)
+        pre_form.addRow("Quiet mode:", self._quiet_mode_combo)
+        pre_form.addRow("AT-SPI2 context:", self._atspi_context_combo)
+        pre_form.addRow("Initial prompt:", self._initial_prompt_edit)
 
-        # Container for delivery-specific fields
-        self._delivery_fields = QWidget()
-        self._df_lay = QFormLayout(self._delivery_fields)
-        self._df_lay.setSpacing(6)
-        self._df_lay.addRow("Command {TEXT}:", self._command_edit)
-        self._df_lay.addRow("Pipe path:", self._pipe_path_edit)
-        self._df_lay.addRow("Socket host:", self._socket_host_edit)
-        self._df_lay.addRow("Socket port:", self._socket_port_spin)
-        self._df_lay.addRow("Unix socket:", self._socket_unix_edit)
-        self._df_lay.addRow("File path:", self._file_path_edit)
-        self._df_lay.addRow("File prefix:", self._file_prefix_edit)
-        self._df_lay.addRow("", self._file_ts_cb)
-        self._df_lay.addRow("DBus signal:", self._dbus_signal_edit)
-        self._df_lay.addRow("Initial prompt:", self._initial_prompt_edit)
+        # Global-off warnings for preprocessing
+        if self._config and not self._config.get("noise_suppression", False):
+            pre_form.addRow("", _hint_warn("Noise suppression is globally disabled — "
+                                           "enabling here will have no effect until turned on globally."))
+        lay.addWidget(pre_group)
 
-        form.addRow(self._delivery_fields)
-        lay.addLayout(form)
+        # ── Postprocessing ─────────────────────────────────────────────────
+        post_group = QGroupBox("Postprocessing  (None = use global setting)")
+        post_form = QFormLayout(post_group)
+        post_form.setSpacing(6)
+
+        self._remove_fillers_combo = _make_tristate_combo(p.remove_fillers if p else None)
+        self._spoken_punct_combo = _make_tristate_combo(p.spoken_punctuation if p else None)
+        self._auto_lists_combo = _make_tristate_combo(p.auto_format_lists if p else None)
+        self._apply_snippets_combo = _make_tristate_combo(p.apply_snippets if p else None)
+        self._code_mode_combo = _make_tristate_combo(p.code_mode if p else None)
+
+        post_form.addRow("Remove fillers (uh/um):", self._remove_fillers_combo)
+        post_form.addRow("Spoken punctuation:", self._spoken_punct_combo)
+        post_form.addRow("Auto-format lists:", self._auto_lists_combo)
+        post_form.addRow("Apply snippets:", self._apply_snippets_combo)
+        post_form.addRow("Code dictation mode:", self._code_mode_combo)
+        lay.addWidget(post_group)
+
+        # ── Ollama / LLM ───────────────────────────────────────────────────
+        ollama_group = QGroupBox("Ollama / LLM Post-Processing")
+        ollama_form = QFormLayout(ollama_group)
+        ollama_form.setSpacing(6)
+
+        self._ollama_enabled_combo = _make_tristate_combo(p.ollama_enabled if p else None)
+
+        self._ollama_model_edit = QLineEdit(p.ollama_model or "" if p else "")
+        self._ollama_model_edit.setPlaceholderText(
+            self._config.get("ollama_model", "llama3.2:1b") if self._config else "llama3.2:1b"
+        )
+
+        self._ollama_mode_combo = QComboBox()
+        self._ollama_mode_combo.addItem("Default (global)", "")
+        from llm_postprocessor import MODE_LABELS
+        for mode_key, mode_label in MODE_LABELS.items():
+            if mode_key != "off":
+                self._ollama_mode_combo.addItem(mode_label, mode_key)
+        target_mode = p.ollama_mode if p else None
+        if target_mode:
+            idx = self._ollama_mode_combo.findData(target_mode)
+            if idx >= 0:
+                self._ollama_mode_combo.setCurrentIndex(idx)
+
+        self._ollama_prompt_edit = QTextEdit()
+        self._ollama_prompt_edit.setMaximumHeight(80)
+        self._ollama_prompt_edit.setPlaceholderText(
+            "Custom system prompt (optional). Use {text} as placeholder for the transcription.\n"
+            "Leave blank to use the selected mode's built-in prompt."
+        )
+        if p and p.ollama_prompt:
+            self._ollama_prompt_edit.setPlainText(p.ollama_prompt)
+
+        ollama_form.addRow("Ollama enabled:", self._ollama_enabled_combo)
+        ollama_form.addRow("Model override:", self._ollama_model_edit)
+        ollama_form.addRow("Mode:", self._ollama_mode_combo)
+        ollama_form.addRow("Custom prompt:", self._ollama_prompt_edit)
+
+        if self._config and not self._config.get("ollama_enabled", False):
+            ollama_form.addRow("", _hint_warn(
+                "Ollama is globally disabled (AI tab). Enabling it here will have no "
+                "effect until the global toggle is turned on."
+            ))
+        lay.addWidget(ollama_group)
+
+        scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         btns.accepted.connect(self._accept)
         btns.rejected.connect(self.reject)
-        lay.addWidget(btns)
+        outer.addWidget(btns)
 
         self._delivery_combo.currentIndexChanged.connect(self._update_delivery_fields)
         self._update_delivery_fields()
-
-        # Auto-generate ID from label
         self._label_edit.textChanged.connect(self._auto_id)
 
     def _auto_id(self, text):
@@ -2381,8 +2699,9 @@ class _TargetEditorDialog(QDialog):
         show_dbus = dt == DeliveryType.DBUS
 
         self._command_edit.setVisible(show_command)
-        self._df_lay.labelForField(self._command_edit) and \
-            self._df_lay.labelForField(self._command_edit).setVisible(show_command)
+        lbl = self._df_lay.labelForField(self._command_edit)
+        if lbl:
+            lbl.setVisible(show_command)
         self._pipe_path_edit.setVisible(show_pipe)
         lbl = self._df_lay.labelForField(self._pipe_path_edit)
         if lbl:
@@ -2412,17 +2731,34 @@ class _TargetEditorDialog(QDialog):
         lbl = self._df_lay.labelForField(self._dbus_signal_edit)
         if lbl:
             lbl.setVisible(show_dbus)
-        self.adjustSize()
 
     def _accept(self):
-        from routing.models import OutputTarget
+        from routing.models import OutputTarget, TargetProcessingConfig
         target_id = self._id_edit.text().strip()
         if not target_id:
             QMessageBox.warning(self, "Validation", "ID is required.")
             return
         label = self._label_edit.text().strip() or target_id
         delivery = self._delivery_combo.currentData()
-        pp = self._pp_combo.currentData()
+
+        # Build TargetProcessingConfig from UI
+        processing = TargetProcessingConfig(
+            # Preprocessing
+            noise_suppression=self._noise_suppression_combo.currentData(),
+            quiet_mode=self._quiet_mode_combo.currentData(),
+            atspi_context=self._atspi_context_combo.currentData(),
+            # Postprocessing
+            remove_fillers=self._remove_fillers_combo.currentData(),
+            spoken_punctuation=self._spoken_punct_combo.currentData(),
+            auto_format_lists=self._auto_lists_combo.currentData(),
+            apply_snippets=self._apply_snippets_combo.currentData(),
+            code_mode=self._code_mode_combo.currentData(),
+            # Ollama
+            ollama_enabled=self._ollama_enabled_combo.currentData(),
+            ollama_model=self._ollama_model_edit.text().strip() or None,
+            ollama_mode=self._ollama_mode_combo.currentData() or None,
+            ollama_prompt=self._ollama_prompt_edit.toPlainText().strip() or None,
+        )
 
         self.result_target = OutputTarget(
             id=target_id,
@@ -2437,7 +2773,7 @@ class _TargetEditorDialog(QDialog):
             file_prefix=self._file_prefix_edit.text(),
             file_timestamp=self._file_ts_cb.isChecked(),
             dbus_signal=self._dbus_signal_edit.text().strip() or None,
-            post_processing=pp,
+            processing=processing,
             append_newline=self._append_newline_cb.isChecked(),
             initial_prompt=self._initial_prompt_edit.text().strip() or None,
         )

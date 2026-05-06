@@ -93,9 +93,9 @@ class InferenceEngine(threading.Thread):
         self.actual_compute_type = "Unknown"
         self.active_backend_name = "Unknown"
 
-        # Routing: current session target
+        # Routing: current session target (full OutputTarget object stored on record start)
         self._current_target_id: str = 'default'
-        self._current_post_processing: str = 'default'
+        self._current_target = None          # OutputTarget | None
         self._current_initial_prompt_override: str | None = None
         self._atspi_context_at_start = None  # FocusContext snapshot taken on recording start
 
@@ -228,17 +228,68 @@ class InferenceEngine(threading.Thread):
             self.config.save()
             self._load_backend()
 
-    def _build_initial_prompt(self):
+    # ── Effective processing config ───────────────────────────────────────────
+
+    def _build_effective_processing(self, target=None) -> dict:
+        """Merge the global config with per-target processing overrides.
+
+        Returns a flat dict of resolved processing settings.  For globally-gated
+        optional features (Ollama, noise suppression) the global master switch
+        acts as an absolute OFF — a target can request the feature but it will
+        not run if globally disabled.
+        """
+        p = target.processing if target is not None else None
+
+        def resolve(attr, config_key, default):
+            """Return target override if set, else global config value."""
+            if p is not None:
+                val = getattr(p, attr, None)
+                if val is not None:
+                    return val
+            return self.config.get(config_key, default)
+
+        # Globally-gated features: global OFF wins unconditionally
+        global_ollama = self.config.get("ollama_enabled", False)
+        global_noise  = self.config.get("noise_suppression", False)
+
+        target_wants_ollama = resolve("ollama_enabled", "ollama_enabled", False)
+        target_wants_noise  = resolve("noise_suppression", "noise_suppression", False)
+
+        return {
+            # ── Preprocessing ───────────────────────────────────────────────
+            "noise_suppression": global_noise and target_wants_noise,
+            "quiet_mode":        resolve("quiet_mode", "quiet_mode", False),
+            "atspi_context":     resolve("atspi_context", "atspi_context_prompt", True),
+
+            # ── Postprocessing ──────────────────────────────────────────────
+            "remove_fillers":     resolve("remove_fillers", "remove_fillers", True),
+            "spoken_punctuation": resolve("spoken_punctuation", "spoken_punctuation", True),
+            "auto_format_lists":  resolve("auto_format_lists", "auto_format_lists", True),
+            "apply_snippets":     resolve("apply_snippets", "apply_snippets", True),
+            "code_mode":          resolve("code_mode", "dictation_mode", "normal") == "code"
+                                  if p is None or p.code_mode is None
+                                  else bool(p.code_mode),
+
+            # ── Ollama / LLM ────────────────────────────────────────────────
+            # global OFF → feature off; target can opt-in within global budget
+            "ollama_enabled": global_ollama and target_wants_ollama,
+            "ollama_model":   resolve("ollama_model", "ollama_model", "llama3.2:1b"),
+            "ollama_mode":    resolve("ollama_mode", "ollama_mode", "clean"),
+            "ollama_prompt":  p.ollama_prompt if p is not None else None,
+        }
+
+    # ── Initial prompt ────────────────────────────────────────────────────────
+
+    def _build_initial_prompt(self, effective: dict):
         if self._current_initial_prompt_override is not None:
             return self._current_initial_prompt_override
 
         parts = []
 
-        # Prepend surrounding text captured at recording start so Whisper can
-        # match vocabulary and sentence style to the current document context.
-        ctx = self._atspi_context_at_start
-        if ctx and ctx.surrounding_text.strip():
-            parts.append(ctx.surrounding_text.strip())
+        if effective.get("atspi_context", True):
+            ctx = self._atspi_context_at_start
+            if ctx and ctx.surrounding_text.strip():
+                parts.append(ctx.surrounding_text.strip())
 
         vocab = self.config.get("custom_vocabulary", [])
         if vocab:
@@ -274,72 +325,82 @@ class InferenceEngine(threading.Thread):
         text = re.sub(r'[ \t]+', ' ', text).strip()
         return text
 
-    def _postprocess(self, text):
-        pp = self._current_post_processing
+    def _postprocess(self, text, effective: dict) -> str:
+        """Apply the full postprocessing pipeline using resolved effective settings."""
+        # Force code mode when AT-SPI2 detected an IDE/terminal (unless overridden by target)
+        force_code = (
+            getattr(self, '_atspi_forced_code_mode', False)
+            and self._current_target is not None
+            and self._current_target.processing.code_mode is None
+        )
+        use_code_mode = effective.get("code_mode", False) or force_code
 
-        if pp == 'none':
-            return text
-
-        if pp == 'strip_fillers':
-            text = _FILLER_RE.sub('', text)
-            text = re.sub(r'\s+', ' ', text).strip()
-            if text:
-                text = text[0].upper() + text[1:]
-            return text
-
-        if pp == 'snippets_only':
-            return self._apply_snippets(text)
-
-        if pp == 'ollama_only':
-            return text  # Ollama applied later in process_buffer
-
-        # 'default' or unknown: full pipeline
-        mode = self.config.get("dictation_mode", "normal")
-        if getattr(self, '_atspi_forced_code_mode', False):
-            mode = "code"
-        if mode == "code":
+        if use_code_mode:
             text = self._apply_code_mode(text)
         else:
-            if self.config.get("remove_fillers", True):
+            if effective.get("remove_fillers", True):
                 text = _FILLER_RE.sub('', text)
                 text = re.sub(r'\s+', ' ', text).strip()
                 if text:
                     text = text[0].upper() + text[1:]
-            if self.config.get("spoken_punctuation", True):
+            if effective.get("spoken_punctuation", True):
                 text = self._apply_spoken_punctuation(text)
-            if self.config.get("auto_format_lists", True):
+            if effective.get("auto_format_lists", True):
                 text = self._apply_list_formatting(text)
 
-        text = self._apply_snippets(text)
+        if effective.get("apply_snippets", True):
+            text = self._apply_snippets(text)
+
         return text
 
+    # ── Recording state ───────────────────────────────────────────────────────
+
     def set_recording(self, recording, target_id='default',
-                      post_processing='default', initial_prompt_override=None):
+                      target=None, initial_prompt_override=None):
+        """Start or stop a recording session.
+
+        Args:
+            recording: True to start, False to stop.
+            target_id: ID of the OutputTarget for this session.
+            target: Full OutputTarget object (for per-target processing config).
+            initial_prompt_override: Explicit Whisper initial prompt; None = auto-build.
+        """
         self.recording = recording
         if recording:
             self._current_target_id = target_id
-            self._current_post_processing = post_processing
-            self._current_initial_prompt_override = initial_prompt_override
-            self._atspi_context_at_start = self._capture_atspi_context()
+            self._current_target = target
+            self._current_initial_prompt_override = (
+                initial_prompt_override
+                if initial_prompt_override is not None
+                else (target.initial_prompt if target else None)
+            )
+            self._atspi_context_at_start = self._capture_atspi_context(
+                target.processing if target else None
+            )
         else:
             self.process_buffer(incremental=False)
             with self._buffer_lock:
                 self.buffer.clear()
 
-    def _capture_atspi_context(self):
+    def _capture_atspi_context(self, processing=None):
         """Snapshot the focused widget's AT-SPI2 context at the moment recording starts."""
-        if not self.config.get('atspi_context_prompt', True):
+        # Per-target override takes precedence; fall back to global setting
+        use_atspi = (
+            processing.atspi_context
+            if processing is not None and processing.atspi_context is not None
+            else self.config.get('atspi_context_prompt', True)
+        )
+        if not use_atspi:
             return None
         try:
             import atspi_context
             ctx = atspi_context.get_focused_context(max_chars=300)
             if ctx is None:
                 return None
-            # Auto-switch to code mode when focused on a terminal or IDE text widget,
-            # unless the user has explicitly overridden dictation_mode in settings.
             if (ctx.is_code_context
                     and self.config.get('atspi_auto_code_mode', True)
-                    and self.config.get('dictation_mode', 'normal') == 'normal'):
+                    and self.config.get('dictation_mode', 'normal') == 'normal'
+                    and (processing is None or processing.code_mode is None)):
                 self._atspi_forced_code_mode = True
             else:
                 self._atspi_forced_code_mode = False
@@ -364,8 +425,7 @@ class InferenceEngine(threading.Thread):
         audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
 
         try:
-            quiet = self.config.get("quiet_mode", False)
-            vad_threshold = 0.2 if quiet else self.config.get("vad_threshold", 0.5)
+            effective = self._build_effective_processing(self._current_target)
 
             with self._model_lock:
                 backend = self._backend
@@ -373,7 +433,12 @@ class InferenceEngine(threading.Thread):
             if backend is None:
                 return
 
-            # FasterWhisperBackend has an extended method exposing VAD filtering
+            # VAD threshold: per-target quiet_mode overrides global setting
+            quiet = effective.get("quiet_mode", False)
+            vad_threshold = 0.2 if quiet else self.config.get("vad_threshold", 0.5)
+
+            initial_prompt = self._build_initial_prompt(effective)
+
             if isinstance(backend, FasterWhisperBackend):
                 result = backend.transcribe_with_vad(
                     audio_data,
@@ -381,21 +446,21 @@ class InferenceEngine(threading.Thread):
                         min_silence_duration_ms=self.config.get("min_silence_duration_ms", 500),
                         threshold=vad_threshold,
                     ),
-                    initial_prompt=self._build_initial_prompt(),
+                    initial_prompt=initial_prompt,
                 )
             else:
                 result = backend.transcribe(
                     audio_data,
-                    initial_prompt=self._build_initial_prompt(),
+                    initial_prompt=initial_prompt,
                 )
 
             self._last_language = result.language
             self._last_language_prob = result.language_probability
 
-            full_text = self._postprocess(result.text.strip())
+            full_text = self._postprocess(result.text.strip(), effective)
 
             if full_text and not incremental:
-                full_text = self.llm.process(full_text) or full_text
+                full_text = self.llm.process_with_target(full_text, effective) or full_text
 
             if full_text:
                 if incremental:

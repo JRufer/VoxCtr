@@ -6,17 +6,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from routing.models import (
-    DeliveryType, GestureType, HotkeyBinding, OutputTarget,
+    DeliveryType, GestureType, HotkeyBinding, OutputTarget, TargetProcessingConfig,
 )
 
 CONFIG_DIR = Path('~/.config/whisper-wayland').expanduser()
-_FORMAT_VERSION = "1.0"
+_FORMAT_VERSION = "1.1"
 _KEEP_BACKUPS = 20
 
 
-# ── TOML writer (minimal: handles str/int/bool/float and arrays of tables) ──
+# ── TOML writer ───────────────────────────────────────────────────────────────
+# Minimal hand-written writer; handles str/int/bool/float, lists of scalars,
+# and dicts as TOML inline tables {key = val, ...}.
 
 def _toml_value(v) -> str:
+    if v is None:
+        raise TypeError("None values should not be serialized to TOML")
     if isinstance(v, bool):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
@@ -27,6 +31,10 @@ def _toml_value(v) -> str:
     if isinstance(v, list):
         items = ', '.join(_toml_value(i) for i in v)
         return f'[{items}]'
+    if isinstance(v, dict):
+        # Inline table: {key = val, key = val}
+        pairs = ', '.join(f'{k} = {_toml_value(vv)}' for k, vv in v.items())
+        return f'{{{pairs}}}'
     raise TypeError(f"Unsupported TOML value type: {type(v)}")
 
 
@@ -48,7 +56,7 @@ def _write_toml(data: dict, path: Path) -> None:
     path.write_text('\n'.join(lines), encoding='utf-8')
 
 
-# ── Defaults ────────────────────────────────────────────────────────────────
+# ── Defaults ─────────────────────────────────────────────────────────────────
 
 def _default_inject_target() -> OutputTarget:
     return OutputTarget(
@@ -79,10 +87,64 @@ def _default_bindings() -> list:
     ]
 
 
-# ── Parsing ──────────────────────────────────────────────────────────────────
+# ── Migration: legacy post_processing string → TargetProcessingConfig ─────────
+
+def _migrate_post_processing(pp: str) -> TargetProcessingConfig:
+    """Convert old post_processing string to a TargetProcessingConfig.
+
+    The new format stores explicit field overrides rather than a named mode.
+    This migration preserves the old semantics as closely as possible.
+    """
+    if pp == 'none':
+        return TargetProcessingConfig(
+            remove_fillers=False,
+            spoken_punctuation=False,
+            auto_format_lists=False,
+            apply_snippets=False,
+            ollama_enabled=False,
+        )
+    if pp == 'strip_fillers':
+        return TargetProcessingConfig(
+            remove_fillers=True,
+            spoken_punctuation=False,
+            auto_format_lists=False,
+            apply_snippets=False,
+            ollama_enabled=False,
+        )
+    if pp == 'snippets_only':
+        return TargetProcessingConfig(
+            remove_fillers=False,
+            spoken_punctuation=False,
+            auto_format_lists=False,
+            apply_snippets=True,
+            ollama_enabled=False,
+        )
+    if pp == 'ollama_only':
+        return TargetProcessingConfig(
+            remove_fillers=False,
+            spoken_punctuation=False,
+            auto_format_lists=False,
+            apply_snippets=False,
+            ollama_enabled=True,
+        )
+    # 'default' or anything unknown: leave all None (inherit global)
+    return TargetProcessingConfig()
+
+
+# ── Parsing ───────────────────────────────────────────────────────────────────
 
 def _parse_target(d: dict) -> OutputTarget:
     delivery = DeliveryType(d.get('delivery', 'inject'))
+
+    # Build processing config: prefer explicit [processing] dict, fall back to
+    # the legacy post_processing string so old configs keep working.
+    proc_dict = d.get('processing')
+    if isinstance(proc_dict, dict):
+        processing = TargetProcessingConfig.from_dict(proc_dict)
+    else:
+        legacy_pp = d.get('post_processing', 'default')
+        processing = _migrate_post_processing(legacy_pp)
+
     return OutputTarget(
         id=d.get('id', ''),
         label=d.get('label', ''),
@@ -96,7 +158,9 @@ def _parse_target(d: dict) -> OutputTarget:
         file_prefix=d.get('file_prefix', ''),
         file_timestamp=d.get('file_timestamp', True),
         dbus_signal=d.get('dbus_signal'),
+        # Keep post_processing for informational/compat purposes
         post_processing=d.get('post_processing', 'default'),
+        processing=processing,
         send_on_release=d.get('send_on_release', True),
         append_newline=d.get('append_newline', True),
         initial_prompt=d.get('initial_prompt'),
@@ -120,14 +184,13 @@ def _parse_binding(d: dict) -> HotkeyBinding:
     )
 
 
-# ── Serialization ────────────────────────────────────────────────────────────
+# ── Serialization ─────────────────────────────────────────────────────────────
 
 def _serialize_target(t: OutputTarget) -> dict:
     d: dict = {
         'id': t.id,
         'label': t.label,
         'delivery': t.delivery.value,
-        'post_processing': t.post_processing,
         'append_newline': t.append_newline,
         'send_on_release': t.send_on_release,
         'file_timestamp': t.file_timestamp,
@@ -156,6 +219,14 @@ def _serialize_target(t: OutputTarget) -> dict:
         d['tts_engine'] = t.tts_engine
     if t.tts_voice is not None:
         d['tts_voice'] = t.tts_voice
+
+    # Serialize per-target processing config as an inline TOML table.
+    # Only stored when at least one override is set; otherwise the engine
+    # falls back entirely to global config values.
+    proc_dict = t.processing.to_dict()
+    if proc_dict:
+        d['processing'] = proc_dict
+
     return d
 
 

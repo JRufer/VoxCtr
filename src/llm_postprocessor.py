@@ -7,6 +7,8 @@ Design contract:
   - All network calls are synchronous but capped by a short timeout so they
     never stall the injection pipeline for more than a couple of seconds.
   - Zero third-party dependencies: uses only stdlib urllib.
+  - Per-target overrides: process_with_target() accepts an effective-processing
+    dict from the InferenceEngine and uses target-specific model/mode/prompt.
 """
 
 import json
@@ -107,46 +109,80 @@ class LLMPostprocessor:
         return list(self._available_models)
 
     def process(self, text: str) -> str:
-        """
-        Apply LLM post-processing to text.
+        """Apply LLM post-processing using global config settings.
 
-        Guaranteed to return a string. If anything goes wrong (Ollama down,
-        timeout, bad JSON, empty response) the original text is returned.
+        Guaranteed to return a string. If anything goes wrong the original
+        text is returned.
         """
         if not text.strip():
             return text
-
         if not self.config.get("ollama_enabled", False):
             return text
 
         mode = self.config.get("ollama_mode", "clean")
-        if mode == "off":
+        model = self.config.get("ollama_model", "llama3.2:1b")
+        return self._process_internal(text, model=model, mode=mode, custom_prompt=None)
+
+    def process_with_target(self, text: str, effective: dict) -> str:
+        """Apply LLM post-processing using a resolved effective-processing dict.
+
+        This is the preferred entry point from InferenceEngine — it uses
+        per-target overrides for model, mode, and custom prompt.
+
+        Args:
+            text: Transcribed and locally post-processed text.
+            effective: Dict from InferenceEngine._build_effective_processing(),
+                       containing ollama_enabled, ollama_model, ollama_mode,
+                       ollama_prompt.
+        """
+        if not text.strip():
+            return text
+        if not effective.get("ollama_enabled", False):
             return text
 
-        prompt_template = _PROMPTS.get(mode)
-        if not prompt_template:
+        model  = effective.get("ollama_model", self.config.get("ollama_model", "llama3.2:1b"))
+        mode   = effective.get("ollama_mode",  self.config.get("ollama_mode", "clean"))
+        custom = effective.get("ollama_prompt")  # None → use mode's built-in prompt
+
+        return self._process_internal(text, model=model, mode=mode, custom_prompt=custom)
+
+    # ── Internal ──────────────────────────────────────────────────────────
+
+    def _process_internal(self, text: str, model: str, mode: str,
+                          custom_prompt: Optional[str]) -> str:
+        """Core processing logic shared by process() and process_with_target()."""
+        if mode == "off" and not custom_prompt:
             return text
 
-        # Re-probe if we haven't yet (lazy init)
+        # Build the prompt
+        if custom_prompt:
+            # Custom prompt: treat as a template; {text} is replaced if present,
+            # otherwise the transcribed text is appended after a blank line.
+            if "{text}" in custom_prompt:
+                prompt = custom_prompt.replace("{text}", text)
+            else:
+                prompt = f"{custom_prompt}\n\n{text}"
+        else:
+            prompt_template = _PROMPTS.get(mode)
+            if not prompt_template:
+                return text
+            prompt = prompt_template.format(text=text)
+
+        # Lazy probe
         if self._available is None:
             self.probe()
         if not self._available:
             return text
 
-        return self._call_ollama(prompt_template.format(text=text))
+        result = self._call_ollama(prompt, model=model, mode=mode)
+        return result if result else text
 
-    # ── Internal ──────────────────────────────────────────────────────────
+    def _call_ollama(self, prompt: str, model: str, mode: str) -> str:
+        """POST to Ollama /api/generate with stream=False.
 
-    def _call_ollama(self, prompt: str) -> str:
+        Returns the model response string, or empty string on any error
+        (caller falls back to original text).
         """
-        POST to Ollama /api/generate with stream=False.
-        Returns the model response string, or the original prompt text on any error.
-
-        We extract the original text from the prompt via the known suffix :\n\n{text}
-        but it's simpler to just catch exceptions and return the untouched text
-        from process() above — so here we raise on error and let process() handle it.
-        """
-        model = self.config.get("ollama_model", "llama3.2:1b")
         payload = json.dumps({
             "model": model,
             "prompt": prompt,
@@ -168,13 +204,11 @@ class LLMPostprocessor:
                 body = json.loads(resp.read().decode())
                 result = body.get("response", "").strip()
                 if result:
-                    print(f"[LLM] {self.config.get('ollama_mode')} → {result[:60]}…")
+                    print(f"[LLM] {mode} ({model}) → {result[:60]}…")
                     return result
         except urllib.error.URLError:
-            # Ollama went down mid-session — mark unavailable, return original
             self._available = False
             print("[LLM] Ollama became unreachable — disabling for this session.")
         except Exception as e:
             print(f"[LLM] Unexpected error: {e}")
-        # Fall through: return empty string so process() uses original
         return ""

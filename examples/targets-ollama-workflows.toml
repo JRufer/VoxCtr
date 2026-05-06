@@ -1,0 +1,122 @@
+## targets-ollama-workflows.toml — Ollama-powered workflow targets
+##
+## All targets here use Ollama for post-processing with different
+## models, modes, and custom prompts.  Requires: global ollama_enabled = true
+## in config.json and Ollama running at http://localhost:11434.
+##
+## Copy to ~/.config/whisper-wayland/targets.toml (or merge with an existing file)
+
+format_version = "1.1"
+
+# ── Base inject target (no Ollama) ────────────────────────────────────────────
+[[target]]
+id = "default"
+label = "Focused Window"
+delivery = "inject"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+
+# ── Grammar fix only (small/fast model) ──────────────────────────────────────
+[[target]]
+id = "grammar_fix"
+label = "Grammar Fix"
+delivery = "clipboard"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_mode = "clean"}
+
+# ── Formal tone rewrite (larger model for better results) ─────────────────────
+[[target]]
+id = "formal"
+label = "Formal Rewrite"
+delivery = "clipboard"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_model = "llama3.2:3b", ollama_mode = "formal"}
+
+# ── Casual / friendly tone ───────────────────────────────────────────────────
+[[target]]
+id = "casual"
+label = "Casual Rewrite"
+delivery = "clipboard"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_mode = "casual"}
+
+# ── Bullet points for meetings/presentations ─────────────────────────────────
+[[target]]
+id = "bullets"
+label = "Bullet Points"
+delivery = "clipboard"
+append_newline = true
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = true, ollama_enabled = true, ollama_mode = "bullet"}
+
+# ── Make concise (great for Slack/Twitter) ───────────────────────────────────
+[[target]]
+id = "concise"
+label = "Make Concise"
+delivery = "clipboard"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_mode = "concise"}
+
+# ── Domain-specific: software engineering commit messages ─────────────────────
+[[target]]
+id = "commit_msg"
+label = "Git Commit Message"
+delivery = "exec"
+command = "wl-copy {TEXT}"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = false, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_prompt = "Write a concise git commit message for the following description. Use the imperative mood (e.g. 'Add', 'Fix', 'Update'). Output ONLY the commit message, no explanation:\n\n{text}"}
+
+# ── Domain-specific: medical clinical notes ──────────────────────────────────
+[[target]]
+id = "clinical_notes"
+label = "Clinical Notes"
+delivery = "file"
+file_path = "~/notes/clinical.md"
+file_prefix = "- "
+file_timestamp = true
+append_newline = true
+send_on_release = true
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_prompt = "Convert to concise clinical notes using standard medical abbreviations. SOAP format if applicable. Output ONLY the notes:\n\n{text}"}
+
+# ── Domain-specific: legal dictation ─────────────────────────────────────────
+[[target]]
+id = "legal_dict"
+label = "Legal Dictation"
+delivery = "file"
+file_path = "~/notes/legal.md"
+file_timestamp = true
+append_newline = true
+send_on_release = true
+processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = true, ollama_enabled = true, ollama_model = "llama3.2:3b", ollama_prompt = "Rewrite the following as formal legal language. Use precise, unambiguous terminology. Output ONLY the rewritten text:\n\n{text}"}
+
+# ── Translate to Spanish ──────────────────────────────────────────────────────
+[[target]]
+id = "translate_es"
+label = "Translate to Spanish"
+delivery = "clipboard"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_prompt = "Translate the following to Spanish. Output ONLY the translation:\n\n{text}"}
+
+# ── Summarise long dictation ──────────────────────────────────────────────────
+[[target]]
+id = "summarise"
+label = "Summarise"
+delivery = "clipboard"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_prompt = "Summarise the following in 2-3 sentences. Output ONLY the summary:\n\n{text}"}

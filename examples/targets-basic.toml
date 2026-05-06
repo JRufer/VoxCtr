@@ -1,0 +1,17 @@
+## targets-basic.toml — Basic single-target setup
+##
+## The simplest configuration: one inject target that types text into whatever
+## window has focus.  No processing overrides — everything inherits the global
+## settings from config.json.
+##
+## Copy to ~/.config/whisper-wayland/targets.toml
+
+format_version = "1.1"
+
+[[target]]
+id = "default"
+label = "Focused Window"
+delivery = "inject"
+append_newline = false
+send_on_release = true
+file_timestamp = true

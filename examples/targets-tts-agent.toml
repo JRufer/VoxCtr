@@ -1,0 +1,80 @@
+## targets-tts-agent.toml — AI agent targets with TTS response loopback
+##
+## These targets send dictated text to AI agents via pipes/sockets and read
+## the agent's response back via a FIFO, speaking it aloud through TTS.
+##
+## Requires: tts_enabled = true in config.json
+##
+## Copy to ~/.config/whisper-wayland/targets.toml (or merge with existing)
+
+format_version = "1.1"
+
+# ── Default inject (always present) ──────────────────────────────────────────
+[[target]]
+id = "default"
+label = "Focused Window"
+delivery = "inject"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+
+# ── Hermes conversational agent via FIFO ─────────────────────────────────────
+# The agent reads from /tmp/hermes.in and writes responses to /tmp/hermes.out.
+# Whisper Wayland speaks the response aloud.
+[[target]]
+id = "hermes"
+label = "Hermes Agent"
+delivery = "pipe"
+pipe_path = "/tmp/hermes.in"
+response_pipe = "/tmp/hermes.out"
+tts_engine = "piper"
+tts_voice = "en-us-lessac-medium"
+append_newline = true
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, ollama_enabled = false}
+
+# ── Claude Code via pipe ──────────────────────────────────────────────────────
+[[target]]
+id = "claude_code"
+label = "Claude Code"
+delivery = "pipe"
+pipe_path = "/tmp/claude.in"
+response_pipe = "/tmp/claude.out"
+tts_engine = "piper"
+append_newline = true
+send_on_release = true
+file_timestamp = false
+# Code-style dictation: no punctuation expansion, no filler removal
+processing = {code_mode = false, remove_fillers = true, spoken_punctuation = false, apply_snippets = true, ollama_enabled = false}
+
+# ── Remote agent via TCP socket ───────────────────────────────────────────────
+[[target]]
+id = "remote_agent"
+label = "Remote Agent (TCP)"
+delivery = "socket"
+socket_host = "192.168.1.100"
+socket_port = 9001
+response_pipe = "/tmp/remote_agent.out"
+tts_engine = "espeak"
+append_newline = true
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = false}
+
+# ── Local Ollama chat — send prompt, speak response ──────────────────────────
+# Use an external ollama-chat bridge script that writes responses to the FIFO.
+# Example bridge: https://github.com/whisper-wayland/ollama-bridge
+[[target]]
+id = "ollama_chat"
+label = "Ollama Chat"
+delivery = "exec"
+command = "whisper-wayland-ollama-bridge --model llama3.2:3b --response-pipe /tmp/ollama_chat.out {TEXT}"
+response_pipe = "/tmp/ollama_chat.out"
+tts_engine = "piper"
+tts_voice = "en-us-lessac-medium"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+# Don't double-process with local Ollama; the bridge handles that
+processing = {remove_fillers = true, spoken_punctuation = false, ollama_enabled = false}

@@ -258,7 +258,8 @@ class TTSEngine:
         self._procs: list = []
         self._speaking = False
         self._q: queue.Queue = queue.Queue()
-        self.on_started: Optional[Callable[[str], None]] = None
+        # on_started(text, source_label) — source_label is the routing target label
+        self.on_started: Optional[Callable] = None
         self.on_finished: Optional[Callable[[], None]] = None
 
         self._worker = threading.Thread(
@@ -268,13 +269,19 @@ class TTSEngine:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def speak(self, text: str) -> None:
-        """Queue *text* for TTS playback. No-op if TTS is disabled in config."""
+    def speak(self, text: str, source_label: str = "") -> None:
+        """Queue *text* for TTS playback. No-op if TTS is disabled in config.
+
+        Args:
+            text: Text to speak.
+            source_label: Human-readable name of the routing target that produced
+                          this response (shown in the TTS overlay badge).
+        """
         if not self.config.get("tts_enabled", False):
             return
         text = text.strip()
         if text:
-            self._q.put(text)
+            self._q.put((text, source_label))
 
     def stop(self) -> None:
         """Kill active subprocesses and drain the pending queue immediately."""
@@ -316,14 +323,15 @@ class TTSEngine:
             item = self._q.get()
             if item is None:
                 break
-            self._do_speak(item)
+            text, source_label = item if isinstance(item, tuple) else (item, "")
+            self._do_speak(text, source_label)
 
-    def _do_speak(self, text: str):
+    def _do_speak(self, text: str, source_label: str = ""):
         with self._lock:
             self._speaking = True
         if self.on_started:
             try:
-                self.on_started(text)
+                self.on_started(text, source_label)
             except Exception:
                 pass
         try:

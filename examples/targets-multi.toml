@@ -1,0 +1,152 @@
+## targets-multi.toml — Multiple targets with per-target processing overrides
+##
+## Demonstrates all delivery types and the per-target processing config.
+## Each target can independently override preprocessing and postprocessing.
+##
+## Copy to ~/.config/whisper-wayland/targets.toml
+
+format_version = "1.1"
+
+# ── 1. Standard inject (inherits all global settings) ─────────────────────────
+[[target]]
+id = "default"
+label = "Focused Window"
+delivery = "inject"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+
+# ── 2. Raw inject — no processing at all (e.g. for a form that wants verbatim) ─
+[[target]]
+id = "verbatim"
+label = "Verbatim Inject"
+delivery = "inject"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+processing = {remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = false, ollama_enabled = false, atspi_context = false}
+
+# ── 3. Code mode — forces code-dictation mode regardless of focused app ────────
+[[target]]
+id = "code"
+label = "Code Editor"
+delivery = "inject"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+initial_prompt = "Python code. Variables use snake_case. Functions defined with def."
+processing = {code_mode = true, remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = true, ollama_enabled = false, atspi_context = false}
+
+# ── 4. Clipboard with Ollama grammar fix ──────────────────────────────────────
+[[target]]
+id = "clipboard_clean"
+label = "Clipboard (AI Cleaned)"
+delivery = "clipboard"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_mode = "clean"}
+
+# ── 5. Formal email — Ollama rewrites in professional tone ────────────────────
+[[target]]
+id = "formal_email"
+label = "Formal Email"
+delivery = "clipboard"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = false, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_mode = "formal"}
+
+# ── 6. Bullet-point meeting notes ─────────────────────────────────────────────
+[[target]]
+id = "meeting_notes"
+label = "Meeting Notes (Bullets)"
+delivery = "clipboard"
+append_newline = true
+send_on_release = true
+file_timestamp = true
+processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = true, ollama_enabled = true, ollama_mode = "bullet"}
+
+# ── 7. Custom Ollama prompt — domain-specific rewrites ───────────────────────
+[[target]]
+id = "medical_notes"
+label = "Medical Notes"
+delivery = "file"
+file_path = "~/notes/medical.md"
+file_prefix = "- "
+file_timestamp = true
+append_newline = true
+send_on_release = true
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_prompt = "Rewrite the following as concise clinical notes using standard medical abbreviations. Output ONLY the rewritten text:\n\n{text}"}
+
+# ── 8. FIFO pipe to an AI agent (e.g. Hermes or Claude Code) ─────────────────
+[[target]]
+id = "agent_pipe"
+label = "AI Agent (Pipe)"
+delivery = "pipe"
+pipe_path = "/tmp/agent.in"
+append_newline = true
+send_on_release = true
+file_timestamp = false
+# Quiet mode: extra gain for soft speech in a noisy environment
+# Noise suppression enabled if globally on; no Ollama (agent handles it)
+processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, ollama_enabled = false, quiet_mode = true}
+
+# ── 9. TCP socket to remote service ──────────────────────────────────────────
+[[target]]
+id = "remote_agent"
+label = "Remote Service"
+delivery = "socket"
+socket_host = "192.168.1.50"
+socket_port = 9000
+append_newline = true
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = false}
+
+# ── 10. Daily journal — file append with timestamps ───────────────────────────
+[[target]]
+id = "journal"
+label = "Daily Journal"
+delivery = "file"
+file_path = "~/journal.md"
+file_prefix = "> "
+file_timestamp = true
+append_newline = true
+send_on_release = true
+# Make concise before writing
+processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = true, ollama_enabled = true, ollama_mode = "concise"}
+
+# ── 11. Run external command — e.g. send to clipboard manager ─────────────────
+[[target]]
+id = "cliphist"
+label = "Cliphist"
+delivery = "exec"
+command = "wl-copy {TEXT}"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true}
+
+# ── 12. D-Bus signal — notify other apps on the desktop ──────────────────────
+[[target]]
+id = "dbus_notify"
+label = "D-Bus Notification"
+delivery = "dbus"
+dbus_signal = "com.example.Dictation.TextReady"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+processing = {remove_fillers = true, spoken_punctuation = true}
+
+# ── 13. Noise-suppressed quiet dictation (e.g. open-plan office) ──────────────
+[[target]]
+id = "office_quiet"
+label = "Office (Noise Suppressed)"
+delivery = "inject"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+# noise_suppression and quiet_mode both override global — will be ignored if
+# global noise_suppression toggle is off (target will be flagged in UI)
+processing = {noise_suppression = true, quiet_mode = true, remove_fillers = true, spoken_punctuation = true}

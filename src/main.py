@@ -17,8 +17,9 @@ from dbus_service import DBusService
 from tts_engine import TTSEngine
 from tts_responder import ResponseListener
 from mcp_server import WhisperMCPServer
-from routing.loader import load_targets
+from routing.loader import load_targets, load_bindings
 from routing.router import OutputTargetRouter
+from config_validator import validate_all, ConfigValidationError
 from gui.tray_icon import WhisperTrayIcon
 from gui.settings_window import SettingsWindow
 from gui.history_window import HistoryWindow
@@ -101,6 +102,15 @@ def main():
 
         config = Config()
 
+        # Validate all configs before proceeding; exit cleanly on fatal errors.
+        try:
+            _startup_targets = load_targets()
+            _startup_bindings = load_bindings()
+            validate_all(config, _startup_targets, _startup_bindings)
+        except ConfigValidationError as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+
         # Show the hotkey-permissions wizard on first run (or if setup is still incomplete).
         # The dialog is non-modal — the user can skip it and still use the app via DBus/tray.
         if needs_setup():
@@ -136,9 +146,9 @@ def main():
         tts_engine = TTSEngine(config)
         tts_overlay = TTSResponseOverlay()
 
-        def _on_tts_started(text: str):
+        def _on_tts_started(text: str, source_label: str = ""):
             if config.get("tts_response_overlay", True):
-                tts_overlay.show_response(text)
+                tts_overlay.show_response(text, source_label=source_label)
 
         def _on_tts_finished():
             tts_overlay.hide_response()
@@ -179,25 +189,16 @@ def main():
 
         injector = TextInjector(config, text_queue, word_count_callback=on_injection, router=router)
 
-        def _get_target_info(target_id: str) -> tuple:
-            """Return (post_processing, initial_prompt) for a target_id."""
-            tgt = router.get_target(target_id)
-            if tgt is None:
-                return 'default', None
-            return tgt.post_processing, tgt.initial_prompt
-
         def on_press(target_id: str = 'default'):
             if recorder.recording:
                 return
             print(f"\n[!] Triggered: Recording → target={target_id!r}")
-            post_processing, initial_prompt = _get_target_info(target_id)
+            tgt = router.get_target(target_id)
             state.recording_started.emit(target_id)
             dbus_svc.set_status("recording")
             with ignore_stderr():
                 recorder.start_recording()
-            inference.set_recording(True, target_id=target_id,
-                                    post_processing=post_processing,
-                                    initial_prompt_override=initial_prompt)
+            inference.set_recording(True, target_id=target_id, target=tgt)
 
         def on_release(target_id: str = 'default'):
             print("[!] Released: Transcribing...")
