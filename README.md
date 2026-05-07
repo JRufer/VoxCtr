@@ -53,10 +53,11 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 ### System & UI
 - **Transcription history** — persistent, searchable panel with one-click copy
 - **Swappable recording overlays** — Waveform, Pulse Circle, Voice Card, or drop in your own; each displays a **routing indicator badge** showing exactly which output target is active while you record
-- **Noise suppression** — optional `noisereduce` filter
+- **Noise suppression** — optional `noisereduce` filter (included in `requirements.txt`)
 - **DBus interface** — control from Waybar, scripts, or Rofi
 - **Settings UI** — tabbed PyQt6 dialog covering all features
 - **Keybind conflict detection** — inline warnings in Settings → Hotkeys flag exact duplicates, subset collisions, double-tap/combo overlaps, and bare single-key bindings
+- **Config validation** — startup validator catches malformed `config.json`, `targets.toml`, and `bindings.toml` with clear error messages
 
 ---
 
@@ -69,13 +70,26 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 | Intel Arc / Iris Xe (Vulkan driver) | `whisper.cpp` auto-selected | Build from source with `GGML_VULKAN=ON` |
 | No GPU (CPU only) | `faster-whisper` int8 auto-selected | Works out of the box; slower for large models |
 
-The backend is chosen automatically at startup. Override it in **Settings → Engine**.
+The backend is chosen automatically at startup using GPU detection via `nvidia-smi`, sysfs DRM vendor IDs, and `vulkaninfo`. Override it in **Settings → Engine**.
 
 ---
 
 ## Installation
 
-### 1. System dependencies
+### Option A — AppImage (easiest)
+
+Download the latest `VoxCtl-x86_64.AppImage` from [Releases](https://github.com/jrufer/voxctr/releases), then run the installer:
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+This copies the AppImage to `~/.local/bin/voxctl`, installs the desktop entry, and downloads Piper TTS automatically.
+
+### Option B — Run from source
+
+#### 1. System dependencies
 
 ```bash
 sudo pacman -S portaudio python-pyaudio wl-clipboard dbus pkgconf python-gobject ydotool wtype
@@ -90,7 +104,7 @@ sudo pacman -S espeak-ng
 sudo pacman -S socat
 ```
 
-### 2. Clone and set up the virtual environment
+#### 2. Clone and set up the virtual environment
 
 ```bash
 git clone https://github.com/jrufer/voxctr.git
@@ -101,13 +115,13 @@ source venv/bin/activate        # bash/zsh
 # source venv/bin/activate.fish # fish
 
 pip install -r requirements.txt
+```
 
-# Optional: noise suppression
-pip install noisereduce
+> `requirements.txt` includes noise suppression (`noisereduce`) and DBus support (`dbus-python`) by default.
 
-# Optional: DBus control interface
-pip install dbus-python
+#### 3. Optional extras
 
+```bash
 # Optional: AT-SPI2 accessibility integration (focus tracking, context-aware
 # transcription, direct text insertion — see section below)
 # Arch Linux:
@@ -119,7 +133,7 @@ sudo pacman -S python-atspi
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
 
-### 3. Launch
+#### 4. Launch
 
 ```bash
 ./voxctl.sh
@@ -295,7 +309,7 @@ cat /tmp/hermes.in | hermes
 `~/.config/voxctl/targets.toml`:
 
 ```toml
-format_version = "1.0"
+format_version = "1.1"
 
 [[target]]
 id = "default"
@@ -316,7 +330,7 @@ append_newline = true
 `~/.config/voxctl/bindings.toml`:
 
 ```toml
-format_version = "1.0"
+format_version = "1.1"
 
 [[binding]]
 id = "default_hold"
@@ -336,6 +350,8 @@ hold_threshold_ms = 200
 ```
 
 If neither file exists, the app creates defaults that preserve the original `Super+Space` / `Ctrl+Super+Space` behavior.
+
+Ready-to-use example TOML files are provided in the `examples/` directory, covering basic targets, multi-target setups, Ollama workflows, and TTS agent configurations.
 
 ### Delivery types
 
@@ -391,9 +407,9 @@ The visual overlay shown while recording is fully swappable. Three styles ship o
 
 | Style | Description |
 |---|---|
-| **Waveform** | Classic OpenGL oscilloscope (default) |
+| **Voice Card** *(default)* | Scrolling bar waveform in a floating card |
+| **Waveform** | Classic OpenGL oscilloscope |
 | **Pulse Circle** | Glowing circle that expands with audio amplitude |
-| **Voice Card** | Scrolling bar waveform in a floating card |
 
 Switch styles in **Settings → Appearance → Recording Overlay**. Changes take effect immediately — no restart needed.
 
@@ -452,7 +468,7 @@ Press the configured key (default: `Escape`) from any window to stop TTS playbac
 
 ### Response overlay
 
-When enabled, a teal floating overlay appears while TTS plays — distinct from the pink recording overlay — so you always know when the app is speaking.
+When enabled, a teal floating overlay appears while TTS plays — distinct from the recording overlay — so you always know when the app is speaking.
 
 ---
 
@@ -524,6 +540,7 @@ Recording Controller (AudioRecorder)
         │ numpy float32 audio
         ▼
 Transcription (faster-whisper / whisper.cpp + Silero VAD)
+  └── Backend selected via BackendSelector (GPU probe → sysfs / nvidia-smi / vulkaninfo)
         │ (text, target_id)
         ▼
 Post-Processing (per target_id setting)
@@ -535,7 +552,7 @@ Post-Processing (per target_id setting)
         │
         ▼
 OutputTargetRouter
-  ├── inject    → wtype / xdotool / clipboard+paste
+  ├── inject    → AT-SPI2 insertText / wtype / xdotool / clipboard+paste
   ├── clipboard → wl-copy
   ├── exec      → subprocess (shell=False)
   ├── pipe      → O_NONBLOCK write to FIFO
@@ -571,6 +588,7 @@ TTSResponseOverlay (teal floating widget, shown while speaking)
 src/
 ├── main.py                   # Application entry point
 ├── config.py                 # JSON config (model, audio, UI settings)
+├── config_validator.py       # Startup validation for config, targets, and bindings
 ├── input_listener.py         # evdev hotkey engine (hold / toggle / double-tap / TTS stop)
 ├── audio_recorder.py         # PyAudio capture + VU meter
 ├── inference_engine.py       # Transcription + post-processing pipeline
@@ -581,6 +599,12 @@ src/
 ├── tts_engine.py             # Piper/espeak TTS engine, voice catalog, model download
 ├── tts_responder.py          # ResponseListener — reads agent FIFO → TTSEngine
 ├── mcp_server.py             # MCP JSON-RPC server (Unix socket)
+├── atspi_context.py          # AT-SPI2 focus tracking, context reading, text injection
+├── backends/
+│   ├── protocol.py           # Shared BackendResult / BackendProtocol dataclasses
+│   ├── selector.py           # GPU detection (nvidia-smi / sysfs / vulkaninfo) + backend selection
+│   ├── faster_whisper_backend.py  # faster-whisper transcription backend
+│   └── whisper_cpp_backend.py     # whisper.cpp subprocess / pywhispercpp backend
 ├── hotkeys/
 │   └── double_tap.py         # DoubleTapMachine state machine
 ├── routing/
@@ -591,20 +615,38 @@ src/
 └── gui/
     ├── settings_window.py    # PyQt6 settings dialog (tabbed, incl. Voice Output tab)
     ├── tray_icon.py          # System tray icon
-    ├── waveform_overlay.py   # OpenGL recording overlay
     ├── history_window.py     # Transcription history panel
+    ├── overlay_manager.py    # Overlay discovery, loading, hot-swap, and OverlayProxy
+    ├── overlay_window.py     # Notification-style overlay window widget
+    ├── setup_dialog.py       # First-run permissions setup wizard
     └── overlays/
+        ├── base.py           # OverlayUIBase — optional base class for custom overlays
+        ├── waveform.py       # OpenGL oscilloscope overlay
+        ├── pulse.py          # Pulse circle overlay
+        ├── voice_card.py     # Scrolling bar waveform card overlay (default)
         └── tts_response.py   # Teal TTS response overlay widget
 docs/
 ├── overlays.md               # Custom overlay specification
 └── mcp_documentation.md      # MCP server setup, protocol reference, integration guide
+examples/
+├── targets-basic.toml        # Minimal single-target config
+├── targets-multi.toml        # Multi-target with inject, clipboard, exec, pipe, file
+├── targets-ollama-workflows.toml  # Ollama post-processing workflow examples
+├── targets-tts-agent.toml    # TTS response loopback agent config
+└── bindings-multi.toml       # Multi-binding hotkey examples
 tests/
-├── test_double_tap.py        # DoubleTapMachine state machine tests
-├── test_targets.py           # Delivery implementation tests
-├── test_routing_loader.py    # TOML config round-trip tests
-├── test_tts_engine.py        # Voice catalog, download helpers, TTSEngine (30 tests)
-├── test_tts_responder.py     # ResponseListener FIFO reading and TTS dispatch (6 tests)
-└── test_mcp_server.py        # MCP protocol dispatch and socket server (16 tests)
+├── test_double_tap.py        # DoubleTapMachine timing and state transitions (9 tests)
+├── test_targets.py           # All delivery types: inject, clipboard, exec, pipe, socket, file, dbus (16 tests)
+├── test_routing_loader.py    # TOML round-trips for targets.toml and bindings.toml (31 tests)
+├── test_tts_engine.py        # Voice catalog, path helpers, download extraction, TTSEngine (30 tests)
+├── test_tts_responder.py     # ResponseListener FIFO reading, ordering, late FIFO (6 tests)
+├── test_mcp_server.py        # JSON-RPC dispatch, all tools, error codes, socket server (16 tests)
+├── test_backend_protocol.py  # BackendResult / BackendProtocol contract tests (40 tests)
+├── test_atspi_context.py     # AT-SPI2 focus tracking, context reading, injection (28 tests)
+├── test_audio_recorder.py    # PyAudio device enumeration and recorder behaviour (15 tests)
+├── test_config_validator.py  # Config, targets, and bindings validation rules (36 tests)
+├── test_setup_dialog.py      # Permissions setup wizard logic (20 tests)
+└── test_populate_audio_devices.py  # Audio device list population (10 tests)
 ```
 
 ---
@@ -618,14 +660,20 @@ python -m pytest tests/ -v
 
 The test suite covers:
 
-| File | Coverage |
-|---|---|
-| `test_double_tap.py` | DoubleTapMachine timing and state transitions |
-| `test_targets.py` | All delivery types (inject, clipboard, exec, pipe, socket, file, dbus) |
-| `test_routing_loader.py` | TOML round-trips for targets.toml and bindings.toml |
-| `test_tts_engine.py` | Voice catalog validation, path helpers, download extraction, TTSEngine (30 tests) |
-| `test_tts_responder.py` | ResponseListener FIFO reading, ordering, empty-line skip, late FIFO (6 tests) |
-| `test_mcp_server.py` | JSON-RPC dispatch, all tools, error codes, socket server integration (16 tests) |
+| File | Tests | Coverage |
+|---|---|---|
+| `test_double_tap.py` | 9 | DoubleTapMachine timing and state transitions |
+| `test_targets.py` | 16 | All delivery types (inject, clipboard, exec, pipe, socket, file, dbus) |
+| `test_routing_loader.py` | 31 | TOML round-trips for targets.toml and bindings.toml |
+| `test_tts_engine.py` | 30 | Voice catalog validation, path helpers, download extraction, TTSEngine |
+| `test_tts_responder.py` | 6 | ResponseListener FIFO reading, ordering, empty-line skip, late FIFO |
+| `test_mcp_server.py` | 16 | JSON-RPC dispatch, all tools, error codes, socket server integration |
+| `test_backend_protocol.py` | 40 | BackendResult / BackendProtocol contract and selector logic |
+| `test_atspi_context.py` | 28 | AT-SPI2 focus tracking, context reading, text injection |
+| `test_audio_recorder.py` | 15 | PyAudio device enumeration and recorder behaviour |
+| `test_config_validator.py` | 36 | Config, targets.toml, and bindings.toml validation rules |
+| `test_setup_dialog.py` | 20 | Permissions setup wizard logic |
+| `test_populate_audio_devices.py` | 10 | Audio device list population |
 
 ---
 

@@ -8,7 +8,16 @@ VoxCtl displays a visual overlay while the microphone is active. The overlay sys
 
 Three styles are included out of the box.
 
-### Waveform *(default)*
+### Voice Card *(default)*
+
+A floating card inspired by terminal-style audio monitors.
+
+- Scrolling bar history: new bars arrive from the right, old bars slide left
+- Symmetric bars (mirrored top and bottom from a centre line)
+- Horizontal gradient: dim purple on the left (oldest audio) through magenta to bright pink-white on the right (most recent audio)
+- "Voice Activity" label and a routing indicator badge displayed in the card header
+
+### Waveform
 
 An OpenGL oscilloscope that renders the raw audio signal as a min/max envelope. Fast and lightweight.
 
@@ -21,15 +30,6 @@ A soft glowing circle that expands and contracts with the RMS amplitude of your 
 
 - Smooth 30 fps animation with exponential decay
 - Blue glow rings fade out during silence
-
-### Voice Card
-
-A floating card inspired by terminal-style audio monitors.
-
-- Scrolling bar history: new bars arrive from the right, old bars slide left
-- Symmetric bars (mirrored top and bottom from a centre line)
-- Horizontal gradient: dim purple on the left (oldest audio) through magenta to bright pink-white on the right (most recent audio)
-- "Voice Activity" label and a "whisper / Wayland" badge displayed in the card header
 
 ---
 
@@ -73,7 +73,7 @@ Your file must contain:
 
 ```python
 def update_audio(self, data: numpy.ndarray) -> None: ...
-def show_mode(self) -> None: ...
+def show_mode(self, label: str = "") -> None: ...
 def hide_mode(self) -> None: ...
 ```
 
@@ -93,12 +93,13 @@ Because this is called from a background thread, **do not call Qt drawing method
 QMetaObject.invokeMethod(self, "update", Qt.ConnectionType.QueuedConnection)
 ```
 
-#### `show_mode()`
+#### `show_mode(label="")`
 
-Called on the Qt main thread when the user starts recording. Your overlay should cover the full screen so it is visible over any application. The standard implementation:
+Called on the Qt main thread when the user starts recording. `label` is the human-readable name of the active output target (from `targets.toml`) and is used by built-in overlays to display the routing indicator badge. You can use it or ignore it. Your overlay should cover the full screen so it is visible over any application. The standard implementation:
 
 ```python
-def show_mode(self):
+def show_mode(self, label: str = ""):
+    self._routing_label = label   # store for use in paintEvent
     screen = QApplication.primaryScreen()
     if screen:
         g = screen.geometry()
@@ -192,8 +193,9 @@ class OverlayUI(QWidget):
         self._amp = min(1.0, rms / 8192.0)
         QMetaObject.invokeMethod(self, "update", Qt.ConnectionType.QueuedConnection)
 
-    def show_mode(self):
-        """Called when recording starts. Expand to cover the full screen."""
+    def show_mode(self, label: str = ""):
+        """Called when recording starts. label is the active target name (routing badge)."""
+        self._routing_label = label
         screen = QApplication.primaryScreen()
         if screen:
             g = screen.geometry()
@@ -231,7 +233,7 @@ class OverlayUI(QWidget):
 
 **Positioning your widget**
 
-The widget is expanded to full-screen size in `show_mode()`, but your visual element only needs to occupy a small part of it. Draw everything relative to `self.width()` and `self.height()` so it adapts to any screen resolution:
+The widget is expanded to full-screen size in `show_mode(label)`, but your visual element only needs to occupy a small part of it. Draw everything relative to `self.width()` and `self.height()` so it adapts to any screen resolution:
 
 ```python
 cx = self.width() // 2           # horizontal centre
