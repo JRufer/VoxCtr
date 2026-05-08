@@ -52,7 +52,18 @@ if ! $USE_SYSTEM; then
     else
         if [ ! -d "$VENV_DIR" ]; then
             echo "Creating virtual environment at $VENV_DIR ..."
-            python3 -m venv "$VENV_DIR"
+            if ! python3 -m venv "$VENV_DIR" 2>/dev/null; then
+                echo ""
+                echo "ERROR: Failed to create a virtual environment."
+                echo "The 'python3-venv' package is likely missing. Install it with:"
+                echo "  Ubuntu/Debian: sudo apt install python3-venv python3-full"
+                echo "  Arch:          sudo pacman -S python"
+                echo "  Fedora:        sudo dnf install python3"
+                echo ""
+                echo "Then re-run this script. Or use --system to install without a venv:"
+                echo "  ./scripts/install-deps.sh --system"
+                exit 1
+            fi
         fi
         echo "Using venv: $VENV_DIR"
         _pip --upgrade pip --quiet
