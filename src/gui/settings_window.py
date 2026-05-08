@@ -672,7 +672,7 @@ class SettingsWindow(QWidget):
             return
 
         self._cpp_download_btn.setEnabled(False)
-        self._cpp_model_status.setText(f"⏳  Downloading {filename}…")
+        self._cpp_model_status.setText(f"⏳  Downloading {model_size}…")
         self._cpp_model_status.setStyleSheet("color: #e2e8f0; background: transparent; border: none;")
 
         try:
@@ -697,12 +697,18 @@ class SettingsWindow(QWidget):
         )
 
         def do_download():
-            try:
-                os.makedirs(model_dir, exist_ok=True)
-                urllib.request.urlretrieve(url, dest)
-                self._cpp_download_ok_sig.emit(filename)
-            except Exception as e:
-                self._cpp_download_err_sig.emit(str(e))
+            os.makedirs(model_dir, exist_ok=True)
+            last_err = None
+            for candidate in candidates:
+                candidate_url = GGUF_BASE_URL + candidate
+                candidate_dest = os.path.join(model_dir, candidate)
+                try:
+                    urllib.request.urlretrieve(candidate_url, candidate_dest)
+                    self._cpp_download_ok_sig.emit(candidate)
+                    return
+                except Exception as e:
+                    last_err = e
+            self._cpp_download_err_sig.emit(str(last_err))
 
         threading.Thread(target=do_download, daemon=True).start()
 
