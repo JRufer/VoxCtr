@@ -6,7 +6,11 @@
 # What IS bundled:
 #   All packages from requirements.txt (PyQt6, faster-whisper, onnxruntime, PyAudio
 #   Python wrapper, dbus-python, evdev, noisereduce, scipy, numpy, websockets, mcp,
-#   pyatspi, and 50+ more).
+#   and 50+ more).
+#
+# Note: pyatspi is NOT bundled — it is a system package (python3-pyatspi) not
+#   available on PyPI for Python 3.11+. AppRun adds the host site-packages to
+#   PYTHONPATH so the app finds it if the user installed python3-pyatspi.
 #
 # What is NOT bundled (must be present on the host — installed by install.sh):
 #   • libportaudio2  — PyAudio's C extension links to this at runtime
@@ -72,8 +76,10 @@ export LD_LIBRARY_PATH="${USR_DIR}/lib:${USR_DIR}/lib/x86_64-linux-gnu:${LD_LIBR
 # Wayland / XDG desktop integration
 export XDG_DATA_DIRS="${USR_DIR}/share:${XDG_DATA_DIRS}"
 
-# Expose the src/ directory as a top-level import path
-export PYTHONPATH="${USR_DIR}/share/voxctl:${PYTHONPATH}"
+# pyatspi is a system package (python3-pyatspi) that cannot be bundled via pip.
+# Add the host system site-packages so pyatspi is found if installed on the host.
+SYS_SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null || true)
+export PYTHONPATH="${USR_DIR}/share/voxctl:${SYS_SITE}:${PYTHONPATH}"
 
 exec "${VENV_DIR}/bin/python3" "${USR_DIR}/share/voxctl/src/main.py" "$@"
 EOF

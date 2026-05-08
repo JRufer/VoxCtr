@@ -56,6 +56,7 @@ typer==0.24.1
 typing_extensions==4.15.0
 websockets>=14.0
 mcp>=1.0.0
-pyatspi
+# pyatspi is a system package (python3-pyatspi) — not available on PyPI for Python 3.11+.
+# Install via: sudo apt install python3-pyatspi  (or distro equivalent)
 # Optional: install for in-process whisper.cpp (lower latency than subprocess)
 # pywhispercpp>=1.2.0

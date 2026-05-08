@@ -185,14 +185,22 @@ else
     fi
 fi
 
-# pyatspi — bundled inside the AppImage venv. AT-SPI2 features (direct text insertion,
-# context-aware transcription) work automatically as long as the host AT-SPI registry
-# daemon is running (it is started automatically by most desktop environments).
+# pyatspi — system package (python3-pyatspi); NOT pip-installable on Python 3.11+.
+# The AppImage's AppRun adds the host site-packages to PYTHONPATH so the app finds it.
 if python3 -c "import pyatspi" 2>/dev/null; then
-    ok "pyatspi available on system Python (AT-SPI2 context-aware transcription enabled)"
+    ok "python3-pyatspi available — AT-SPI2 context-aware transcription enabled"
 else
-    info "pyatspi not found on system Python — that's OK, it's bundled inside the AppImage."
-    info "AT-SPI2 features will work as long as your desktop session runs the AT-SPI registry."
+    echo ""
+    echo "    python3-pyatspi enables AT-SPI2 context-aware transcription (direct text"
+    echo "    insertion into focused applications without using the clipboard)."
+    read -rp "  Install python3-pyatspi for AT-SPI2 features? [y/N] " yn
+    if [[ "$yn" =~ ^[Yy]$ ]]; then
+        pkg=$(_resolve_pkg "python3-pyatspi" "python-pyatspi" "python3-pyatspi" "python3-pyatspi")
+        _pkg_install "$pkg" && ok "$pkg installed — AT-SPI2 features enabled" \
+            || warn "$pkg install failed — AT-SPI2 context-aware transcription will be unavailable."
+    else
+        warn "python3-pyatspi skipped — AT-SPI2 context-aware transcription will be unavailable."
+    fi
 fi
 
 # ──────────────────────────────────────────────────────
@@ -330,7 +338,9 @@ echo ""
 echo "  What the AppImage bundles (no extra pip install needed):"
 echo "    • All Python packages: PyQt6, faster-whisper, onnxruntime, PyAudio,"
 echo "      dbus-python, evdev, noisereduce, scipy, numpy, websockets, mcp,"
-echo "      pyatspi, and 50+ more"
+echo "      and 50+ more"
+echo "  Note: python3-pyatspi is a system package (installed above if selected);"
+echo "        the AppImage reads it from the host site-packages at runtime."
 echo ""
 echo "  What must be on the host (installed above):"
 echo "    • libportaudio2  — audio capture C library"
