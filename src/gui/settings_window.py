@@ -162,6 +162,33 @@ QPushButton#btn_record:checked {
     color: #6aafff;
 }
 QScrollArea { border: none; }
+QFrame#key_capture_display {
+    background: #1a1f2e;
+    border: 1px solid #2a3448;
+    border-radius: 6px;
+    padding: 4px 10px;
+    min-height: 30px;
+}
+QPushButton#btn_bind {
+    background: transparent;
+    border: 1px solid #4a9eff;
+    color: #4a9eff;
+    border-radius: 6px;
+    padding: 5px 14px;
+    font-weight: 600;
+    min-width: 70px;
+}
+QPushButton#btn_bind:hover { background: #4a9eff22; }
+QPushButton#btn_bind[recording="true"] {
+    background: #ff6b3522;
+    border-color: #ff6b35;
+    color: #ff6b35;
+}
+QPushButton#btn_bind[saved="true"] {
+    background: #22c55e22;
+    border-color: #22c55e;
+    color: #22c55e;
+}
 """
 
 
@@ -1510,10 +1537,10 @@ class SettingsWindow(QWidget):
             except ImportError:
                 req_rows.append(("❌", display, f"Missing — {install_hint}"))
 
-        _pkg("PyQt6",         "PyQt6",          "pip install PyQt6")
-        _pkg("sounddevice",   "sounddevice",     "pip install sounddevice")
-        _pkg("numpy",         "numpy",           "pip install numpy")
-        _pkg("scipy",         "scipy",           "pip install scipy")
+        _pkg("PyQt6",  "PyQt6",  "pip install PyQt6")
+        _pkg("numpy",  "numpy",  "pip install numpy")
+        _pkg("scipy",  "scipy",  "pip install scipy")
+        _pkg("pyaudio", "PyAudio", "pip install PyAudio  (also needs libportaudio2 on the host)")
 
         sections.append(("Required Python Packages", req_rows))
 
@@ -1632,14 +1659,22 @@ class SettingsWindow(QWidget):
                 "    pip install pyatspi  or  sudo pacman -S python-pyatspi"))
 
         try:
-            import mcp
+            import sounddevice  # noqa: F401
+            opt_rows.append(("✅", "sounddevice", "Installed — alternative audio backend available"))
+        except ImportError:
+            opt_rows.append(("ℹ️", "sounddevice",
+                "Not installed — audio uses PyAudio (this is fine)\n"
+                "    pip install sounddevice  (also needs libportaudio2)"))
+
+        try:
+            import mcp  # noqa: F401
             opt_rows.append(("✅", "mcp", "Installed — MCP server available"))
         except ImportError:
             opt_rows.append(("ℹ️", "mcp",
                 "Not installed — MCP server feature unavailable\n    pip install mcp"))
 
         try:
-            import websockets
+            import websockets  # noqa: F401
             opt_rows.append(("✅", "websockets", "Installed — WebSocket targets available"))
         except ImportError:
             opt_rows.append(("ℹ️", "websockets",
@@ -2782,11 +2817,159 @@ class _TargetEditorDialog(QDialog):
 
 # ── Binding Editor Dialog ─────────────────────────────────────────────────────
 
+from gui.keybind_utils import (
+    evdev_name_from_scan as _evdev_name_from_scan,
+    fmt_evdev_keys as _fmt_evdev_keys,
+    sorted_evdev_keys as _sorted_evdev_keys,
+    NICE_KEY_NAMES as _NICE_KEY_NAMES,
+)
+
+
+class _KeyCaptureWidget(QWidget):
+    """Displays bound keys and lets the user re-bind them with a Bind button."""
+
+    keys_changed = pyqtSignal(list)
+
+    def __init__(self, initial_keys=None, placeholder="(not set)", parent=None):
+        super().__init__(parent)
+        self._keys = list(initial_keys or [])
+        self._placeholder = placeholder
+        self._recording = False
+        self._current_pressed = {}   # evdev_name -> True while key is down
+        self._captured_set = set()   # union of all keys pressed during recording
+        self._build_ui()
+
+    def _build_ui(self):
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+
+        self._display = QLabel()
+        self._display.setObjectName("key_capture_display")
+        self._display.setFrameShape(QFrame.Shape.StyledPanel)
+        self._display.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._display.setMinimumHeight(32)
+        self._display.setStyleSheet(
+            "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
+            " padding:4px 10px; color:#e2e8f0;"
+        )
+        self._update_display()
+        lay.addWidget(self._display, 1)
+
+        self._bind_btn = QPushButton("Bind")
+        self._bind_btn.setObjectName("btn_bind")
+        self._bind_btn.setFixedHeight(32)
+        self._bind_btn.setProperty("recording", "false")
+        self._bind_btn.setProperty("saved", "false")
+        self._bind_btn.clicked.connect(self._toggle_recording)
+        lay.addWidget(self._bind_btn)
+
+    def keys(self):
+        return list(self._keys)
+
+    def set_keys(self, keys):
+        self._keys = list(keys)
+        self._update_display()
+
+    def _update_display(self):
+        if self._recording:
+            held = list(self._current_pressed.keys())
+            if held:
+                self._display.setText("  +  ".join(
+                    _NICE_KEY_NAMES.get(k, k.replace("KEY_", "").title()) for k in held
+                ) + "  …")
+            else:
+                self._display.setText("Press keys…")
+        elif self._keys:
+            self._display.setText(_fmt_evdev_keys(self._keys))
+        else:
+            self._display.setText(self._placeholder)
+            self._display.setStyleSheet(
+                "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
+                " padding:4px 10px; color:#4a5568;"
+            )
+            return
+        self._display.setStyleSheet(
+            "background:#1a1f2e; border:1px solid #2a3448; border-radius:6px;"
+            " padding:4px 10px; color:#e2e8f0;"
+        )
+
+    def _set_btn_state(self, state):
+        """state: 'idle' | 'recording' | 'saved'"""
+        if state == "recording":
+            self._bind_btn.setText("Recording…")
+            self._bind_btn.setProperty("recording", "true")
+            self._bind_btn.setProperty("saved", "false")
+        elif state == "saved":
+            self._bind_btn.setText("Saved ✓")
+            self._bind_btn.setProperty("recording", "false")
+            self._bind_btn.setProperty("saved", "true")
+        else:
+            self._bind_btn.setText("Bind")
+            self._bind_btn.setProperty("recording", "false")
+            self._bind_btn.setProperty("saved", "false")
+        self._bind_btn.style().unpolish(self._bind_btn)
+        self._bind_btn.style().polish(self._bind_btn)
+
+    def _toggle_recording(self):
+        if self._recording:
+            self._finalize_recording()
+        else:
+            self._start_recording()
+
+    def _start_recording(self):
+        self._recording = True
+        self._current_pressed = {}
+        self._captured_set = set()
+        self._set_btn_state("recording")
+        self._update_display()
+        self.grabKeyboard()
+        self.setFocus()
+
+    def _finalize_recording(self):
+        self.releaseKeyboard()
+        self._recording = False
+        if self._captured_set:
+            self._keys = _sorted_evdev_keys(list(self._captured_set))
+            self.keys_changed.emit(self._keys)
+        self._current_pressed = {}
+        self._update_display()
+        self._set_btn_state("saved")
+        QTimer.singleShot(1200, lambda: self._set_btn_state("idle"))
+
+    def keyPressEvent(self, event):
+        if not self._recording or event.isAutoRepeat():
+            event.accept()
+            return
+        name = _evdev_name_from_scan(event.nativeScanCode())
+        if name and name not in self._current_pressed:
+            self._current_pressed[name] = True
+            self._captured_set.add(name)
+            self._update_display()
+        event.accept()
+
+    def keyReleaseEvent(self, event):
+        if not self._recording or event.isAutoRepeat():
+            event.accept()
+            return
+        name = _evdev_name_from_scan(event.nativeScanCode())
+        if name:
+            self._current_pressed.pop(name, None)
+        if not self._current_pressed and self._captured_set:
+            self._finalize_recording()
+        event.accept()
+
+    def focusOutEvent(self, event):
+        if self._recording:
+            self._finalize_recording()
+        super().focusOutEvent(event)
+
+
 class _BindingEditorDialog(QDialog):
     def __init__(self, binding=None, targets=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Binding" if binding else "Add Binding")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(460)
         self.setStyleSheet(QSS)
         self.result_binding = None
         self._targets = targets or []
@@ -2795,16 +2978,13 @@ class _BindingEditorDialog(QDialog):
     def _build_ui(self, b):
         from routing.models import GestureType
         lay = QVBoxLayout(self)
+        lay.setSpacing(10)
         form = QFormLayout()
         form.setSpacing(8)
 
         self._id_edit = QLineEdit(b.id if b else "")
         self._label_edit = QLineEdit(b.label if b else "")
         self._label_edit.textChanged.connect(self._auto_id)
-
-        # Keys: comma-separated evdev names
-        self._keys_edit = QLineEdit(', '.join(b.keys) if b else "")
-        self._keys_edit.setPlaceholderText("e.g. KEY_LEFTCTRL, KEY_SPACE")
 
         self._gesture_combo = QComboBox()
         for g in GestureType:
@@ -2837,7 +3017,6 @@ class _BindingEditorDialog(QDialog):
 
         form.addRow("ID:", self._id_edit)
         form.addRow("Label:", self._label_edit)
-        form.addRow("Keys:", self._keys_edit)
         form.addRow("Gesture:", self._gesture_combo)
         form.addRow("Target:", self._target_combo)
         form.addRow("Double-tap window:", self._tap_ms_spin)
@@ -2845,7 +3024,59 @@ class _BindingEditorDialog(QDialog):
         form.addRow("", self._disabled_cb)
         lay.addLayout(form)
 
-        lay.addWidget(_hint("Keys: comma-separated evdev names, e.g. KEY_LEFTCTRL or KEY_LEFTMETA, KEY_SPACE"))
+        # ── Key capture area (swaps between single and chord layouts) ─────
+        self._keys_group = QGroupBox("Key Binding")
+        self._keys_group_lay = QVBoxLayout(self._keys_group)
+        self._keys_group_lay.setSpacing(8)
+        lay.addWidget(self._keys_group)
+
+        is_chord = (b.gesture == GestureType.CHORD) if b else False
+        initial_keys = list(b.keys) if b else []
+
+        if is_chord:
+            # Chord: held keys are all but the last; trigger is the last key
+            held = initial_keys[:-1] if len(initial_keys) > 1 else initial_keys
+            trigger = initial_keys[-1:] if initial_keys else []
+        else:
+            held = initial_keys
+            trigger = []
+
+        self._capture_keys = _KeyCaptureWidget(
+            initial_keys=held,
+            placeholder="(click Bind, then press your keys)",
+        )
+
+        self._single_key_row = QWidget()
+        r1 = QFormLayout(self._single_key_row)
+        r1.setContentsMargins(0, 0, 0, 0)
+        r1.addRow("Keys:", self._capture_keys)
+
+        self._chord_key_rows = QWidget()
+        r2 = QFormLayout(self._chord_key_rows)
+        r2.setContentsMargins(0, 0, 0, 0)
+
+        self._capture_held = _KeyCaptureWidget(
+            initial_keys=held,
+            placeholder="(click Bind, hold your modifier keys)",
+        )
+        self._capture_chord_trigger = _KeyCaptureWidget(
+            initial_keys=trigger,
+            placeholder="(click Bind, press the trigger key alone)",
+        )
+        r2.addRow("Hold keys:", self._capture_held)
+        r2.addRow("Trigger key:", self._capture_chord_trigger)
+
+        self._keys_group_lay.addWidget(self._single_key_row)
+        self._keys_group_lay.addWidget(self._chord_key_rows)
+
+        self._gesture_combo.currentIndexChanged.connect(self._on_gesture_changed)
+        self._update_key_capture_visibility()
+
+        hint_txt = (
+            "Press <b>Bind</b> then press your desired keys simultaneously — "
+            "they will be captured automatically when you release."
+        )
+        lay.addWidget(_hint(hint_txt))
 
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -2853,6 +3084,15 @@ class _BindingEditorDialog(QDialog):
         btns.accepted.connect(self._accept)
         btns.rejected.connect(self.reject)
         lay.addWidget(btns)
+
+    def _on_gesture_changed(self, _idx):
+        self._update_key_capture_visibility()
+
+    def _update_key_capture_visibility(self):
+        from routing.models import GestureType
+        is_chord = self._gesture_combo.currentData() == GestureType.CHORD
+        self._single_key_row.setVisible(not is_chord)
+        self._chord_key_rows.setVisible(is_chord)
 
     def _auto_id(self, text):
         import re
@@ -2864,16 +3104,31 @@ class _BindingEditorDialog(QDialog):
     _last_safe = ""
 
     def _accept(self):
-        from routing.models import HotkeyBinding
+        from routing.models import HotkeyBinding, GestureType
         binding_id = self._id_edit.text().strip()
         if not binding_id:
             QMessageBox.warning(self, "Validation", "ID is required.")
             return
-        keys_raw = self._keys_edit.text().strip()
-        if not keys_raw:
-            QMessageBox.warning(self, "Validation", "At least one key is required.")
-            return
-        keys = [k.strip() for k in keys_raw.split(',') if k.strip()]
+
+        is_chord = self._gesture_combo.currentData() == GestureType.CHORD
+        if is_chord:
+            held = self._capture_held.keys()
+            trigger = self._capture_chord_trigger.keys()
+            if not held:
+                QMessageBox.warning(self, "Validation",
+                                    "Chord binding requires at least one held (modifier) key.")
+                return
+            if not trigger:
+                QMessageBox.warning(self, "Validation",
+                                    "Chord binding requires a trigger key.")
+                return
+            keys = held + trigger
+        else:
+            keys = self._capture_keys.keys()
+            if not keys:
+                QMessageBox.warning(self, "Validation", "At least one key is required.")
+                return
+
         target_id = self._target_combo.currentData()
         if not target_id:
             QMessageBox.warning(self, "Validation", "Select a target.")
