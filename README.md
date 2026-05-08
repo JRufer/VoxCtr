@@ -79,64 +79,106 @@ The backend is chosen automatically at startup using GPU detection via `nvidia-s
 
 ## Installation
 
-### Option A — AppImage (easiest)
+### Option A — AppImage (recommended)
 
-Download the latest `VoxCtl-x86_64.AppImage` from [Releases](https://github.com/jrufer/voxctr/releases), then run the installer:
+**Step 1 — Get the AppImage.** Download the latest `VoxCtl-x86_64.AppImage` from [Releases](https://github.com/jrufer/voxctr/releases), or build it from source:
 
 ```bash
-chmod +x install.sh
-./install.sh
+bash scripts/build_appimage.sh
 ```
 
-This copies the AppImage to `~/.local/bin/voxctl`, installs the desktop entry, and downloads Piper TTS automatically.
+**Step 2 — Run the installer:**
+
+```bash
+bash install.sh
+```
+
+The installer takes care of everything:
+
+- Detects your package manager (`apt`, `pacman`, `dnf`, or `zypper`) and installs all required system libraries and binaries automatically
+- Downloads and installs the Piper neural TTS engine to `/opt/piper`
+- Creates udev rules and adds you to the `input`/`uinput` groups so global hotkeys work
+- Installs the AppImage to `~/.local/bin/voxctl` with a desktop entry and icon
+- Prompts once for two optional extras: `socat` (Claude Desktop / MCP bridge) and `python3-pyatspi` (AT-SPI2 accessibility — see section below)
+- Detects your GPU and advises which transcription backend will be selected
+
+**Step 3 — Log out and back in** (required for the group permission changes to take effect), then launch:
+
+```bash
+voxctl
+```
+
+On first launch a wizard guides you through choosing a Whisper model size and configuring hotkeys. The model is downloaded automatically (~140 MB for `base`, ~2.9 GB for `large-v3`).
+
+> If `~/.local/bin` is not in your `PATH`, the installer will warn you and show the one-liner to add it to your shell rc file.
+
+---
 
 ### Option B — Run from source
 
 #### 1. System dependencies
 
+**Arch Linux:**
 ```bash
-sudo pacman -S portaudio python-pyaudio wl-clipboard dbus pkgconf python-gobject ydotool wtype
-
-# For TTS voice output (recommended)
-sudo pacman -S alsa-utils          # aplay for Piper audio output
-yay -S piper-tts                   # Neural TTS engine
-# OR minimal fallback:
-sudo pacman -S espeak-ng
-
-# For MCP server → Claude Desktop bridge
+sudo pacman -S portaudio wl-clipboard xdotool wtype xclip alsa-utils espeak-ng
+# Optional: MCP / Claude Desktop bridge
 sudo pacman -S socat
+# Optional: AT-SPI2 accessibility
+sudo pacman -S python-atspi
 ```
 
-#### 2. Clone and set up the virtual environment
+**Debian / Ubuntu:**
+```bash
+sudo apt install libportaudio2 wl-clipboard xdotool wtype xclip alsa-utils espeak-ng
+# Optional: MCP / Claude Desktop bridge
+sudo apt install socat
+# Optional: AT-SPI2 accessibility
+sudo apt install python3-pyatspi
+```
+
+Also install [Piper TTS](https://github.com/rhasspy/piper/releases) for neural voice output (optional — `espeak-ng` is the fallback):
+
+```bash
+# Arch Linux
+yay -S piper-tts
+
+# All distros — manual install to /opt/piper (same as the AppImage installer):
+curl -fsSL https://github.com/rhasspy/piper/releases/download/v0.0.2/piper_amd64.tar.gz \
+  | sudo tar -xz -C /opt/
+echo /opt/piper | sudo tee /etc/ld.so.conf.d/piper.conf && sudo ldconfig
+printf '#!/bin/sh\nexec /opt/piper/piper "$@"\n' | sudo tee /usr/local/bin/piper
+sudo chmod +x /usr/local/bin/piper
+```
+
+#### 2. Permissions (evdev hotkeys)
+
+```bash
+sudo bash scripts/setup-permissions.sh
+```
+
+Log out and back in after this step.
+
+#### 3. Clone and set up the virtual environment
 
 ```bash
 git clone https://github.com/jrufer/voxctr.git
 cd voxctr
 
-python -m venv venv
-source venv/bin/activate        # bash/zsh
-# source venv/bin/activate.fish # fish
+python3 -m venv venv
+source venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-> `requirements.txt` includes noise suppression (`noisereduce`) and DBus support (`dbus-python`) by default.
+> `requirements.txt` includes noise suppression (`noisereduce`) and D-Bus support (`dbus-python`) by default.
 
-#### 3. Optional extras
+#### 4. Optional: NVIDIA GPU acceleration
 
 ```bash
-# Optional: AT-SPI2 accessibility integration (focus tracking, context-aware
-# transcription, direct text insertion — see section below)
-# Arch Linux:
-sudo pacman -S python-atspi
-# Debian / Ubuntu:
-# sudo apt install python3-pyatspi
-
-# Optional: NVIDIA GPU acceleration
 pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
 
-#### 4. Launch
+#### 5. Launch
 
 ```bash
 ./voxctl.sh
@@ -144,7 +186,7 @@ pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 
 The app starts in the system tray. If your compositor doesn't support system trays, the Settings window opens directly.
 
-**On first launch**, if global hotkeys aren't yet configured, a setup wizard appears automatically. Click **Set Up Permissions**, enter your administrator password when prompted, then log out and back in. That's it — no terminal commands, no scripts to run manually.
+**On first launch**, if global hotkeys aren't yet configured, a setup wizard appears automatically. Click **Set Up Permissions**, enter your administrator password when prompted, then log out and back in.
 
 > You can also open the wizard any time from the tray icon → **Set Up Hotkeys…**
 
@@ -223,6 +265,10 @@ GGML_VULKAN=1 pip install git+https://github.com/abdeladim-s/pywhispercpp
 AT-SPI2 (Assistive Technology Service Provider Interface) is the standard Linux accessibility bus. When the optional `pyatspi` library is installed, VoxCtl gains three capabilities that work transparently alongside the existing injection chain.
 
 ### Installation
+
+**AppImage users:** `install.sh` prompts you to install AT-SPI2 during setup — no manual steps needed.
+
+**Source users:**
 
 ```bash
 # Arch Linux
@@ -442,12 +488,15 @@ VoxCtl can speak responses aloud using [Piper](https://github.com/rhasspy/piper)
 
 ### Setup
 
-1. Install Piper: `yay -S piper-tts` (or download from the [Piper releases page](https://github.com/rhasspy/piper/releases))
-2. Open **Settings → Voice Output**
-3. Select a voice from the picker
-4. Click **⬇ Download** to fetch the model (~5–130 MB depending on quality)
-5. Click **▶ Test Voice** to preview
-6. Toggle **"Enable TTS"** on
+**AppImage users:** Piper is installed automatically by `install.sh` — skip straight to step 2.
+
+**Source users:** Install Piper first (see [Installation → Option B](#option-b--run-from-source) for distro-specific instructions), then:
+
+1. Open **Settings → Voice Output**
+2. Select a voice from the picker
+3. Click **⬇ Download** to fetch the model (~5–130 MB depending on quality)
+4. Click **▶ Test Voice** to preview
+5. Toggle **"Enable TTS"** on
 
 `espeak-ng` is used automatically if Piper is not installed — no configuration needed.
 
