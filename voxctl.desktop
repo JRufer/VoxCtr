@@ -1,8 +1,8 @@
 [Desktop Entry]
 Name=VoxCtl
 Comment=Global Voice-to-Text for Wayland
-Exec=/run/media/jrufer/NVME/Development/VoxCtl/venv/bin/python3 /run/media/jrufer/NVME/Development/VoxCtl/src/main.py
-Icon=/run/media/jrufer/NVME/Development/VoxCtl/assets/app_icon.png
+Exec=voxctl
+Icon=voxctl
 Terminal=false
 Type=Application
 Categories=Utility;AudioVideo;
