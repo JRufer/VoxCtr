@@ -66,7 +66,7 @@ if ! $USE_SYSTEM; then
             fi
         fi
         echo "Using venv: $VENV_DIR"
-        _pip --upgrade pip --quiet
+        "$VENV_DIR/bin/pip" install --upgrade pip --quiet
     fi
 else
     echo "Installing system-wide (--break-system-packages)..."
@@ -76,7 +76,7 @@ fi
 
 echo ""
 echo "Installing core dependencies from requirements.txt ..."
-_pip install -r "$REQUIREMENTS"
+_pip -r "$REQUIREMENTS"
 
 # --- PyAudio system lib hint ---
 # PyAudio requires portaudio. If it failed, give a clear hint.
@@ -122,10 +122,10 @@ if $WITH_CUDA; then
     TORCH_INDEX="https://download.pytorch.org/whl/${CU_TAG}"
     echo "Detected CUDA ${CUDA_VER} — installing torch with ${CU_TAG} support..."
     echo "  Index URL: $TORCH_INDEX"
-    _pip install torch torchvision torchaudio --index-url "$TORCH_INDEX"
+    _pip torch torchvision torchaudio --index-url "$TORCH_INDEX"
 else
     echo "Installing CPU-only torch (pass --cuda to get GPU-accelerated build)..."
-    _pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+    _pip torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 fi
 
 # --- Summary ---
