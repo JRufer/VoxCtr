@@ -1537,10 +1537,10 @@ class SettingsWindow(QWidget):
             except ImportError:
                 req_rows.append(("❌", display, f"Missing — {install_hint}"))
 
-        _pkg("PyQt6",         "PyQt6",          "pip install PyQt6")
-        _pkg("sounddevice",   "sounddevice",     "pip install sounddevice")
-        _pkg("numpy",         "numpy",           "pip install numpy")
-        _pkg("scipy",         "scipy",           "pip install scipy")
+        _pkg("PyQt6",  "PyQt6",  "pip install PyQt6")
+        _pkg("numpy",  "numpy",  "pip install numpy")
+        _pkg("scipy",  "scipy",  "pip install scipy")
+        _pkg("pyaudio", "PyAudio", "pip install PyAudio  (also needs libportaudio2 on the host)")
 
         sections.append(("Required Python Packages", req_rows))
 
@@ -1659,14 +1659,22 @@ class SettingsWindow(QWidget):
                 "    pip install pyatspi  or  sudo pacman -S python-pyatspi"))
 
         try:
-            import mcp
+            import sounddevice  # noqa: F401
+            opt_rows.append(("✅", "sounddevice", "Installed — alternative audio backend available"))
+        except ImportError:
+            opt_rows.append(("ℹ️", "sounddevice",
+                "Not installed — audio uses PyAudio (this is fine)\n"
+                "    pip install sounddevice  (also needs libportaudio2)"))
+
+        try:
+            import mcp  # noqa: F401
             opt_rows.append(("✅", "mcp", "Installed — MCP server available"))
         except ImportError:
             opt_rows.append(("ℹ️", "mcp",
                 "Not installed — MCP server feature unavailable\n    pip install mcp"))
 
         try:
-            import websockets
+            import websockets  # noqa: F401
             opt_rows.append(("✅", "websockets", "Installed — WebSocket targets available"))
         except ImportError:
             opt_rows.append(("ℹ️", "websockets",
@@ -2809,37 +2817,12 @@ class _TargetEditorDialog(QDialog):
 
 # ── Binding Editor Dialog ─────────────────────────────────────────────────────
 
-def _evdev_name_from_scan(scan_code):
-    """Map an X11/evdev scan code to an evdev key name string."""
-    try:
-        evdev_code = scan_code - 8  # X11 keycode → evdev scancode
-        name = ecodes.KEY.get(evdev_code)
-        if isinstance(name, list):
-            name = name[0]
-        return name
-    except Exception:
-        return None
-
-
-_NICE_KEY_NAMES = {
-    "KEY_LEFTMETA": "Super (L)", "KEY_RIGHTMETA": "Super (R)",
-    "KEY_LEFTCTRL": "Ctrl (L)", "KEY_RIGHTCTRL": "Ctrl (R)",
-    "KEY_LEFTALT": "Alt (L)", "KEY_RIGHTALT": "Alt (R)",
-    "KEY_LEFTSHIFT": "Shift (L)", "KEY_RIGHTSHIFT": "Shift (R)",
-    "KEY_SPACE": "Space", "KEY_ENTER": "Enter", "KEY_ESC": "Esc",
-    "KEY_TAB": "Tab", "KEY_BACKSPACE": "Backspace", "KEY_DELETE": "Delete",
-    "KEY_INSERT": "Insert", "KEY_HOME": "Home", "KEY_END": "End",
-    "KEY_PAGEUP": "PgUp", "KEY_PAGEDOWN": "PgDn",
-    "KEY_UP": "↑", "KEY_DOWN": "↓", "KEY_LEFT": "←", "KEY_RIGHT": "→",
-}
-
-
-def _fmt_evdev_keys(keys):
-    """Format a list of evdev key names into a human-readable string."""
-    parts = []
-    for k in keys:
-        parts.append(_NICE_KEY_NAMES.get(k, k.replace("KEY_", "").title()))
-    return "  +  ".join(parts) if parts else ""
+from gui.keybind_utils import (
+    evdev_name_from_scan as _evdev_name_from_scan,
+    fmt_evdev_keys as _fmt_evdev_keys,
+    sorted_evdev_keys as _sorted_evdev_keys,
+    NICE_KEY_NAMES as _NICE_KEY_NAMES,
+)
 
 
 class _KeyCaptureWidget(QWidget):
@@ -2980,19 +2963,6 @@ class _KeyCaptureWidget(QWidget):
         if self._recording:
             self._finalize_recording()
         super().focusOutEvent(event)
-
-
-def _sorted_evdev_keys(keys):
-    """Sort keys so modifiers come first, then the trigger key."""
-    MODIFIER_ORDER = [
-        "KEY_LEFTMETA", "KEY_RIGHTMETA",
-        "KEY_LEFTCTRL", "KEY_RIGHTCTRL",
-        "KEY_LEFTALT", "KEY_RIGHTALT",
-        "KEY_LEFTSHIFT", "KEY_RIGHTSHIFT",
-    ]
-    mods = [k for k in MODIFIER_ORDER if k in keys]
-    rest = [k for k in keys if k not in MODIFIER_ORDER]
-    return mods + rest
 
 
 class _BindingEditorDialog(QDialog):

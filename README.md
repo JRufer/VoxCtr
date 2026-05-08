@@ -327,6 +327,16 @@ All three behaviours are individually switchable in `~/.config/voxctl/config.jso
 
 All hotkeys are configurable in **Settings → Hotkeys** or directly in `bindings.toml`. Each gesture can be individually disabled from the same screen without deleting the binding.
 
+### Recording key bindings
+
+In the binding editor, press the **Bind** button next to a key field. The button turns orange and displays "Recording…". Press your desired keys simultaneously — the display updates live as keys are held. When you release all keys the binding is captured automatically and the button shows "Saved ✓".
+
+For **Chord** bindings the editor shows two separate Bind fields:
+- **Hold keys** — the modifier key(s) you hold (e.g. `Ctrl`)
+- **Trigger key** — the additional key pressed while holding (e.g. `V`)
+
+Keys are sorted automatically so modifiers appear before the trigger key.
+
 ### Conflict detection
 
 The Hotkeys settings screen checks for common problems as you record new keys and shows inline warnings for:
