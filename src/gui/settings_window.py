@@ -518,12 +518,29 @@ class SettingsWindow(QWidget):
 
         # ── Moonshine settings ────────────────────────────────────────────
         self._moonshine_box = _section("Moonshine Settings")
+
+        # Package availability status
+        try:
+            import moonshine_voice  # noqa: F401
+            self._moonshine_pkg_available = True
+            ms_pkg_label = QLabel("✅  moonshine-voice installed — backend ready to use")
+            ms_pkg_label.setStyleSheet("color: #4ade80; background: transparent; border: none; font-size: 12px;")
+        except ImportError:
+            self._moonshine_pkg_available = False
+            ms_pkg_label = QLabel(
+                "❌  moonshine-voice is not installed — this backend cannot be used.\n"
+                "    Install it first:  pip install moonshine-voice"
+            )
+            ms_pkg_label.setStyleSheet("color: #f87171; background: transparent; border: none; font-size: 12px;")
+        ms_pkg_label.setWordWrap(True)
+        self._moonshine_box.layout().addWidget(ms_pkg_label)
+
         self._moonshine_box.layout().addWidget(_hint(
-            "Moonshine is 50-100x faster than Whisper with better accuracy on English.\n"
-            "Models are downloaded automatically on first use (~100-500 MB).\n"
-            "Non-English languages use a single shared multilingual model."
+            "Moonshine is 50-100x faster than Whisper with better accuracy for English.\n"
+            "Non-English languages share a single multilingual model."
         ))
 
+        # Model selector
         ms_model_row = QHBoxLayout()
         ms_model_row.addWidget(QLabel("Model size:"))
         self.moonshine_model_combo = QComboBox()
@@ -531,18 +548,30 @@ class SettingsWindow(QWidget):
         self.moonshine_model_combo.setCurrentText(
             self.config.get("moonshine_model_size", "medium")
         )
+        self.moonshine_model_combo.currentTextChanged.connect(self._update_moonshine_model_status)
         ms_model_row.addWidget(self.moonshine_model_combo, 1)
         self._moonshine_box.layout().addLayout(ms_model_row)
 
         ms_model_hint = QLabel(
-            "  tiny: 34M params · ~70ms · WER 12.0%\n"
-            "  small: 123M params · ~165ms · WER 7.8%\n"
-            "  medium: 245M params · ~270ms · WER 6.7%  (recommended)"
+            "  tiny: 34M · ~70ms · WER 12.0%   (~100 MB)\n"
+            "  small: 123M · ~165ms · WER 7.8%   (~250 MB)\n"
+            "  medium: 245M · ~270ms · WER 6.7%  (~490 MB)  ← recommended"
         )
         ms_model_hint.setObjectName("hint")
         ms_model_hint.setWordWrap(True)
         self._moonshine_box.layout().addWidget(ms_model_hint)
 
+        # Per-model download status + button
+        self._moonshine_model_status = QLabel("")
+        self._moonshine_model_status.setObjectName("hint")
+        self._moonshine_model_status.setWordWrap(True)
+        self._moonshine_box.layout().addWidget(self._moonshine_model_status)
+
+        self._moonshine_download_btn = QPushButton("Download Selected Model")
+        self._moonshine_download_btn.clicked.connect(self._download_moonshine_model)
+        self._moonshine_box.layout().addWidget(self._moonshine_download_btn)
+
+        # Language selector
         ms_lang_row = QHBoxLayout()
         ms_lang_row.addWidget(QLabel("Language:"))
         self.moonshine_lang_combo = QComboBox()
@@ -553,11 +582,12 @@ class SettingsWindow(QWidget):
         ms_lang_row.addWidget(self.moonshine_lang_combo, 1)
         self._moonshine_box.layout().addLayout(ms_lang_row)
         self._moonshine_box.layout().addWidget(_hint(
-            "Non-English uses a single shared multilingual model (58M params).\n"
-            "English uses the model selected above."
+            "Non-English uses a shared multilingual model (58M params).\n"
+            "English uses the model size selected above."
         ))
 
         lay.addWidget(self._moonshine_box)
+        self._update_moonshine_model_status(self.moonshine_model_combo.currentText())
 
         # ── whisper.cpp settings ───────────────────────────────────────────
         self._cpp_box = _section("whisper.cpp Settings")
@@ -657,6 +687,80 @@ class SettingsWindow(QWidget):
             self._moonshine_box.setVisible(show_moonshine)
         if hasattr(self, "_cpp_box"):
             self._cpp_box.setVisible(show_cpp)
+
+    def _update_moonshine_model_status(self, model_size: str):
+        if not hasattr(self, "_moonshine_model_status"):
+            return
+        from backends.moonshine_backend import _DEFAULT_CACHE
+        # moonshine-voice stores models under {cache_dir}/{model_arch}
+        # model_arch "moonshine/tiny" → files live in {cache}/moonshine/tiny/
+        model_dir = os.path.join(_DEFAULT_CACHE, "moonshine", model_size)
+        downloaded = (
+            os.path.isdir(model_dir)
+            and any(f for f in os.listdir(model_dir) if not f.startswith("."))
+        )
+        if downloaded:
+            self._moonshine_model_status.setText(f"✅  {model_size} model is downloaded and ready.")
+            self._moonshine_model_status.setStyleSheet(
+                "color: #4ade80; background: transparent; border: none;"
+            )
+            if hasattr(self, "_moonshine_download_btn"):
+                self._moonshine_download_btn.setText("Re-download Model")
+        else:
+            sizes = {"tiny": "~100 MB", "small": "~250 MB", "medium": "~490 MB"}
+            self._moonshine_model_status.setText(
+                f"⚠  {model_size} not found in cache.\n"
+                f"    Click 'Download Selected Model' to fetch it ({sizes.get(model_size, '')})."
+            )
+            self._moonshine_model_status.setStyleSheet(
+                "color: #facc15; background: transparent; border: none;"
+            )
+            if hasattr(self, "_moonshine_download_btn"):
+                self._moonshine_download_btn.setText("Download Selected Model")
+
+    def _download_moonshine_model(self):
+        import threading
+        from backends.moonshine_backend import MoonshineBackend
+
+        if not getattr(self, "_moonshine_pkg_available", False):
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Package Missing",
+                "moonshine-voice is not installed.\n\nRun:  pip install moonshine-voice"
+            )
+            return
+
+        model_size = self.moonshine_model_combo.currentText()
+        self._moonshine_model_status.setText(f"⏳  Downloading {model_size} model…")
+        self._moonshine_model_status.setStyleSheet(
+            "color: #e2e8f0; background: transparent; border: none;"
+        )
+        self._moonshine_download_btn.setEnabled(False)
+
+        def _do_download():
+            try:
+                b = MoonshineBackend()
+                b.load_model(model_size, "auto", "default")
+                QTimer.singleShot(0, lambda: [
+                    self._moonshine_model_status.setText(
+                        f"✅  {model_size} downloaded successfully."
+                    ),
+                    self._moonshine_model_status.setStyleSheet(
+                        "color: #4ade80; background: transparent; border: none;"
+                    ),
+                    self._moonshine_download_btn.setText("Re-download Model"),
+                    self._moonshine_download_btn.setEnabled(True),
+                ])
+            except Exception as exc:
+                QTimer.singleShot(0, lambda: [
+                    self._moonshine_model_status.setText(f"❌  Download failed: {exc}"),
+                    self._moonshine_model_status.setStyleSheet(
+                        "color: #f87171; background: transparent; border: none;"
+                    ),
+                    self._moonshine_download_btn.setEnabled(True),
+                ])
+
+        threading.Thread(target=_do_download, daemon=True, name="moonshine-download").start()
 
     def _refresh_hardware(self):
         if hasattr(self, "_hw_label"):
