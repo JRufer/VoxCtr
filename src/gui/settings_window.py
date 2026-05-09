@@ -1520,12 +1520,26 @@ class SettingsWindow(QWidget):
                 "Device not found — uinput kernel module may not be loaded\n    Fix: sudo modprobe uinput"))
 
         try:
-            groups = [grp.getgrgid(g).gr_name for g in os.getgroups()]
-            if "input" in groups:
+            import pwd as _pwd
+            _username = _pwd.getpwuid(os.getuid()).pw_name
+            _active_groups = [grp.getgrgid(g).gr_name for g in os.getgroups()]
+            if "input" in _active_groups:
                 perm_rows.append(("✅", "'input' group", "User is a member"))
             else:
-                perm_rows.append(("❌", "'input' group",
-                    "User is NOT in 'input' group — evdev hotkeys will not work\n    Fix: sudo usermod -aG input $USER  (then log out/in)"))
+                try:
+                    _input_grp = grp.getgrnam("input")
+                    _in_etc = (_username in _input_grp.gr_mem or
+                               _pwd.getpwnam(_username).pw_gid == _input_grp.gr_gid)
+                except KeyError:
+                    _in_etc = False
+                if _in_etc:
+                    perm_rows.append(("⚠️", "'input' group",
+                        "Added to group — log out/in required to activate\n"
+                        "    Tip: run 'exec newgrp input' in a terminal to activate without relogging"))
+                else:
+                    perm_rows.append(("❌", "'input' group",
+                        "User is NOT in 'input' group — evdev hotkeys will not work\n"
+                        "    Fix: sudo usermod -aG input $USER  (then log out/in)"))
         except Exception:
             perm_rows.append(("⚠️", "'input' group", "Could not verify group membership"))
 
