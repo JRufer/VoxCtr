@@ -4,9 +4,9 @@
 # Bundles the Python application and all pip dependencies into a portable AppImage.
 #
 # What IS bundled:
-#   All packages from requirements.txt (PyQt6, faster-whisper, onnxruntime, PyAudio
-#   Python wrapper, dbus-python, evdev, noisereduce, scipy, numpy, websockets, mcp,
-#   and 50+ more).
+#   All packages from requirements.txt (PyQt6, moonshine-voice, faster-whisper,
+#   onnxruntime, PyAudio Python wrapper, dbus-python, evdev, noisereduce, scipy,
+#   numpy, websockets, mcp, and 50+ more).
 #
 # Note: pyatspi is NOT bundled — it is a system package (python3-pyatspi) not
 #   available on PyPI for Python 3.11+. AppRun adds the host site-packages to

@@ -33,7 +33,10 @@ DEFAULT_CONFIG = {
     # Overlay UI
     "overlay_style": "voice_card",  # built-in: "waveform" | "pulse" | "voice_card" | custom stem name
     # Multi-backend engine selection
-    "backend_engine": "auto",           # 'auto' | 'faster-whisper' | 'whisper-cpp'
+    "backend_engine": "auto",           # 'auto' | 'moonshine' | 'faster-whisper' | 'whisper-cpp'
+    # Moonshine backend settings
+    "moonshine_model_size": "medium",   # 'tiny' (34M) | 'small' (123M) | 'medium' (245M)
+    "moonshine_language": "en",         # 'en' | 'es' | 'zh' | 'ja' | 'ko' | 'vi' | 'uk' | 'ar'
     "whisper_cpp_binary": "whisper-cli",
     "whisper_cpp_model_dir": "",        # empty = use default ~/.local/share/…/models
     "whisper_cpp_model_size": "large-v3",
@@ -77,6 +80,7 @@ class Config:
         string_keys = [
             "model_size", "device", "compute_type", "backend_engine",
             "whisper_cpp_binary", "whisper_cpp_model_size", "whisper_cpp_device",
+            "moonshine_model_size", "moonshine_language",
             "dictation_mode", "ollama_model", "ollama_mode", "overlay_style"
         ]
         for k in string_keys:
@@ -105,6 +109,7 @@ class Config:
         _string_keys = {
             "model_size", "device", "compute_type", "backend_engine",
             "whisper_cpp_binary", "whisper_cpp_model_size", "whisper_cpp_device",
+            "moonshine_model_size", "moonshine_language",
             "dictation_mode", "ollama_model", "ollama_mode", "overlay_style"
         }
         if key in _string_keys and isinstance(value, list):

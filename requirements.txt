@@ -56,6 +56,9 @@ typer==0.24.1
 typing_extensions==4.15.0
 websockets>=14.0
 mcp>=1.0.0
+# Moonshine: lightweight on-device STT — faster and more accurate than Whisper for English.
+# When installed it becomes the default 'auto' backend (no GPU required).
+moonshine-voice>=0.0.59
 # pyatspi is a system package (python3-pyatspi) — not available on PyPI for Python 3.11+.
 # Install via: sudo apt install python3-pyatspi  (or distro equivalent)
 # Optional: install for in-process whisper.cpp (lower latency than subprocess)

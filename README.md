@@ -1,6 +1,6 @@
 # VoxCtl
 
-A native, on-device voice-to-text tool for Linux with first-class Wayland support (and X11 compatibility). Uses OpenAI's Whisper model for fast, private, offline transcription — and acts as a programmable **voice input broker** that routes speech to any destination: a focused window, a terminal agent, a file, a socket, or a shell command.
+A native, on-device voice-to-text tool for Linux with first-class Wayland support (and X11 compatibility). Uses [Moonshine](https://github.com/moonshine-ai/moonshine) (default) or OpenAI's Whisper model for fast, private, offline transcription — and acts as a programmable **voice input broker** that routes speech to any destination: a focused window, a terminal agent, a file, a socket, or a shell command.
 
 ![App Icon](assets/app_icon.png)
 
@@ -9,7 +9,8 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 ## Features
 
 ### Core Dictation
-- **Dual transcription backends** — `faster-whisper` (NVIDIA CUDA) or `whisper.cpp` (AMD/Intel Vulkan), selected automatically
+- **Three transcription backends** — `moonshine` (default, any hardware), `faster-whisper` (NVIDIA CUDA), or `whisper.cpp` (AMD/Intel Vulkan), selected automatically
+- **Moonshine default** — ~100x lower latency than Whisper Large-v3 with better accuracy; no GPU required; 8 languages
 - **Hold-to-Talk**, **Toggle-to-Talk**, and **Double-Tap** hotkey modes
 - **GPU & CPU support** — CUDA fp16, Vulkan, and int8 CPU fallback
 - **Quiet Mode** — boosted VAD sensitivity for soft-spoken dictation
@@ -47,7 +48,7 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 
 ### AT-SPI2 Accessibility Integration (optional)
 - **Direct text insertion** — injects transcribed text via `AT-SPI2 Text.insertText` instead of simulating keystrokes; no modifier-key conflicts, no need for `wtype` or `xdotool`
-- **Context-aware transcription** — reads the text preceding your cursor at recording start and passes it to Whisper as an `initial_prompt`, improving accuracy by priming the model with your document's vocabulary and style
+- **Context-aware transcription** — reads the text preceding your cursor at recording start and passes it to Whisper as an `initial_prompt`, improving accuracy by priming the model with your document's vocabulary and style (Whisper backends only; Moonshine uses its own contextual VAD)
 - **Auto code mode** — automatically switches to code dictation mode when a terminal or IDE text widget is focused, without changing your global Settings
 
 ### System & UI
@@ -66,14 +67,15 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 
 ## Hardware Compatibility
 
-| GPU Vendor | Backend | Notes |
+| Hardware | Default Backend | Notes |
 |---|---|---|
+| Any (Moonshine installed) | `moonshine` auto-selected | Fastest option; works on CPU, NVIDIA, AMD, Intel |
 | NVIDIA (CUDA 11+) | `faster-whisper` auto-selected | Install CUDA pip libraries — no extra steps |
 | AMD (RDNA/GCN, Vulkan driver) | `whisper.cpp` auto-selected | Install `whisper-cpp-vulkan` from AUR or build from source |
 | Intel Arc / Iris Xe (Vulkan driver) | `whisper.cpp` auto-selected | Build from source with `GGML_VULKAN=ON` |
 | No GPU (CPU only) | `faster-whisper` int8 auto-selected | Works out of the box; slower for large models |
 
-The backend is chosen automatically at startup using GPU detection via `nvidia-smi`, sysfs DRM vendor IDs, and `vulkaninfo`. Override it in **Settings → Engine**.
+The backend is chosen automatically at startup: Moonshine is preferred when `moonshine-voice` is installed (it is in `requirements.txt`). Otherwise GPU detection via `nvidia-smi`, sysfs DRM vendor IDs, and `vulkaninfo` selects the best Whisper backend. Override it in **Settings → Engine**.
 
 ---
 
@@ -194,6 +196,29 @@ The app starts in the system tray. If your compositor doesn't support system tra
 ---
 
 ## Backend Setup
+
+### Moonshine (Default — Recommended)
+
+[Moonshine](https://github.com/moonshine-ai/moonshine) is a purpose-built streaming STT engine that is faster and more accurate than OpenAI Whisper for English, and works on any hardware without GPU drivers.
+
+**It is included in `requirements.txt` and installed automatically.**
+
+| Model | Params | WER (English) | Latency (Linux x86) |
+|---|---|---|---|
+| Moonshine Tiny | 34M | 12.0% | ~70ms |
+| Moonshine Small | 123M | 7.8% | ~165ms |
+| **Moonshine Medium** (default) | 245M | **6.7%** | **~270ms** |
+| Whisper Large-v3 *(reference)* | 1.5B | 7.4% | ~17,000ms |
+
+Moonshine Medium beats Whisper Large-v3 on accuracy with 1/6th the parameters and is ~63× faster on CPU.
+
+**Language support:** English (main models), plus Spanish, Mandarin, Japanese, Korean, Vietnamese, Ukrainian, and Arabic (single shared multilingual model).
+
+**Model selection:** Set **Settings → Engine → Moonshine Settings → Model size**. Models are downloaded automatically to `~/.cache/voxctl/moonshine/` on first use.
+
+To explicitly select Moonshine or switch back to a Whisper backend, use **Settings → Engine** or set `backend_engine` in `~/.config/voxctl/config.json`.
+
+---
 
 ### NVIDIA GPU — faster-whisper + CUDA
 
@@ -602,8 +627,9 @@ Input Engine (evdev)
 Recording Controller (AudioRecorder)
         │ numpy float32 audio
         ▼
-Transcription (faster-whisper / whisper.cpp + Silero VAD)
-  └── Backend selected via BackendSelector (GPU probe → sysfs / nvidia-smi / vulkaninfo)
+Transcription (moonshine / faster-whisper / whisper.cpp)
+  └── Backend selected via BackendSelector
+        (moonshine-voice installed? → Moonshine; else GPU probe → sysfs / nvidia-smi / vulkaninfo)
         │ (text, target_id)
         ▼
 Post-Processing (per target_id setting)
@@ -666,6 +692,7 @@ src/
 ├── backends/
 │   ├── protocol.py           # Shared BackendResult / BackendProtocol dataclasses
 │   ├── selector.py           # GPU detection (nvidia-smi / sysfs / vulkaninfo) + backend selection
+│   ├── moonshine_backend.py       # Moonshine streaming STT backend (default)
 │   ├── faster_whisper_backend.py  # faster-whisper transcription backend
 │   └── whisper_cpp_backend.py     # whisper.cpp subprocess / pywhispercpp backend
 ├── hotkeys/
@@ -704,7 +731,7 @@ tests/
 ├── test_tts_engine.py        # Voice catalog, path helpers, download extraction, TTSEngine (30 tests)
 ├── test_tts_responder.py     # ResponseListener FIFO reading, ordering, late FIFO (6 tests)
 ├── test_mcp_server.py        # JSON-RPC dispatch, all tools, error codes, socket server (16 tests)
-├── test_backend_protocol.py  # BackendResult / BackendProtocol contract tests (40 tests)
+├── test_backend_protocol.py  # BackendResult / BackendProtocol contract tests, incl. Moonshine (65 tests)
 ├── test_atspi_context.py     # AT-SPI2 focus tracking, context reading, injection (28 tests)
 ├── test_audio_recorder.py    # PyAudio device enumeration and recorder behaviour (15 tests)
 ├── test_config_validator.py  # Config, targets, and bindings validation rules (36 tests)
@@ -731,7 +758,7 @@ The test suite covers:
 | `test_tts_engine.py` | 30 | Voice catalog validation, path helpers, download extraction, TTSEngine |
 | `test_tts_responder.py` | 6 | ResponseListener FIFO reading, ordering, empty-line skip, late FIFO |
 | `test_mcp_server.py` | 16 | JSON-RPC dispatch, all tools, error codes, socket server integration |
-| `test_backend_protocol.py` | 40 | BackendResult / BackendProtocol contract and selector logic |
+| `test_backend_protocol.py` | 65 | BackendResult / BackendProtocol contract, selector logic, and Moonshine backend |
 | `test_atspi_context.py` | 28 | AT-SPI2 focus tracking, context reading, text injection |
 | `test_audio_recorder.py` | 15 | PyAudio device enumeration and recorder behaviour |
 | `test_config_validator.py` | 36 | Config, targets.toml, and bindings.toml validation rules |

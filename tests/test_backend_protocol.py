@@ -25,6 +25,12 @@ from backends.whisper_cpp_backend import (
     _parse_timestamp,
     GGUF_MAP,
 )
+from backends.moonshine_backend import (
+    MoonshineBackend,
+    SUPPORTED_LANGUAGES,
+    MULTILINGUAL_LANGS,
+    _MODEL_ARCH_MAP,
+)
 from backends.selector import (
     probe_gpu,
     _vulkan_available,
@@ -276,3 +282,149 @@ class TestSelector:
 
         b = select_backend(FakeConfig())
         assert isinstance(b, WhisperCppBackend)
+
+    def test_select_backend_moonshine_forced(self):
+        from backends.selector import select_backend
+
+        class FakeConfig:
+            def get(self, key, default=None):
+                return {
+                    "backend_engine": "moonshine",
+                    "moonshine_language": "en",
+                }.get(key, default)
+
+        b = select_backend(FakeConfig())
+        assert isinstance(b, MoonshineBackend)
+
+    def test_select_backend_moonshine_language_applied(self):
+        from backends.selector import select_backend
+
+        class FakeConfig:
+            def get(self, key, default=None):
+                return {
+                    "backend_engine": "moonshine",
+                    "moonshine_language": "es",
+                }.get(key, default)
+
+        b = select_backend(FakeConfig())
+        assert isinstance(b, MoonshineBackend)
+        assert b._language == "es"
+
+
+# ── MoonshineBackend structural tests ────────────────────────────────────────
+
+class TestMoonshineBackend:
+    def test_name(self):
+        assert MoonshineBackend.name == "moonshine"
+
+    def test_is_available_returns_bool(self):
+        b = MoonshineBackend()
+        assert isinstance(b.is_available, bool)
+
+    def test_capabilities_shape(self):
+        b = MoonshineBackend()
+        caps = b.capabilities
+        assert isinstance(caps, BackendCapabilities)
+        assert caps.streaming is True
+        assert caps.word_timestamps is False
+        assert caps.language_detection is False
+        assert "cpu" in caps.gpu_vendor_support
+        assert "nvidia" in caps.gpu_vendor_support
+
+    def test_satisfies_protocol(self):
+        b = MoonshineBackend()
+        assert isinstance(b, TranscriptionBackend)
+
+    def test_transcribe_raises_without_model(self):
+        b = MoonshineBackend()
+        with pytest.raises(RuntimeError, match="load_model"):
+            b.transcribe(np.zeros(16000, dtype=np.float32))
+
+    def test_transcribe_with_vad_raises_without_model(self):
+        b = MoonshineBackend()
+        with pytest.raises(RuntimeError, match="load_model"):
+            b.transcribe_with_vad(np.zeros(16000, dtype=np.float32))
+
+    def test_unload_clears_state(self):
+        b = MoonshineBackend()
+        b._model_arch = "moonshine/medium"
+        b._model_size = "medium"
+        b.unload_model()
+        assert b._model_arch is None
+        assert b._model_size is None
+
+    def test_configure_language_english(self):
+        b = MoonshineBackend()
+        b.configure_language("en")
+        assert b._language == "en"
+
+    def test_configure_language_spanish(self):
+        b = MoonshineBackend()
+        b.configure_language("es")
+        assert b._language == "es"
+
+    def test_configure_language_none_defaults_to_english(self):
+        b = MoonshineBackend()
+        b.configure_language(None)
+        assert b._language == "en"
+
+    def test_default_language_is_english(self):
+        b = MoonshineBackend()
+        assert b._language == "en"
+
+    def test_default_cache_dir(self):
+        b = MoonshineBackend()
+        assert "voxctl" in b._cache_dir
+        assert "moonshine" in b._cache_dir
+
+
+# ── Moonshine model arch resolution ──────────────────────────────────────────
+
+class TestMoonshineArchResolution:
+    def test_english_tiny_arch(self):
+        b = MoonshineBackend()
+        assert b._resolve_arch("tiny", "en") == "moonshine/tiny"
+
+    def test_english_small_arch(self):
+        b = MoonshineBackend()
+        assert b._resolve_arch("small", "en") == "moonshine/small"
+
+    def test_english_medium_arch(self):
+        b = MoonshineBackend()
+        assert b._resolve_arch("medium", "en") == "moonshine/medium"
+
+    def test_unknown_size_falls_back_to_medium(self):
+        b = MoonshineBackend()
+        assert b._resolve_arch("xlarge", "en") == "moonshine/medium"
+
+    def test_multilingual_lang_uses_multilingual_arch(self):
+        b = MoonshineBackend()
+        for lang in MULTILINGUAL_LANGS:
+            arch = b._resolve_arch("medium", lang)
+            assert "multilingual" in arch, f"Expected multilingual arch for lang={lang}"
+
+    def test_english_not_in_multilingual_set(self):
+        assert "en" not in MULTILINGUAL_LANGS
+
+    def test_all_supported_languages_covered(self):
+        b = MoonshineBackend()
+        for lang in SUPPORTED_LANGUAGES:
+            arch = b._resolve_arch("medium", lang)
+            assert arch.startswith("moonshine/"), f"Bad arch for lang={lang}: {arch}"
+
+    def test_model_arch_map_keys(self):
+        assert set(_MODEL_ARCH_MAP.keys()) == {"tiny", "small", "medium"}
+
+    def test_configure_language_updates_arch_when_model_loaded(self):
+        b = MoonshineBackend()
+        b._model_size = "medium"
+        b._model_arch = "moonshine/medium"
+        b.configure_language("es")
+        assert "multilingual" in b._model_arch
+
+    def test_configure_language_switches_back_to_english(self):
+        b = MoonshineBackend()
+        b._model_size = "small"
+        b._model_arch = "moonshine/base-multilingual"
+        b.configure_language("en")
+        assert b._model_arch == "moonshine/small"

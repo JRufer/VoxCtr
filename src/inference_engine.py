@@ -1,6 +1,7 @@
 from llm_postprocessor import LLMPostprocessor
 from backends.selector import select_backend, probe_gpu, auto_compute_type
 from backends.faster_whisper_backend import FasterWhisperBackend
+from backends.moonshine_backend import MoonshineBackend
 import numpy as np
 import threading
 import queue
@@ -158,9 +159,10 @@ class InferenceEngine(threading.Thread):
         try:
             print(f"Loading backend '{backend.name}' model='{model_size}' device='{device}'...")
             self._verify_and_load(backend, model_size, device, compute_type)
-        except FileNotFoundError as e:
-            # Model file missing — fall back to faster-whisper gracefully
-            print(f"[Engine] Model not found: {e}")
+        except (FileNotFoundError, ModuleNotFoundError, ImportError) as e:
+            # Model file missing or required Python package not installed —
+            # fall back to faster-whisper so the app stays usable.
+            print(f"[Engine] Backend load failed: {e}")
             print("[Engine] Falling back to faster-whisper backend...")
             from backends.faster_whisper_backend import FasterWhisperBackend as _FW
             backend = _FW()
@@ -190,6 +192,10 @@ class InferenceEngine(threading.Thread):
         """Return (model_size, device, compute_type) for the given backend."""
         from backends.whisper_cpp_backend import WhisperCppBackend
 
+        if isinstance(backend, MoonshineBackend):
+            model_size = self.config.get("moonshine_model_size", "medium")
+            return model_size, "auto", "default"
+
         if isinstance(backend, WhisperCppBackend):
             model_size = self.config.get("whisper_cpp_model_size", "large-v3")
             device = self.config.get("whisper_cpp_device", "auto")
@@ -209,7 +215,8 @@ class InferenceEngine(threading.Thread):
     def _verify_and_load(self, backend, model_size, device, compute_type):
         backend.load_model(model_size, device, compute_type)
 
-        # Smoke test: verify the model actually produces output
+        # Smoke test: verify the model actually produces output.
+        # MoonshineBackend does its own warmup pass inside load_model(), so skip here.
         if isinstance(backend, FasterWhisperBackend):
             dummy = np.zeros(16000, dtype=np.float32)
             backend.transcribe_with_vad(dummy)
@@ -447,6 +454,14 @@ class InferenceEngine(threading.Thread):
                         threshold=vad_threshold,
                     ),
                     initial_prompt=initial_prompt,
+                )
+            elif isinstance(backend, MoonshineBackend):
+                # Moonshine has built-in VAD and per-call language routing;
+                # initial_prompt is not supported by the Moonshine API.
+                lang = self.config.get("moonshine_language", "en") or "en"
+                result = backend.transcribe_with_vad(
+                    audio_data,
+                    language=lang,
                 )
             else:
                 result = backend.transcribe(

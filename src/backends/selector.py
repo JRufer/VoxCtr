@@ -166,8 +166,22 @@ def select_backend(config) -> object:
     """
     from .faster_whisper_backend import FasterWhisperBackend
     from .whisper_cpp_backend import WhisperCppBackend
+    from .moonshine_backend import MoonshineBackend
 
     engine = config.get("backend_engine", "auto")
+
+    if engine == "moonshine":
+        b = MoonshineBackend()
+        if b.is_available:
+            lang = config.get("moonshine_language", "en") or "en"
+            b.configure_language(lang)
+            log.info("Backend: forced to moonshine")
+            return b
+        log.warning(
+            "Backend 'moonshine' selected but moonshine-voice is not installed. "
+            "Install with: pip install moonshine-voice  "
+            "Falling back to auto-detection."
+        )
 
     if engine == "faster-whisper":
         log.info("Backend: forced to faster-whisper")
@@ -185,6 +199,15 @@ def select_backend(config) -> object:
         return backend
 
     # ── Auto-detection ─────────────────────────────────────────────────────
+    # Moonshine is checked first: when installed it is faster and more accurate
+    # than Whisper for English on any hardware (CPU, NVIDIA, AMD, Intel).
+    moonshine = MoonshineBackend()
+    if moonshine.is_available:
+        lang = config.get("moonshine_language", "en") or "en"
+        moonshine.configure_language(lang)
+        log.info("Backend auto: moonshine-voice available → moonshine")
+        return moonshine
+
     gpu = probe_gpu()
     log.info(f"GPU probe result: {gpu}")
 
