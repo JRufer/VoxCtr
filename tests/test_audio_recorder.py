@@ -26,6 +26,8 @@ _stub("pyaudio", paInt16=8, PyAudio=mock.MagicMock)
 
 # numpy stub – only the functions used by AudioRecorder.run() matter;
 # the methods under test don't call numpy directly.
+# Save and restore the real numpy so other test modules aren't affected.
+_real_numpy = sys.modules.get("numpy")
 _np = _stub("numpy")
 _np.frombuffer = mock.MagicMock(return_value=mock.MagicMock())
 _np.sqrt = mock.MagicMock(return_value=0.1)
@@ -36,6 +38,12 @@ _np.mean = mock.MagicMock(return_value=0.01)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from audio_recorder import AudioRecorder
+
+# Restore real numpy in sys.modules so other test files get the real module.
+if _real_numpy is not None:
+    sys.modules["numpy"] = _real_numpy
+else:
+    sys.modules.pop("numpy", None)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
