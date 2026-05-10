@@ -166,6 +166,7 @@ def select_backend(config) -> object:
     """
     from .faster_whisper_backend import FasterWhisperBackend
     from .whisper_cpp_backend import WhisperCppBackend
+    from .moonshine_backend import MoonshineBackend
 
     engine = config.get("backend_engine", "auto")
 
@@ -182,6 +183,14 @@ def select_backend(config) -> object:
         backend = WhisperCppBackend(binary_path=cpp_binary, model_dir=cpp_model_dir)
         if config.get("whisper_cpp_threads"):
             backend.configure_threads(config.get("whisper_cpp_threads"))
+        return backend
+
+    if engine == "moonshine":
+        log.info("Backend: forced to moonshine")
+        backend = MoonshineBackend()
+        if not backend.is_available:
+            log.warning("moonshine-voice not installed — falling back to faster-whisper")
+            return FasterWhisperBackend()
         return backend
 
     # ── Auto-detection ─────────────────────────────────────────────────────
@@ -232,6 +241,9 @@ def auto_compute_type(backend_name: str, gpu: GpuInfo | None) -> str:
         if gpu and gpu.vendor == "nvidia":
             return "float16" if gpu.vram_mb >= 6144 else "int8"
         return "int8"
+
+    if backend_name == "moonshine":
+        return "onnx"
 
     # whisper-cpp
     if gpu and gpu.vendor in ("amd", "intel"):

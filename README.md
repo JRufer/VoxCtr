@@ -9,7 +9,7 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 ## Features
 
 ### Core Dictation
-- **Dual transcription backends** — `faster-whisper` (NVIDIA CUDA) or `whisper.cpp` (AMD/Intel Vulkan), selected automatically
+- **Three transcription backends** — `faster-whisper` (NVIDIA CUDA), `whisper.cpp` (AMD/Intel Vulkan), or `moonshine` (CPU-only, ultra-fast), selected automatically
 - **Hold-to-Talk**, **Toggle-to-Talk**, and **Double-Tap** hotkey modes
 - **GPU & CPU support** — CUDA fp16, Vulkan, and int8 CPU fallback
 - **Quiet Mode** — boosted VAD sensitivity for soft-spoken dictation
@@ -72,6 +72,7 @@ A native, on-device voice-to-text tool for Linux with first-class Wayland suppor
 | AMD (RDNA/GCN, Vulkan driver) | `whisper.cpp` auto-selected | Install `whisper-cpp-vulkan` from AUR or build from source |
 | Intel Arc / Iris Xe (Vulkan driver) | `whisper.cpp` auto-selected | Build from source with `GGML_VULKAN=ON` |
 | No GPU (CPU only) | `faster-whisper` int8 auto-selected | Works out of the box; slower for large models |
+| Any (CPU, optional override) | `moonshine` (manual selection) | Ultra-fast ONNX model; `pip install moonshine-voice` |
 
 The backend is chosen automatically at startup using GPU detection via `nvidia-smi`, sysfs DRM vendor IDs, and `vulkaninfo`. Override it in **Settings → Engine**.
 
@@ -258,6 +259,44 @@ pip install pywhispercpp
 # For Vulkan-enabled builds, install from source:
 GGML_VULKAN=1 pip install git+https://github.com/abdeladim-s/pywhispercpp
 ```
+
+### CPU-only — Moonshine (ultra-fast, optional)
+
+[Moonshine](https://github.com/moonshine-ai/moonshine) is a lightweight speech recognition engine from Moonshine AI that runs entirely on CPU using a bundled ONNX Runtime native library. It is significantly faster than Whisper on CPU, making it a good choice for machines without a GPU.
+
+**Install:**
+
+```bash
+pip install moonshine-voice
+```
+
+**Select the backend:**
+
+In **Settings → Engine**, choose `moonshine` from the backend dropdown.
+
+**Download a model:**
+
+Models are downloaded and managed directly in Settings → Engine → Moonshine Settings. Click **Download Selected Model** to fetch the chosen model for your language. Models are cached in `~/.cache/moonshine_voice/`.
+
+To download from the command line:
+
+```bash
+python -m moonshine_voice.download --language en
+```
+
+**Available models:**
+
+| Size | Parameters | WER (English) | Notes |
+|------|-----------|----------------|-------|
+| `tiny` | 26M | 12.7% | Fastest |
+| `base` | 58M | 10.1% | Recommended |
+| `tiny-streaming` | 34M | 12.0% | Streaming-optimised |
+| `small-streaming` | 123M | 7.8% | Best accuracy (streaming) |
+| `medium-streaming` | 245M | 6.7% | Highest accuracy |
+
+**Supported languages:** English (`en`), Spanish (`es`), Arabic (`ar`), Japanese (`ja`), Korean (`ko`), Vietnamese (`vi`), Ukrainian (`uk`), Mandarin Chinese (`zh`).
+
+> **Note:** Moonshine does not support word timestamps, language auto-detection, or initial prompts. These features are silently ignored when the moonshine backend is active.
 
 ---
 
@@ -671,7 +710,8 @@ src/
 │   ├── protocol.py           # Shared BackendResult / BackendProtocol dataclasses
 │   ├── selector.py           # GPU detection (nvidia-smi / sysfs / vulkaninfo) + backend selection
 │   ├── faster_whisper_backend.py  # faster-whisper transcription backend
-│   └── whisper_cpp_backend.py     # whisper.cpp subprocess / pywhispercpp backend
+│   ├── whisper_cpp_backend.py     # whisper.cpp subprocess / pywhispercpp backend
+│   └── moonshine_backend.py       # Moonshine ONNX CPU backend (moonshine-voice)
 ├── hotkeys/
 │   └── double_tap.py         # DoubleTapMachine state machine
 ├── routing/
@@ -708,7 +748,8 @@ tests/
 ├── test_tts_engine.py        # Voice catalog, path helpers, download extraction, TTSEngine (30 tests)
 ├── test_tts_responder.py     # ResponseListener FIFO reading, ordering, late FIFO (6 tests)
 ├── test_mcp_server.py        # JSON-RPC dispatch, all tools, error codes, socket server (16 tests)
-├── test_backend_protocol.py  # BackendResult / BackendProtocol contract tests (40 tests)
+├── test_backend_protocol.py  # BackendResult / BackendProtocol contract tests + Moonshine (47 tests)
+├── test_moonshine_backend.py # Moonshine backend helpers, cache detection, round-trips (31 tests)
 ├── test_atspi_context.py     # AT-SPI2 focus tracking, context reading, injection (28 tests)
 ├── test_audio_recorder.py    # PyAudio device enumeration and recorder behaviour (15 tests)
 ├── test_config_validator.py  # Config, targets, and bindings validation rules (36 tests)
@@ -735,7 +776,8 @@ The test suite covers:
 | `test_tts_engine.py` | 30 | Voice catalog validation, path helpers, download extraction, TTSEngine |
 | `test_tts_responder.py` | 6 | ResponseListener FIFO reading, ordering, empty-line skip, late FIFO |
 | `test_mcp_server.py` | 16 | JSON-RPC dispatch, all tools, error codes, socket server integration |
-| `test_backend_protocol.py` | 40 | BackendResult / BackendProtocol contract and selector logic |
+| `test_backend_protocol.py` | 47 | BackendResult / BackendProtocol contract, selector logic, Moonshine protocol |
+| `test_moonshine_backend.py` | 31 | Moonshine cache helpers, model size parsing, round-trips, structural tests |
 | `test_atspi_context.py` | 28 | AT-SPI2 focus tracking, context reading, text injection |
 | `test_audio_recorder.py` | 15 | PyAudio device enumeration and recorder behaviour |
 | `test_config_validator.py` | 36 | Config, targets.toml, and bindings.toml validation rules |

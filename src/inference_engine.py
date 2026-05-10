@@ -189,6 +189,7 @@ class InferenceEngine(threading.Thread):
     def _resolve_load_params(self, backend) -> tuple[str, str, str]:
         """Return (model_size, device, compute_type) for the given backend."""
         from backends.whisper_cpp_backend import WhisperCppBackend
+        from backends.moonshine_backend import MoonshineBackend, encode_model_size_language
 
         if isinstance(backend, WhisperCppBackend):
             model_size = self.config.get("whisper_cpp_model_size", "large-v3")
@@ -196,6 +197,12 @@ class InferenceEngine(threading.Thread):
             gpu = probe_gpu()
             compute_type = auto_compute_type("whisper-cpp", gpu)
             return model_size, device, compute_type
+
+        if isinstance(backend, MoonshineBackend):
+            size = self.config.get("engine.moonshine.model_size", "base")
+            language = self.config.get("engine.moonshine.language", "en")
+            model_size = encode_model_size_language(str(size), str(language))
+            return model_size, "cpu", "onnx"
 
         # FasterWhisperBackend
         model_size = self.config.get("model_size", "base")

@@ -287,6 +287,9 @@ class SettingsWindow(QWidget):
     _fw_download_err_sig = pyqtSignal(str)
     _cpp_progress_sig = pyqtSignal(int, int)        # done, total
     _fw_progress_sig = pyqtSignal(int, int)         # done, total
+    _moonshine_download_ok_sig = pyqtSignal(str)    # "size-language"
+    _moonshine_download_err_sig = pyqtSignal(str)
+    _moonshine_progress_sig = pyqtSignal(int, int)  # done, total
 
     def __init__(self, config, inference_engine=None, audio_recorder=None, overlay_manager=None):
         super().__init__()
@@ -466,10 +469,11 @@ class SettingsWindow(QWidget):
         engine_box.layout().addWidget(_hint(
             "Auto selects the best backend for your GPU.\n"
             "faster-whisper: best for NVIDIA CUDA.\n"
-            "whisper-cpp: enables AMD/Intel GPU via Vulkan."
+            "whisper-cpp: enables AMD/Intel GPU via Vulkan.\n"
+            "moonshine: lightweight ONNX model, CPU-only, very fast."
         ))
         self.engine_combo = QComboBox()
-        self.engine_combo.addItems(["auto", "faster-whisper", "whisper-cpp"])
+        self.engine_combo.addItems(["auto", "faster-whisper", "whisper-cpp", "moonshine"])
         self.engine_combo.setCurrentText(self.config.get("engine.backend", "auto"))
         self.engine_combo.currentTextChanged.connect(self._on_engine_changed)
         engine_box.layout().addWidget(self.engine_combo)
@@ -654,12 +658,94 @@ class SettingsWindow(QWidget):
         binding_box.layout().addWidget(binding_label)
         lay.addWidget(binding_box)
 
+        # ── Moonshine Settings ─────────────────────────────────────────────
+        self._moonshine_box = _section("Moonshine Settings")
+        self._moonshine_box.layout().addWidget(_hint(
+            "Moonshine is a fast, lightweight speech recognition model that runs entirely on CPU.\n"
+            "No GPU required. Supports English and 7 other languages."
+        ))
+
+        # Installation status
+        try:
+            import moonshine_voice  # noqa: F401
+            ms_install_label = QLabel("✅  moonshine-voice installed and ready")
+            ms_install_label.setStyleSheet("color: #4ade80; background: transparent; border: none; font-size: 12px;")
+        except ImportError:
+            ms_install_label = QLabel(
+                "❌  moonshine-voice not installed.\n"
+                "Install with: pip install moonshine-voice"
+            )
+            ms_install_label.setStyleSheet("color: #f87171; background: transparent; border: none; font-size: 12px;")
+        ms_install_label.setWordWrap(True)
+        self._moonshine_box.layout().addWidget(ms_install_label)
+
+        # Language selector
+        ms_lang_row = QHBoxLayout()
+        ms_lang_row.addWidget(QLabel("Language:"))
+        self.moonshine_lang_combo = QComboBox()
+        from backends.moonshine_backend import LANGUAGE_NAMES, SUPPORTED_LANGUAGES as _MS_LANGS
+        cur_ms_lang = self.config.get("engine.moonshine.language", "en")
+        for code in _MS_LANGS:
+            display = f"{LANGUAGE_NAMES.get(code, code)} ({code})"
+            self.moonshine_lang_combo.addItem(display, code)
+            if code == cur_ms_lang:
+                self.moonshine_lang_combo.setCurrentIndex(self.moonshine_lang_combo.count() - 1)
+        self.moonshine_lang_combo.currentIndexChanged.connect(self._update_moonshine_model_status)
+        ms_lang_row.addWidget(self.moonshine_lang_combo, 1)
+        self._moonshine_box.layout().addLayout(ms_lang_row)
+
+        # Model size selector
+        ms_model_row = QHBoxLayout()
+        ms_model_row.addWidget(QLabel("Model:"))
+        self.moonshine_model_combo = QComboBox()
+        from backends.moonshine_backend import MODEL_SIZES as _MS_SIZES, is_model_downloaded as _ms_downloaded
+        cur_ms_size = self.config.get("engine.moonshine.model_size", "base")
+        for size in _MS_SIZES:
+            downloaded = _ms_downloaded(size, cur_ms_lang)
+            label = size + ("  ✅" if downloaded else "  ⬇")
+            self.moonshine_model_combo.addItem(label, size)
+            if size == cur_ms_size:
+                self.moonshine_model_combo.setCurrentIndex(self.moonshine_model_combo.count() - 1)
+        self.moonshine_model_combo.currentIndexChanged.connect(self._update_moonshine_model_status)
+        ms_model_row.addWidget(self.moonshine_model_combo, 1)
+        self._moonshine_box.layout().addLayout(ms_model_row)
+
+        # Model status label
+        self._moonshine_model_status = QLabel("")
+        self._moonshine_model_status.setObjectName("hint")
+        self._moonshine_model_status.setWordWrap(True)
+        self._moonshine_box.layout().addWidget(self._moonshine_model_status)
+
+        # Progress bar
+        self._moonshine_progress = QProgressBar()
+        self._moonshine_progress.setRange(0, 100)
+        self._moonshine_progress.setValue(0)
+        self._moonshine_progress.setVisible(False)
+        self._moonshine_progress.setStyleSheet(
+            "QProgressBar { background:#1a1f2e; border:1px solid #2a3448; border-radius:4px; height:8px; text-align:center; }"
+            "QProgressBar::chunk { background:#4a9eff; border-radius:4px; }"
+        )
+        self._moonshine_box.layout().addWidget(self._moonshine_progress)
+
+        # Download button
+        self._moonshine_download_btn = QPushButton("Download Selected Model")
+        self._moonshine_download_btn.clicked.connect(self._download_moonshine_model)
+        self._moonshine_box.layout().addWidget(self._moonshine_download_btn)
+
+        self._moonshine_box.layout().addWidget(_hint(
+            "Models are downloaded from moonshine.ai and cached in ~/.cache/moonshine_voice/.\n"
+            "Each model+language combination is downloaded separately."
+        ))
+
+        lay.addWidget(self._moonshine_box)
+
         lay.addStretch()
 
         # Populate hardware info asynchronously
         threading.Thread(target=self._probe_hardware_async, daemon=True).start()
         # Show/hide settings depending on current selection
         self._on_engine_changed(self.engine_combo.currentText())
+        self._update_moonshine_model_status()
 
         return w
 
@@ -668,14 +754,18 @@ class SettingsWindow(QWidget):
             resolved = getattr(self.inference_engine, "active_backend_name", "")
             show_cpp = (resolved == "whisper-cpp")
             show_fw = (resolved == "faster-whisper")
+            show_moonshine = (resolved == "moonshine")
         else:
             show_cpp = engine == "whisper-cpp"
             show_fw = engine == "faster-whisper"
-            
+            show_moonshine = engine == "moonshine"
+
         if hasattr(self, "_cpp_box"):
             self._cpp_box.setVisible(show_cpp)
         if hasattr(self, "_fw_box"):
             self._fw_box.setVisible(show_fw)
+        if hasattr(self, "_moonshine_box"):
+            self._moonshine_box.setVisible(show_moonshine)
 
     def _refresh_hardware(self):
         import threading
@@ -721,7 +811,8 @@ class SettingsWindow(QWidget):
             self._active_backend_label.setText(backend_text)
         self._update_cpp_model_status()
         self._update_fw_model_status()
-        
+        self._update_moonshine_model_status()
+
         # Update visibility if set to auto, now that we may have resolved the backend
         if hasattr(self, "engine_combo") and self.engine_combo.currentText() == "auto":
             self._on_engine_changed("auto")
@@ -925,7 +1016,104 @@ class SettingsWindow(QWidget):
                 self._fw_download_ok_sig.emit(model_size)
             except Exception as e:
                 self._fw_download_err_sig.emit(str(e))
-                
+
+        threading.Thread(target=do_download, daemon=True).start()
+
+    # ── Moonshine helpers ─────────────────────────────────────────────────
+
+    def _current_moonshine_lang(self) -> str:
+        if hasattr(self, "moonshine_lang_combo"):
+            data = self.moonshine_lang_combo.currentData()
+            return data if data else "en"
+        return "en"
+
+    def _update_moonshine_model_status(self):
+        if not hasattr(self, "moonshine_model_combo"):
+            return
+        from backends.moonshine_backend import is_model_downloaded, MODEL_SIZES as _MS_SIZES
+
+        lang = self._current_moonshine_lang()
+        selected = self.moonshine_model_combo.currentText().replace("  ✅", "").replace("  ⬇", "").strip()
+
+        # Refresh combo labels when language changes
+        self._refresh_moonshine_model_labels(lang)
+
+        if is_model_downloaded(selected, lang):
+            self._moonshine_model_status.setText(f"✅  {selected} ({lang}) is downloaded and ready.")
+            self._moonshine_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;")
+            if hasattr(self, "_moonshine_download_btn"):
+                self._moonshine_download_btn.setEnabled(False)
+        else:
+            self._moonshine_model_status.setText(
+                f"⚠  {selected} ({lang}) not cached locally.\n"
+                "Click 'Download Selected Model' to fetch it."
+            )
+            self._moonshine_model_status.setStyleSheet("color: #facc15; background: transparent; border: none;")
+            if hasattr(self, "_moonshine_download_btn"):
+                self._moonshine_download_btn.setEnabled(True)
+
+    def _refresh_moonshine_model_labels(self, language: str | None = None):
+        if not hasattr(self, "moonshine_model_combo"):
+            return
+        from backends.moonshine_backend import MODEL_SIZES as _MS_SIZES, is_model_downloaded as _ms_dl
+        lang = language or self._current_moonshine_lang()
+        cur = self.moonshine_model_combo.currentText().replace("  ✅", "").replace("  ⬇", "").strip()
+        self.moonshine_model_combo.blockSignals(True)
+        self.moonshine_model_combo.clear()
+        for size in _MS_SIZES:
+            label = size + ("  ✅" if _ms_dl(size, lang) else "  ⬇")
+            self.moonshine_model_combo.addItem(label, size)
+            if size == cur:
+                self.moonshine_model_combo.setCurrentIndex(self.moonshine_model_combo.count() - 1)
+        self.moonshine_model_combo.blockSignals(False)
+
+    def _download_moonshine_model(self):
+        import threading
+        from backends.moonshine_backend import MoonshineBackend
+
+        if not hasattr(self, "moonshine_model_combo"):
+            return
+
+        size = self.moonshine_model_combo.currentText().replace("  ✅", "").replace("  ⬇", "").strip()
+        lang = self._current_moonshine_lang()
+
+        self._moonshine_download_btn.setEnabled(False)
+        self._moonshine_model_status.setText(f"⏳  Downloading {size} ({lang})…")
+        self._moonshine_model_status.setStyleSheet("color: #e2e8f0; background: transparent; border: none;")
+        self._moonshine_progress.setRange(0, 0)  # indeterminate
+        self._moonshine_progress.setVisible(True)
+
+        try:
+            self._moonshine_download_ok_sig.disconnect()
+            self._moonshine_download_err_sig.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+
+        self._moonshine_download_ok_sig.connect(
+            lambda encoded: (
+                self._moonshine_model_status.setText(f"✅  Downloaded {encoded} successfully."),
+                self._moonshine_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;"),
+                self._moonshine_download_btn.setEnabled(False),
+                self._refresh_moonshine_model_labels(),
+                self._moonshine_progress.setVisible(False),
+            )
+        )
+        self._moonshine_download_err_sig.connect(
+            lambda msg: (
+                self._moonshine_model_status.setText(f"❌  Download failed: {msg}"),
+                self._moonshine_model_status.setStyleSheet("color: #f87171; background: transparent; border: none;"),
+                self._moonshine_download_btn.setEnabled(True),
+                self._moonshine_progress.setVisible(False),
+            )
+        )
+
+        def do_download():
+            try:
+                MoonshineBackend.download_model(size, lang)
+                self._moonshine_download_ok_sig.emit(f"{size}-{lang}")
+            except Exception as e:
+                self._moonshine_download_err_sig.emit(str(e))
+
         threading.Thread(target=do_download, daemon=True).start()
 
     # ── Tab: Audio ────────────────────────────────────────────────────────
@@ -2064,6 +2252,7 @@ class SettingsWindow(QWidget):
         restart_keys = [
             "engine.faster_whisper.model_size", "engine.faster_whisper.device", "engine.inference_mode", "audio.input_device_index",
             "engine.backend", "engine.whisper_cpp.model_size", "engine.whisper_cpp.device",
+            "engine.moonshine.model_size", "engine.moonshine.language",
         ]
         old_vals = {k: self.config.get(k) for k in restart_keys}
 
@@ -2078,6 +2267,15 @@ class SettingsWindow(QWidget):
             self.config.set("engine.whisper_cpp.device", self.cpp_device_combo.currentText())
         if hasattr(self, "cpp_threads_spin"):
             self.config.set("engine.whisper_cpp.threads", self.cpp_threads_spin.value())
+
+        # Moonshine
+        if hasattr(self, "moonshine_model_combo"):
+            self.config.set(
+                "engine.moonshine.model_size",
+                self.moonshine_model_combo.currentText().replace("  ✅", "").replace("  ⬇", "").strip()
+            )
+        if hasattr(self, "moonshine_lang_combo"):
+            self.config.set("engine.moonshine.language", self.moonshine_lang_combo.currentData() or "en")
 
         # Faster-Whisper (moved from General)
         if hasattr(self, "model_combo"):
