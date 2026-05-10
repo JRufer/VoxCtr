@@ -81,6 +81,9 @@ class MoonshineBackend:
         self._transcriber = None
         self._model_size: str = "base"
         self._language: str = "en"
+        # Streaming state
+        self._partial_text: str = ""
+        self._stream_samples: int = 0
 
     @property
     def is_available(self) -> bool:
@@ -96,7 +99,7 @@ class MoonshineBackend:
             word_timestamps=False,
             language_detection=False,
             initial_prompt=False,
-            streaming=False,
+            streaming=True,
             gpu_vendor_support=["cpu"],
         )
 
@@ -144,6 +147,59 @@ class MoonshineBackend:
             except Exception:
                 pass
         self._transcriber = None
+
+    # ── Streaming interface (StreamingTranscriptionBackend) ───────────────
+
+    def start_stream(self) -> None:
+        """Begin a new streaming transcription session."""
+        if self._transcriber is None:
+            raise RuntimeError("Model not loaded — call load_model() first")
+        self._transcriber.start()
+        self._partial_text = ""
+        self._stream_samples = 0
+
+    def feed_audio(self, chunk: bytes) -> str | None:
+        """Feed one raw int16 PCM chunk (16 kHz, as produced by AudioRecorder).
+
+        Returns the updated partial transcript text when it changes, else None.
+        """
+        if self._transcriber is None:
+            return None
+        audio = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+        self._stream_samples += len(audio)
+        self._transcriber.add_audio(audio.tolist(), sample_rate=16000)
+        transcript = self._transcriber.update_transcription()
+        text = " ".join(
+            line.text for line in transcript if getattr(line, "text", "")
+        ).strip()
+        if text != self._partial_text:
+            self._partial_text = text
+            return text
+        return None
+
+    def end_stream(self) -> TranscriptionResult:
+        """Signal end of audio, wait for the final transcript, and return it."""
+        if self._transcriber is None:
+            raise RuntimeError("Model not loaded — call load_model() first")
+        t0 = time.monotonic_ns()
+        self._transcriber.stop()
+        transcript = self._transcriber.update_transcription()
+        inference_ms = int((time.monotonic_ns() - t0) / 1e6)
+        text = " ".join(
+            line.text for line in transcript if getattr(line, "text", "")
+        ).strip()
+        duration_ms = int(self._stream_samples / 16)  # 16 000 Hz → ms
+        self._partial_text = ""
+        self._stream_samples = 0
+        return TranscriptionResult(
+            text=text,
+            language=self._language,
+            language_probability=1.0,
+            duration_ms=duration_ms,
+            inference_ms=inference_ms,
+        )
+
+    # ── Batch interface (TranscriptionBackend) ────────────────────────────
 
     def transcribe(
         self,

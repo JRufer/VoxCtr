@@ -199,6 +199,8 @@ class TestMoonshineBackendStructure:
         assert b._transcriber is None
         assert b._model_size == "base"
         assert b._language == "en"
+        assert b._partial_text == ""
+        assert b._stream_samples == 0
 
     def test_word_timestamps_not_supported(self):
         b = MoonshineBackend()
@@ -211,6 +213,152 @@ class TestMoonshineBackendStructure:
     def test_initial_prompt_not_supported(self):
         b = MoonshineBackend()
         assert b.capabilities.initial_prompt is False
+
+    def test_streaming_capability_true(self):
+        b = MoonshineBackend()
+        assert b.capabilities.streaming is True
+
+    def test_satisfies_streaming_protocol(self):
+        from backends.protocol import StreamingTranscriptionBackend
+        b = MoonshineBackend()
+        assert isinstance(b, StreamingTranscriptionBackend)
+
+
+# ── Streaming interface structural tests ───────────────────────────────────
+
+class TestMoonshineBackendStreaming:
+    def test_start_stream_raises_without_model(self):
+        b = MoonshineBackend()
+        with pytest.raises(RuntimeError, match="load_model"):
+            b.start_stream()
+
+    def test_end_stream_raises_without_model(self):
+        b = MoonshineBackend()
+        with pytest.raises(RuntimeError, match="load_model"):
+            b.end_stream()
+
+    def test_feed_audio_returns_none_without_model(self):
+        b = MoonshineBackend()
+        chunk = (np.zeros(1024, dtype=np.int16)).tobytes()
+        result = b.feed_audio(chunk)
+        assert result is None
+
+    def test_start_stream_resets_state(self):
+        b = MoonshineBackend()
+        b._partial_text = "stale text"
+        b._stream_samples = 99999
+
+        # Fake a loaded transcriber so start_stream() can proceed
+        class FakeTranscriber:
+            def start(self): pass
+            def stop(self): pass
+            def add_audio(self, *a, **k): pass
+            def update_transcription(self): return []
+            def transcribe_without_streaming(self, *a, **k): return []
+            def close(self): pass
+
+        b._transcriber = FakeTranscriber()
+        b.start_stream()
+        assert b._partial_text == ""
+        assert b._stream_samples == 0
+
+    def test_feed_audio_accumulates_samples(self):
+        b = MoonshineBackend()
+
+        class FakeTranscriber:
+            def add_audio(self, audio, sample_rate): pass
+            def update_transcription(self): return []
+            def close(self): pass
+
+        b._transcriber = FakeTranscriber()
+        chunk = (np.zeros(1024, dtype=np.int16)).tobytes()
+        b.feed_audio(chunk)
+        assert b._stream_samples == 1024
+
+    def test_feed_audio_returns_none_when_text_unchanged(self):
+        b = MoonshineBackend()
+
+        class FakeTranscriber:
+            def add_audio(self, audio, sample_rate): pass
+            def update_transcription(self): return []
+            def close(self): pass
+
+        b._transcriber = FakeTranscriber()
+        b._partial_text = ""  # same as what update_transcription returns
+        chunk = (np.zeros(256, dtype=np.int16)).tobytes()
+        result = b.feed_audio(chunk)
+        assert result is None
+
+    def test_feed_audio_returns_text_when_changed(self):
+        b = MoonshineBackend()
+
+        class FakeLine:
+            text = "hello world"
+
+        class FakeTranscriber:
+            def add_audio(self, audio, sample_rate): pass
+            def update_transcription(self): return [FakeLine()]
+            def close(self): pass
+
+        b._transcriber = FakeTranscriber()
+        b._partial_text = ""
+        chunk = (np.zeros(256, dtype=np.int16)).tobytes()
+        result = b.feed_audio(chunk)
+        assert result == "hello world"
+        assert b._partial_text == "hello world"
+
+    def test_feed_audio_returns_none_when_text_same(self):
+        b = MoonshineBackend()
+
+        class FakeLine:
+            text = "hello world"
+
+        class FakeTranscriber:
+            def add_audio(self, audio, sample_rate): pass
+            def update_transcription(self): return [FakeLine()]
+            def close(self): pass
+
+        b._transcriber = FakeTranscriber()
+        b._partial_text = "hello world"  # already up to date
+        chunk = (np.zeros(256, dtype=np.int16)).tobytes()
+        result = b.feed_audio(chunk)
+        assert result is None
+
+    def test_end_stream_returns_transcription_result(self):
+        b = MoonshineBackend()
+        b._language = "en"
+        b._stream_samples = 16000  # 1 second
+
+        class FakeLine:
+            text = "final result"
+
+        class FakeTranscriber:
+            def stop(self): pass
+            def update_transcription(self): return [FakeLine()]
+            def close(self): pass
+
+        b._transcriber = FakeTranscriber()
+        result = b.end_stream()
+        from backends.protocol import TranscriptionResult
+        assert isinstance(result, TranscriptionResult)
+        assert result.text == "final result"
+        assert result.language == "en"
+        assert result.duration_ms == 1000  # 16000 samples / 16 = 1000 ms
+
+    def test_end_stream_resets_streaming_state(self):
+        b = MoonshineBackend()
+        b._partial_text = "some partial"
+        b._stream_samples = 8000
+
+        class FakeTranscriber:
+            def stop(self): pass
+            def update_transcription(self): return []
+            def close(self): pass
+
+        b._transcriber = FakeTranscriber()
+        b.end_stream()
+        assert b._partial_text == ""
+        assert b._stream_samples == 0
 
 
 # ── Selector integration ───────────────────────────────────────────────────

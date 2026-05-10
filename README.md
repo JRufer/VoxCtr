@@ -288,13 +288,19 @@ python -m moonshine_voice.download --language en
 
 | Size | Parameters | WER (English) | Notes |
 |------|-----------|----------------|-------|
-| `tiny` | 26M | 12.7% | Fastest |
-| `base` | 58M | 10.1% | Recommended |
+| `tiny` | 26M | 12.7% | Fastest (batch) |
+| `base` | 58M | 10.1% | Recommended (batch) |
 | `tiny-streaming` | 34M | 12.0% | Streaming-optimised |
 | `small-streaming` | 123M | 7.8% | Best accuracy (streaming) |
-| `medium-streaming` | 245M | 6.7% | Highest accuracy |
+| `medium-streaming` | 245M | 6.7% | Highest accuracy (streaming) |
 
 **Supported languages:** English (`en`), Spanish (`es`), Arabic (`ar`), Japanese (`ja`), Korean (`ko`), Vietnamese (`vi`), Ukrainian (`uk`), Mandarin Chinese (`zh`).
+
+**Real-time streaming:**
+
+Moonshine uses a streaming API for transcription. Audio chunks are fed directly to the model as you speak, and partial results are displayed in the real-time overlay as the transcript evolves. When you release the hotkey, the final result is produced immediately with near-zero post-release latency — there is no post-processing delay waiting for audio to be transcribed after recording stops.
+
+For the lowest latency, choose a `*-streaming` model variant (`tiny-streaming` or `small-streaming`). The plain `tiny` and `base` models fall back to a single-pass batch call at stream end and still benefit from the streaming path for real-time overlay updates.
 
 > **Note:** Moonshine does not support word timestamps, language auto-detection, or initial prompts. These features are silently ignored when the moonshine backend is active.
 
@@ -707,7 +713,7 @@ src/
 ├── mcp_server.py             # MCP JSON-RPC server (Unix socket)
 ├── atspi_context.py          # AT-SPI2 focus tracking, context reading, text injection
 ├── backends/
-│   ├── protocol.py           # Shared BackendResult / BackendProtocol dataclasses
+│   ├── protocol.py           # Shared dataclasses + TranscriptionBackend / StreamingTranscriptionBackend protocols
 │   ├── selector.py           # GPU detection (nvidia-smi / sysfs / vulkaninfo) + backend selection
 │   ├── faster_whisper_backend.py  # faster-whisper transcription backend
 │   ├── whisper_cpp_backend.py     # whisper.cpp subprocess / pywhispercpp backend
@@ -748,8 +754,8 @@ tests/
 ├── test_tts_engine.py        # Voice catalog, path helpers, download extraction, TTSEngine (30 tests)
 ├── test_tts_responder.py     # ResponseListener FIFO reading, ordering, late FIFO (6 tests)
 ├── test_mcp_server.py        # JSON-RPC dispatch, all tools, error codes, socket server (16 tests)
-├── test_backend_protocol.py  # BackendResult / BackendProtocol contract tests + Moonshine (47 tests)
-├── test_moonshine_backend.py # Moonshine backend helpers, cache detection, round-trips (31 tests)
+├── test_backend_protocol.py  # BackendProtocol / StreamingProtocol contract tests + Moonshine (55 tests)
+├── test_moonshine_backend.py # Moonshine backend helpers, cache detection, round-trips, streaming (50 tests)
 ├── test_atspi_context.py     # AT-SPI2 focus tracking, context reading, injection (28 tests)
 ├── test_audio_recorder.py    # PyAudio device enumeration and recorder behaviour (15 tests)
 ├── test_config_validator.py  # Config, targets, and bindings validation rules (36 tests)
@@ -776,8 +782,8 @@ The test suite covers:
 | `test_tts_engine.py` | 30 | Voice catalog validation, path helpers, download extraction, TTSEngine |
 | `test_tts_responder.py` | 6 | ResponseListener FIFO reading, ordering, empty-line skip, late FIFO |
 | `test_mcp_server.py` | 16 | JSON-RPC dispatch, all tools, error codes, socket server integration |
-| `test_backend_protocol.py` | 47 | BackendResult / BackendProtocol contract, selector logic, Moonshine protocol |
-| `test_moonshine_backend.py` | 31 | Moonshine cache helpers, model size parsing, round-trips, structural tests |
+| `test_backend_protocol.py` | 55 | BackendResult / BackendProtocol contract, selector logic, Moonshine protocol, streaming protocol conformance |
+| `test_moonshine_backend.py` | 50 | Moonshine cache helpers, model size parsing, round-trips, structural tests, streaming interface |
 | `test_atspi_context.py` | 28 | AT-SPI2 focus tracking, context reading, text injection |
 | `test_audio_recorder.py` | 15 | PyAudio device enumeration and recorder behaviour |
 | `test_config_validator.py` | 36 | Config, targets.toml, and bindings.toml validation rules |
