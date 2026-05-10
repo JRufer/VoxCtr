@@ -144,7 +144,7 @@ This is the same file written to `_template.py` when you first open the overlays
 
 ```python
 # Save as  ~/.config/voxctl/overlays/my_overlay.py
-# Then select "My Custom Overlay" in Settings → Dictation → Overlay Appearance.
+# Then select "My Custom Overlay" in Settings → Appearance → Recording Overlay.
 
 DISPLAY_NAME = "My Custom Overlay"
 DESCRIPTION  = "Describe what your overlay looks like"

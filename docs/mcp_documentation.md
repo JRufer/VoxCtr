@@ -54,7 +54,7 @@ Voice models are downloaded from inside the app. Go to **Settings → Voice Outp
 
 ### Via Settings UI
 
-1. Open **Settings → Voice Output**
+1. Open **Settings → AI**
 2. Scroll to the **MCP Server** section
 3. Toggle **"Enable MCP Server"**
 4. Note the socket path shown (default: `/tmp/voxctl-mcp.sock`)
@@ -64,8 +64,10 @@ Voice models are downloaded from inside the app. Go to **Settings → Voice Outp
 
 ```json
 {
-  "mcp_server_enabled": true,
-  "mcp_record_timeout": 15.0
+  "mcp": {
+    "server_enabled": true,
+    "record_timeout": 15.0
+  }
 }
 ```
 
@@ -278,7 +280,7 @@ The `text` field is a JSON-encoded object:
 
 ### One-click registration
 
-In **Settings → Voice Output → MCP Server**, click **"Register in Claude Desktop"**. The app writes the `socat` bridge entry to:
+In **Settings → AI → MCP Server**, click **"Register in Claude Desktop"**. The app writes the `socat` bridge entry to:
 
 ```
 ~/.config/claude/claude_desktop_config.json
@@ -398,17 +400,17 @@ Each line written to `response_pipe` is treated as a separate TTS utterance. Emp
 
 ## TTS Configuration
 
-All TTS settings live in `~/.config/voxctl/config.json` and in **Settings → Voice Output**.
+All TTS and MCP settings live in `~/.config/voxctl/config.json` and in **Settings → Voice Output** or **Settings → AI**.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `tts_enabled` | `bool` | `false` | Master TTS on/off switch |
-| `tts_engine` | `string` | `"piper"` | `"piper"` or `"espeak"` |
-| `tts_voice` | `string` | `"en-us-lessac-medium"` | Voice ID from the catalog |
-| `tts_stop_key` | `string[]` | `["KEY_ESCAPE"]` | evdev key(s) to stop TTS playback |
-| `tts_response_overlay` | `bool` | `true` | Show teal overlay while TTS plays |
-| `mcp_server_enabled` | `bool` | `false` | Start the MCP server on launch |
-| `mcp_record_timeout` | `number` | `15.0` | Default recording timeout in seconds |
+| `tts.enabled` | `bool` | `false` | Master TTS on/off switch |
+| `tts.engine` | `string` | `"piper"` | `"piper"` or `"espeak"` |
+| `tts.voice` | `string` | `"en-us-lessac-medium"` | Voice ID from the catalog |
+| `tts.stop_key` | `string[]` | `["KEY_ESCAPE"]` | evdev key(s) to stop TTS playback |
+| `tts.response_overlay` | `bool` | `true` | Show teal overlay while TTS plays |
+| `mcp.server_enabled` | `bool` | `false` | Start the MCP server on launch |
+| `mcp.record_timeout` | `number` | `15.0` | Default recording timeout in seconds |
 
 ### Available voices
 
@@ -458,7 +460,7 @@ This means only one `transcribe_voice` call can be in flight at a time per VoxCt
 
 **Socket does not exist**
 
-VoxCtl is not running, or the MCP server is disabled. Enable it in **Settings → Voice Output** or set `"mcp_server_enabled": true` in `config.json` and restart.
+VoxCtl is not running, or the MCP server is disabled. Enable it in **Settings → AI** or set `"mcp": { "server_enabled": true }` in `config.json` and restart.
 
 **`socat` connection refused**
 

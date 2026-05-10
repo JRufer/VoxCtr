@@ -303,17 +303,19 @@ All three behaviours are individually switchable in `~/.config/voxctl/config.jso
 
 ```json
 {
-  "atspi_injection":       true,
-  "atspi_context_prompt":  true,
-  "atspi_auto_code_mode":  true
+  "atspi": {
+    "injection":       true,
+    "context_prompt":  true,
+    "auto_code_mode":  true
+  }
 }
 ```
 
 | Key | Default | Description |
 |---|---|---|
-| `atspi_injection` | `true` | Try AT-SPI2 `insertText` before falling back to `wtype`/`xdotool` |
-| `atspi_context_prompt` | `true` | Feed surrounding text to Whisper as `initial_prompt` at recording start |
-| `atspi_auto_code_mode` | `true` | Switch to code dictation mode when a terminal/IDE widget is focused |
+| `atspi.injection` | `true` | Try AT-SPI2 `insertText` before falling back to `wtype`/`xdotool` |
+| `atspi.context_prompt` | `true` | Feed surrounding text to Whisper as `initial_prompt` at recording start |
+| `atspi.auto_code_mode` | `true` | Switch to code dictation mode when a terminal/IDE widget is focused |
 
 ---
 
@@ -537,11 +539,13 @@ When enabled, a teal floating overlay appears while TTS plays — distinct from 
 
 ## MCP Server
 
-VoxCtl can act as a **voice I/O gateway for AI agents** via its built-in MCP server. Enable it in **Settings → Voice Output → MCP Server**.
+VoxCtl can act as a **voice I/O gateway for AI agents** via its built-in MCP server. Enable it in **Settings → AI → MCP Server**.
 
 ```json
 {
-  "mcp_server_enabled": true
+  "mcp": {
+    "server_enabled": true
+  }
 }
 ```
 
