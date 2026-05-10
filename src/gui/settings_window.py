@@ -690,7 +690,7 @@ class SettingsWindow(QWidget):
             self.moonshine_lang_combo.addItem(display, code)
             if code == cur_ms_lang:
                 self.moonshine_lang_combo.setCurrentIndex(self.moonshine_lang_combo.count() - 1)
-        self.moonshine_lang_combo.currentIndexChanged.connect(self._update_moonshine_model_status)
+        self.moonshine_lang_combo.currentIndexChanged.connect(lambda idx: self._refresh_moonshine_model_labels())
         ms_lang_row.addWidget(self.moonshine_lang_combo, 1)
         self._moonshine_box.layout().addLayout(ms_lang_row)
 
@@ -888,10 +888,12 @@ class SettingsWindow(QWidget):
 
         self._cpp_download_ok_sig.connect(
             lambda fn: (
-                self._cpp_model_status.setText(f"✅  Downloaded {fn} successfully."),
+                self._cpp_model_status.setText(f"✅  {fn} downloaded and ready."),
                 self._cpp_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;"),
-                self._cpp_download_btn.setEnabled(True),
+                self._cpp_download_btn.setEnabled(False),
                 self._refresh_cpp_model_labels(),
+                self._cpp_progress.setRange(0, 100),
+                self._cpp_progress.setValue(100),
                 self._cpp_progress.setVisible(False),
             )
         )
@@ -900,6 +902,7 @@ class SettingsWindow(QWidget):
                 self._cpp_model_status.setText(f"❌  Download failed: {msg}"),
                 self._cpp_model_status.setStyleSheet("color: #f87171; background: transparent; border: none;"),
                 self._cpp_download_btn.setEnabled(True),
+                self._cpp_progress.setRange(0, 100),
                 self._cpp_progress.setVisible(False),
             )
         )
@@ -951,6 +954,7 @@ class SettingsWindow(QWidget):
             if size == cur:
                 self.model_combo.setCurrentIndex(self.model_combo.count() - 1)
         self.model_combo.blockSignals(False)
+        self._update_fw_model_status()
 
     def _refresh_cpp_model_labels(self):
         from backends.whisper_cpp_backend import GGUF_MAP, WhisperCppBackend
@@ -969,34 +973,47 @@ class SettingsWindow(QWidget):
             if size == cur:
                 self.cpp_model_combo.setCurrentIndex(self.cpp_model_combo.count() - 1)
         self.cpp_model_combo.blockSignals(False)
+        self._update_cpp_model_status()
 
     def _download_fw_model(self):
         import threading
         from backends.faster_whisper_backend import FasterWhisperBackend
-        
+
         model_size = self.model_combo.currentText().replace("  ✅", "").replace("  ⬇", "").strip()
-        
+
         if not hasattr(self, "_fw_download_btn"):
             return
-            
+
         self._fw_download_btn.setEnabled(False)
         self._fw_model_status.setText(f"⏳  Downloading {model_size}…")
         self._fw_model_status.setStyleSheet("color: #e2e8f0; background: transparent; border: none;")
-        self._fw_progress.setRange(0, 0) # Indeterminate
+        self._fw_progress.setRange(0, 0)  # start indeterminate; goes determinate once hf_hub reports size
         self._fw_progress.setVisible(True)
-        
+
         try:
             self._fw_download_ok_sig.disconnect()
             self._fw_download_err_sig.disconnect()
+            self._fw_progress_sig.disconnect()
         except (RuntimeError, TypeError):
             pass
-            
+
+        def _on_progress(done, total):
+            if total > 0:
+                self._fw_progress.setRange(0, 100)
+                self._fw_progress.setValue(int(done * 100 / total))
+            else:
+                self._fw_progress.setRange(0, 0)
+
+        self._fw_progress_sig.connect(_on_progress)
+
         self._fw_download_ok_sig.connect(
             lambda ms: (
-                self._fw_model_status.setText(f"✅  Downloaded {ms} successfully."),
+                self._fw_model_status.setText(f"✅  {ms} downloaded and ready."),
                 self._fw_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;"),
-                self._fw_download_btn.setEnabled(True),
+                self._fw_download_btn.setEnabled(False),
                 self._refresh_fw_model_labels(),
+                self._fw_progress.setRange(0, 100),
+                self._fw_progress.setValue(100),
                 self._fw_progress.setVisible(False),
             )
         )
@@ -1005,13 +1022,30 @@ class SettingsWindow(QWidget):
                 self._fw_model_status.setText(f"❌  Download failed: {msg}"),
                 self._fw_model_status.setStyleSheet("color: #f87171; background: transparent; border: none;"),
                 self._fw_download_btn.setEnabled(True),
+                self._fw_progress.setRange(0, 100),
                 self._fw_progress.setVisible(False),
             )
         )
-        
+
         def do_download():
             try:
-                FasterWhisperBackend.download_model(model_size)
+                # Intercept huggingface_hub's tqdm progress to emit real bytes done/total.
+                # hf_hub wraps urllib with tqdm; we patch tqdm.auto.tqdm to capture updates.
+                import tqdm.auto as _tqdm_auto
+                _orig_tqdm = _tqdm_auto.tqdm
+
+                class _ProgressTqdm(_orig_tqdm):
+                    def update(self, n=1):
+                        super().update(n)
+                        self._fw_progress_sig.emit(int(self.n), int(self.total or 0))
+
+                _ProgressTqdm._fw_progress_sig = self._fw_progress_sig
+                _tqdm_auto.tqdm = _ProgressTqdm
+                try:
+                    FasterWhisperBackend.download_model(model_size)
+                finally:
+                    _tqdm_auto.tqdm = _orig_tqdm
+
                 self._fw_download_ok_sig.emit(model_size)
             except Exception as e:
                 self._fw_download_err_sig.emit(str(e))
@@ -1033,9 +1067,6 @@ class SettingsWindow(QWidget):
 
         lang = self._current_moonshine_lang()
         selected = self.moonshine_model_combo.currentText().replace("  ✅", "").replace("  ⬇", "").strip()
-
-        # Refresh combo labels when language changes
-        self._refresh_moonshine_model_labels(lang)
 
         if is_model_downloaded(selected, lang):
             self._moonshine_model_status.setText(f"✅  {selected} ({lang}) is downloaded and ready.")
@@ -1065,6 +1096,7 @@ class SettingsWindow(QWidget):
             if size == cur:
                 self.moonshine_model_combo.setCurrentIndex(self.moonshine_model_combo.count() - 1)
         self.moonshine_model_combo.blockSignals(False)
+        self._update_moonshine_model_status()
 
     def _download_moonshine_model(self):
         import threading
@@ -1079,21 +1111,33 @@ class SettingsWindow(QWidget):
         self._moonshine_download_btn.setEnabled(False)
         self._moonshine_model_status.setText(f"⏳  Downloading {size} ({lang})…")
         self._moonshine_model_status.setStyleSheet("color: #e2e8f0; background: transparent; border: none;")
-        self._moonshine_progress.setRange(0, 0)  # indeterminate
+        self._moonshine_progress.setRange(0, 0)  # start indeterminate; goes determinate when urllib reports size
         self._moonshine_progress.setVisible(True)
 
         try:
             self._moonshine_download_ok_sig.disconnect()
             self._moonshine_download_err_sig.disconnect()
+            self._moonshine_progress_sig.disconnect()
         except (RuntimeError, TypeError):
             pass
 
+        def _on_progress(done, total):
+            if total > 0:
+                self._moonshine_progress.setRange(0, 100)
+                self._moonshine_progress.setValue(int(done * 100 / total))
+            else:
+                self._moonshine_progress.setRange(0, 0)
+
+        self._moonshine_progress_sig.connect(_on_progress)
+
         self._moonshine_download_ok_sig.connect(
             lambda encoded: (
-                self._moonshine_model_status.setText(f"✅  Downloaded {encoded} successfully."),
+                self._moonshine_model_status.setText(f"✅  {encoded} downloaded and ready."),
                 self._moonshine_model_status.setStyleSheet("color: #4ade80; background: transparent; border: none;"),
                 self._moonshine_download_btn.setEnabled(False),
                 self._refresh_moonshine_model_labels(),
+                self._moonshine_progress.setRange(0, 100),
+                self._moonshine_progress.setValue(100),
                 self._moonshine_progress.setVisible(False),
             )
         )
@@ -1102,13 +1146,32 @@ class SettingsWindow(QWidget):
                 self._moonshine_model_status.setText(f"❌  Download failed: {msg}"),
                 self._moonshine_model_status.setStyleSheet("color: #f87171; background: transparent; border: none;"),
                 self._moonshine_download_btn.setEnabled(True),
+                self._moonshine_progress.setRange(0, 100),
                 self._moonshine_progress.setVisible(False),
             )
         )
 
         def do_download():
             try:
-                MoonshineBackend.download_model(size, lang)
+                # Intercept moonshine_voice's download_file (which uses urllib internally)
+                # to get real byte-level progress.
+                import moonshine_voice.download as _ms_dl_mod
+                import urllib.request as _urllib_req
+                _orig_urlretrieve = _urllib_req.urlretrieve
+
+                def _patched_urlretrieve(url, filename=None, reporthook=None, data=None):
+                    def _hook(count, block_size, total_size):
+                        self._moonshine_progress_sig.emit(count * block_size, total_size)
+                        if reporthook:
+                            reporthook(count, block_size, total_size)
+                    return _orig_urlretrieve(url, filename, reporthook=_hook, data=data)
+
+                _urllib_req.urlretrieve = _patched_urlretrieve
+                try:
+                    MoonshineBackend.download_model(size, lang)
+                finally:
+                    _urllib_req.urlretrieve = _orig_urlretrieve
+
                 self._moonshine_download_ok_sig.emit(f"{size}-{lang}")
             except Exception as e:
                 self._moonshine_download_err_sig.emit(str(e))

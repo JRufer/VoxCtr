@@ -6,13 +6,13 @@ import numpy as np
 from .protocol import TranscriptionResult, BackendCapabilities
 
 # moonshine_voice.moonshine_api.ModelArch integer values
+# Note: BASE_STREAMING (3) exists in the enum but has no published model on the CDN.
 _ARCH_MAP: dict[str, int] = {
-    "tiny":             0,
+    "medium-streaming": 5,
+    "small-streaming":  4,
     "base":             1,
     "tiny-streaming":   2,
-    "base-streaming":   3,
-    "small-streaming":  4,
-    "medium-streaming": 5,
+    "tiny":             0,
 }
 
 MODEL_SIZES = list(_ARCH_MAP.keys())
@@ -34,10 +34,10 @@ _CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "moonshine_voice")
 
 
 def _model_cache_dir(model_size: str, language: str) -> str:
-    arch_int = _ARCH_MAP.get(model_size, 1)
+    model_name = f"{model_size}-{language}"
     return os.path.join(
         _CACHE_DIR,
-        "download.moonshine.ai", "model", language, str(arch_int),
+        "download.moonshine.ai", "model", model_name, "quantized"
     )
 
 
@@ -45,7 +45,7 @@ def is_model_downloaded(model_size: str, language: str = "en") -> bool:
     path = _model_cache_dir(model_size, language)
     if not os.path.isdir(path):
         return False
-    return any(f.endswith((".ort", ".bin")) for f in os.listdir(path))
+    return len(os.listdir(path)) > 0
 
 
 def parse_model_size_language(encoded: str) -> tuple[str, str]:

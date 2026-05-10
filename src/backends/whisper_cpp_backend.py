@@ -16,11 +16,11 @@ GGUF_MAP: dict[str, list[str]] = {
     "tiny":           ["ggml-tiny-q5_1.bin", "ggml-tiny.bin"],
     "tiny.en":        ["ggml-tiny.en-q5_1.bin", "ggml-tiny.en.bin"],
     "base":           ["ggml-base-q5_1.bin", "ggml-base.bin"],
-    "small":          ["ggml-small-q5_k.bin", "ggml-small-q5_k_m.bin", "ggml-small.bin"],
-    "medium":         ["ggml-medium-q5_k.bin", "ggml-medium-q5_k_m.bin", "ggml-medium.bin"],
-    "large-v2":       ["ggml-large-v2-q5_k.bin", "ggml-large-v2-q5_k_m.bin", "ggml-large-v2.bin"],
-    "large-v3":       ["ggml-large-v3-q5_0.bin", "ggml-large-v3-q5_k_m.bin", "ggml-large-v3-q5_k_s.bin", "ggml-large-v3.bin"],
-    "large-v3-turbo": ["ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo-q5_k_m.bin", "ggml-large-v3-turbo.bin"],
+    "small":          ["ggml-small-q5_1.bin", "ggml-small.bin"],
+    "medium":         ["ggml-medium-q5_0.bin", "ggml-medium.bin"],
+    "large-v2":       ["ggml-large-v2-q5_0.bin", "ggml-large-v2.bin"],
+    "large-v3":       ["ggml-large-v3-q5_0.bin", "ggml-large-v3.bin"],
+    "large-v3-turbo": ["ggml-large-v3-turbo-q5_0.bin", "ggml-large-v3-turbo.bin"],
 }
 
 GGUF_BASE_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
