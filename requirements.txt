@@ -43,7 +43,7 @@ PyQt6-Qt6==6.10.2
 PyQt6_sip==13.11.1
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
-rich==14.3.3
+rich==15.0.0
 scipy==1.17.1
 setuptools<82
 shellingham==1.5.4
