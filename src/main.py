@@ -270,7 +270,13 @@ def main():
         def show_recording_ui(target_id: str = ""):
             tgt = router.get_target(target_id)
             label = tgt.label if tgt else ""
-            overlay_proxy.show_mode(label)
+            model_info = {
+                "backend":      inference.active_backend_name,
+                "model_size":   inference.config.get("model_size", ""),
+                "device":       inference.actual_device,
+                "compute_type": inference.actual_compute_type,
+            }
+            overlay_proxy.show_mode(label, model_info=model_info)
 
         def hide_recording_ui():
             overlay_proxy.hide_mode()

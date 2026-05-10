@@ -61,7 +61,7 @@ class OverlayUI(OverlayUIBase):
         rms = float(np.sqrt(np.mean(data.astype(np.float32) ** 2)))
         self._amplitudes.append(min(1.0, rms / 8192.0))
 
-    def show_mode(self, label: str = ""):
+    def show_mode(self, label: str = "", **kwargs):
         self._routing_label = label
         screen = QApplication.primaryScreen()
         if screen:

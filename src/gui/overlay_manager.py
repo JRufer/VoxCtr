@@ -19,7 +19,7 @@ _BUILTIN_DIR = Path(__file__).parent / "overlays"
 _USER_DIR    = Path.home() / ".config" / "voxctl" / "overlays"
 
 # Names of built-in overlay modules, in the order they appear in Settings.
-_BUILTIN_NAMES = ["waveform", "pulse", "voice_card"]
+_BUILTIN_NAMES = ["waveform", "pulse", "voice_card", "blue_wave"]
 
 # Template written to the user overlay directory on first open so users have a
 # ready-made starting point.
@@ -137,10 +137,15 @@ class OverlayProxy:
             except Exception:
                 pass
 
-    def show_mode(self, label: str = ""):
+    def show_mode(self, label: str = "", model_info: dict = None):
         if self._overlay is not None:
             try:
-                self._overlay.show_mode(label)
+                self._overlay.show_mode(label, model_info=model_info)
+            except TypeError:
+                try:
+                    self._overlay.show_mode(label)
+                except Exception:
+                    pass
             except Exception:
                 pass
 

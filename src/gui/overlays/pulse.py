@@ -91,7 +91,7 @@ class OverlayUI(OverlayUIBase):
             painter.setPen(QPen(QColor(160, 200, 255, 220)))
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
 
-    def show_mode(self, label: str = ""):
+    def show_mode(self, label: str = "", **kwargs):
         self._routing_label = label
         screen = QApplication.primaryScreen()
         if screen:
