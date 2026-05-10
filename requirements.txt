@@ -45,7 +45,7 @@ python-dateutil==2.9.0.post0
 PyYAML==6.0.3
 rich==14.3.3
 scipy==1.17.1
-setuptools==82.0.1
+setuptools<82
 shellingham==1.5.4
 six==1.17.0
 sounddevice==0.5.5
@@ -60,3 +60,5 @@ mcp>=1.0.0
 # Install via: sudo apt install python3-pyatspi  (or distro equivalent)
 # Optional: install for in-process whisper.cpp (lower latency than subprocess)
 # pywhispercpp>=1.2.0
+# Optional: Moonshine backend — fast CPU-only speech recognition (English + 7 languages)
+moonshine-voice

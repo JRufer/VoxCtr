@@ -26,8 +26,10 @@ if ! getent group uinput > /dev/null; then
 fi
 
 # 3. Add user to groups
-echo "[*] Adding $USER to 'input' and 'uinput' groups..."
-sudo usermod -aG input,uinput "$USER"
+# REAL_USER is set by install.sh; SUDO_USER is set by sudo; $USER is fallback
+TARGET_USER="${REAL_USER:-${SUDO_USER:-$USER}}"
+echo "[*] Adding $TARGET_USER to 'input' and 'uinput' groups..."
+sudo usermod -aG input,uinput "$TARGET_USER"
 
 echo ""
 echo "----------------------------------------------------------------"

@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from backends.protocol import (
     TranscriptionBackend,
+    StreamingTranscriptionBackend,
     TranscriptionResult,
     WordTimestamp,
     BackendCapabilities,
@@ -25,6 +26,7 @@ from backends.whisper_cpp_backend import (
     _parse_timestamp,
     GGUF_MAP,
 )
+from backends.moonshine_backend import MoonshineBackend
 from backends.selector import (
     probe_gpu,
     _vulkan_available,
@@ -276,3 +278,84 @@ class TestSelector:
 
         b = select_backend(FakeConfig())
         assert isinstance(b, WhisperCppBackend)
+
+    def test_select_backend_moonshine_forced(self):
+        from backends.selector import select_backend
+
+        class FakeConfig:
+            def get(self, key, default=None):
+                return {"backend_engine": "moonshine"}.get(key, default)
+
+        b = select_backend(FakeConfig())
+        # Falls back to FasterWhisperBackend when moonshine-voice is not installed
+        assert b is not None
+
+    def test_auto_compute_type_moonshine(self):
+        ct = auto_compute_type("moonshine", None)
+        assert ct == "onnx"
+
+
+# ── MoonshineBackend structural tests ─────────────────────────────────────
+
+class TestMoonshineBackendProtocol:
+    def test_name(self):
+        assert MoonshineBackend.name == "moonshine"
+
+    def test_is_available_returns_bool(self):
+        b = MoonshineBackend()
+        assert isinstance(b.is_available, bool)
+
+    def test_capabilities_shape(self):
+        b = MoonshineBackend()
+        caps = b.capabilities
+        assert isinstance(caps, BackendCapabilities)
+        assert isinstance(caps.word_timestamps, bool)
+        assert "cpu" in caps.gpu_vendor_support
+
+    def test_satisfies_protocol(self):
+        b = MoonshineBackend()
+        assert isinstance(b, TranscriptionBackend)
+
+    def test_transcribe_raises_without_model(self):
+        b = MoonshineBackend()
+        with pytest.raises(RuntimeError, match="load_model"):
+            b.transcribe(np.zeros(16000, dtype=np.float32))
+
+    def test_unload_clears_transcriber(self):
+        b = MoonshineBackend()
+        b._transcriber = object()
+        b.unload_model()
+        assert b._transcriber is None
+
+    def test_streaming_capability_true(self):
+        b = MoonshineBackend()
+        assert b.capabilities.streaming is True
+
+    def test_satisfies_streaming_protocol(self):
+        b = MoonshineBackend()
+        assert isinstance(b, StreamingTranscriptionBackend)
+
+
+# ── Streaming protocol conformance tests ──────────────────────────────────
+
+class TestStreamingProtocol:
+    def test_faster_whisper_not_streaming(self):
+        b = FasterWhisperBackend()
+        assert b.capabilities.streaming is False
+
+    def test_faster_whisper_not_streaming_backend(self):
+        b = FasterWhisperBackend()
+        assert not isinstance(b, StreamingTranscriptionBackend)
+
+    def test_whisper_cpp_not_streaming(self):
+        b = WhisperCppBackend()
+        assert b.capabilities.streaming is False
+
+    def test_whisper_cpp_not_streaming_backend(self):
+        b = WhisperCppBackend()
+        assert not isinstance(b, StreamingTranscriptionBackend)
+
+    def test_moonshine_is_streaming(self):
+        b = MoonshineBackend()
+        assert b.capabilities.streaming is True
+        assert isinstance(b, StreamingTranscriptionBackend)

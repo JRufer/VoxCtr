@@ -23,7 +23,8 @@ DEFAULT_CONFIG = {
             "use_bindings": True
         },
         "moonshine": {
-            "model_size": "base"
+            "model_size": "base",
+            "language": "en"
         }
     },
     "audio": {
@@ -84,6 +85,8 @@ class Config:
         "whisper_cpp_device": "engine.whisper_cpp.device",
         "whisper_cpp_threads": "engine.whisper_cpp.threads",
         "whisper_cpp_use_bindings": "engine.whisper_cpp.use_bindings",
+        "moonshine_model_size": "engine.moonshine.model_size",
+        "moonshine_language": "engine.moonshine.language",
         "vad_threshold": "audio.vad_threshold",
         "min_silence_duration_ms": "audio.min_silence_duration_ms",
         "input_device_index": "audio.input_device_index",

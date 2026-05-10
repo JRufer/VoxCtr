@@ -22,22 +22,22 @@ from routing.models import (
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_config(overrides: dict = {}):
-    cfg = MagicMock()
     defaults = {
-        "model_size": "base",
-        "device": "auto",
-        "inference_mode": "Balanced",
-        "backend_engine": "auto",
+        "engine.faster_whisper.model_size": "base",
+        "engine.faster_whisper.device": "auto",
+        "engine.inference_mode": "Balanced",
+        "engine.backend": "auto",
         "dictation_mode": "normal",
-        "ollama_enabled": False,
-        "tts_enabled": False,
-        "snippets": {},
-        "custom_vocabulary": [],
-        "vad_threshold": 0.5,
+        "ollama.enabled": False,
+        "tts.enabled": False,
+        "features.snippets": {},
+        "features.custom_vocabulary": [],
+        "audio.vad_threshold": 0.5,
         "mic_gain": 1.0,
     }
     defaults.update(overrides)
-    cfg.config = defaults
+    cfg = MagicMock()
+    cfg.get.side_effect = lambda key, default=None: defaults.get(key, default)
     return cfg
 
 
@@ -83,46 +83,46 @@ class TestValidateGlobalConfig:
         assert warnings == []
 
     def test_invalid_model_size(self):
-        errors, warnings = validate_global_config(_make_config({"model_size": "giga"}))
+        errors, warnings = validate_global_config(_make_config({"engine.faster_whisper.model_size": "giga"}))
         # model_size invalid is a warning (fatal=False)
         assert any("model_size" in w for w in warnings)
 
     def test_invalid_device_is_fatal(self):
-        errors, warnings = validate_global_config(_make_config({"device": "tpu"}))
+        errors, warnings = validate_global_config(_make_config({"engine.faster_whisper.device": "tpu"}))
         assert any("device" in e for e in errors)
 
     def test_valid_devices(self):
         for dev in ("auto", "cuda", "cpu"):
-            errors, _ = validate_global_config(_make_config({"device": dev}))
+            errors, _ = validate_global_config(_make_config({"engine.faster_whisper.device": dev}))
             assert not any("device" in e for e in errors)
 
     def test_invalid_backend_is_fatal(self):
-        errors, _ = validate_global_config(_make_config({"backend_engine": "magic"}))
-        assert any("backend_engine" in e for e in errors)
+        errors, _ = validate_global_config(_make_config({"engine.backend": "magic"}))
+        assert any("engine.backend" in e for e in errors)
 
     def test_ollama_mode_validated_when_enabled(self):
         _, warnings = validate_global_config(_make_config({
-            "ollama_enabled": True,
-            "ollama_mode": "INVALID",
+            "ollama.enabled": True,
+            "ollama.mode": "INVALID",
         }))
-        assert any("ollama_mode" in w for w in warnings)
+        assert any("ollama.mode" in w for w in warnings)
 
     def test_ollama_mode_not_checked_when_disabled(self):
         errors, warnings = validate_global_config(_make_config({
-            "ollama_enabled": False,
-            "ollama_mode": "INVALID",
+            "ollama.enabled": False,
+            "ollama.mode": "INVALID",
         }))
-        assert not any("ollama_mode" in w for w in warnings)
+        assert not any("ollama.mode" in w for w in warnings)
 
     def test_tts_engine_validated_when_enabled(self):
         errors, _ = validate_global_config(_make_config({
-            "tts_enabled": True,
-            "tts_engine": "bad-engine",
+            "tts.enabled": True,
+            "tts.engine": "bad-engine",
         }))
-        assert any("tts_engine" in e for e in errors)
+        assert any("tts.engine" in e for e in errors)
 
     def test_vad_threshold_out_of_range(self):
-        _, warnings = validate_global_config(_make_config({"vad_threshold": 1.5}))
+        _, warnings = validate_global_config(_make_config({"audio.vad_threshold": 1.5}))
         assert any("vad_threshold" in w for w in warnings)
 
     def test_mic_gain_out_of_range(self):
@@ -130,7 +130,7 @@ class TestValidateGlobalConfig:
         assert any("mic_gain" in w for w in warnings)
 
     def test_snippets_non_dict_is_error(self):
-        errors, _ = validate_global_config(_make_config({"snippets": "oops"}))
+        errors, _ = validate_global_config(_make_config({"features.snippets": "oops"}))
         assert any("snippets" in e for e in errors)
 
 
@@ -262,14 +262,14 @@ class TestValidateAll:
         assert result is True
 
     def test_fatal_error_raises(self):
-        cfg = _make_config({"device": "bad"})
+        cfg = _make_config({"engine.faster_whisper.device": "bad"})
         t = _make_target()
         b = _make_binding()
         with pytest.raises(ConfigValidationError):
             validate_all(cfg, [t], [b])
 
     def test_fatal_error_returns_false_when_not_fatal(self):
-        cfg = _make_config({"device": "bad"})
+        cfg = _make_config({"engine.faster_whisper.device": "bad"})
         t = _make_target()
         b = _make_binding()
         result = validate_all(cfg, [t], [b], fatal_on_error=False)

@@ -53,3 +53,27 @@ class TranscriptionBackend(Protocol):
         word_timestamps: bool = False,
         initial_prompt: str | None = None,
     ) -> TranscriptionResult: ...
+
+
+@runtime_checkable
+class StreamingTranscriptionBackend(Protocol):
+    """Extended protocol for backends that support real-time chunk-by-chunk transcription.
+
+    A backend that sets capabilities.streaming = True should also implement this
+    protocol.  The InferenceEngine checks isinstance(backend, StreamingTranscriptionBackend)
+    and routes audio through the streaming path when True.
+
+    Lifecycle:
+        start_stream()              — called once at recording start
+        feed_audio(chunk) → str?   — called for every raw PCM chunk (int16 bytes, 16 kHz)
+                                      returns updated partial text when it changes, else None
+        end_stream() → result      — called once at recording stop; blocks until final
+                                      transcript is ready; returns the authoritative result
+    """
+
+    def start_stream(self) -> None: ...
+
+    def feed_audio(self, chunk: bytes) -> str | None: ...
+
+    def end_stream(self) -> TranscriptionResult: ...
+

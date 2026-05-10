@@ -88,6 +88,9 @@ class InferenceEngine(threading.Thread):
         self.buffer = bytearray()
         self._buffer_lock = threading.Lock()
         self._model_lock = threading.Lock()
+        # Streaming-backend state
+        self._streaming_active = False
+        self._stream_lock = threading.Lock()  # serialises feed_audio / end_stream
 
         self.actual_device = "Unknown"
         self.actual_compute_type = "Unknown"
@@ -189,6 +192,7 @@ class InferenceEngine(threading.Thread):
     def _resolve_load_params(self, backend) -> tuple[str, str, str]:
         """Return (model_size, device, compute_type) for the given backend."""
         from backends.whisper_cpp_backend import WhisperCppBackend
+        from backends.moonshine_backend import MoonshineBackend, encode_model_size_language
 
         if isinstance(backend, WhisperCppBackend):
             model_size = self.config.get("whisper_cpp_model_size", "large-v3")
@@ -196,6 +200,12 @@ class InferenceEngine(threading.Thread):
             gpu = probe_gpu()
             compute_type = auto_compute_type("whisper-cpp", gpu)
             return model_size, device, compute_type
+
+        if isinstance(backend, MoonshineBackend):
+            size = self.config.get("engine.moonshine.model_size", "base")
+            language = self.config.get("engine.moonshine.language", "en")
+            model_size = encode_model_size_language(str(size), str(language))
+            return model_size, "cpu", "onnx"
 
         # FasterWhisperBackend
         model_size = self.config.get("model_size", "base")
@@ -377,10 +387,54 @@ class InferenceEngine(threading.Thread):
             self._atspi_context_at_start = self._capture_atspi_context(
                 target.processing if target else None
             )
+            # Activate streaming if the loaded backend supports it
+            with self._model_lock:
+                backend = self._backend
+            if backend is not None and backend.capabilities.streaming:
+                from backends.protocol import StreamingTranscriptionBackend
+                if isinstance(backend, StreamingTranscriptionBackend):
+                    try:
+                        backend.start_stream()
+                        self._streaming_active = True
+                    except Exception as e:
+                        print(f"[Streaming] start_stream failed: {e}")
+                        self._streaming_active = False
         else:
-            self.process_buffer(incremental=False)
-            with self._buffer_lock:
-                self.buffer.clear()
+            if self._streaming_active:
+                self._end_stream_and_emit()
+            else:
+                self.process_buffer(incremental=False)
+                with self._buffer_lock:
+                    self.buffer.clear()
+
+    def _end_stream_and_emit(self):
+        """Finalise a streaming session and route the result like a normal transcription."""
+        self._streaming_active = False
+        with self._model_lock:
+            backend = self._backend
+        if backend is None:
+            self.realtime_text_queue.put("")
+            return
+        try:
+            # _stream_lock ensures any concurrent feed_audio() call in run() finishes first
+            with self._stream_lock:
+                result = backend.end_stream()
+        except Exception as e:
+            print(f"[Streaming] end_stream error: {e}")
+            self.realtime_text_queue.put("")
+            return
+
+        effective = self._build_effective_processing(self._current_target)
+        self._last_language = result.language
+        self._last_language_prob = result.language_probability
+
+        full_text = self._postprocess(result.text.strip(), effective)
+        if full_text:
+            full_text = self.llm.process_with_target(full_text, effective) or full_text
+        if full_text:
+            self.text_queue.put((full_text, self._current_target_id))
+        else:
+            self.realtime_text_queue.put("")
 
     def _capture_atspi_context(self, processing=None):
         """Snapshot the focused widget's AT-SPI2 context at the moment recording starts."""
@@ -490,21 +544,39 @@ class InferenceEngine(threading.Thread):
         last_proc_time = time.time()
         while self.running:
             try:
+                # Drain the audio queue
+                chunks: list[bytes] = []
                 try:
                     while True:
-                        chunk = self.audio_queue.get_nowait()
-                        if self.recording:
-                            with self._buffer_lock:
-                                self.buffer.extend(chunk)
+                        chunks.append(self.audio_queue.get_nowait())
                 except queue.Empty:
                     pass
 
-                mode = self.config.get("inference_mode", "Balanced")
-                interval = 0.5 if mode == "Aggressive" else 1.5
+                if self._streaming_active and self.recording:
+                    # ── Streaming path: feed each chunk directly to the backend ──
+                    with self._model_lock:
+                        backend = self._backend
+                    if backend is not None and chunks:
+                        with self._stream_lock:
+                            for chunk in chunks:
+                                try:
+                                    partial = backend.feed_audio(chunk)
+                                    if partial is not None:
+                                        self.realtime_text_queue.put(partial)
+                                except Exception as fe:
+                                    print(f"[Streaming] feed_audio error: {fe}")
+                else:
+                    # ── Batch path: accumulate buffer, transcribe periodically ──
+                    if self.recording:
+                        for chunk in chunks:
+                            with self._buffer_lock:
+                                self.buffer.extend(chunk)
 
-                if self.recording and time.time() - last_proc_time > interval:
-                    self.process_buffer(incremental=True)
-                    last_proc_time = time.time()
+                    mode = self.config.get("inference_mode", "Balanced")
+                    interval = 0.5 if mode == "Aggressive" else 1.5
+                    if self.recording and time.time() - last_proc_time > interval:
+                        self.process_buffer(incremental=True)
+                        last_proc_time = time.time()
 
                 time.sleep(0.05)
             except Exception as e:

@@ -125,7 +125,16 @@ VOICE_CATALOG: dict = {
 
 DEFAULT_VOICE = "en-us-lessac-medium"
 VOICES_DIR = Path.home() / ".local" / "share" / "voxctl" / "piper-voices"
+PIPER_LOCAL_DIR = Path.home() / ".local" / "share" / "voxctl" / "piper"
 SAMPLE_TEXT = "Hello! This is how I sound. I am ready to be your voice assistant."
+
+
+def _find_piper_binary() -> str | None:
+    """Return the path to the piper binary, checking user-local install first."""
+    local_piper = PIPER_LOCAL_DIR / "piper"
+    if local_piper.is_file() and os.access(local_piper, os.X_OK):
+        return str(local_piper)
+    return shutil.which("piper")
 
 
 # ── Download helpers ──────────────────────────────────────────────────────────
@@ -228,8 +237,8 @@ def download_voice(
 
 
 def available_tts_engine() -> str:
-    """Return 'piper', 'espeak', or 'none' depending on what is on PATH."""
-    if shutil.which("piper"):
+    """Return 'piper', 'espeak', or 'none' depending on what is available."""
+    if _find_piper_binary():
         return "piper"
     if shutil.which("espeak-ng"):
         return "espeak"
@@ -337,7 +346,7 @@ class TTSEngine:
         try:
             engine = self.config.get("tts_engine", "piper")
             voice = self.config.get("tts_voice", DEFAULT_VOICE)
-            if engine == "piper" and shutil.which("piper"):
+            if engine == "piper" and _find_piper_binary():
                 self._speak_piper(text, voice)
             elif shutil.which("espeak-ng"):
                 self._speak_espeak(text)
@@ -365,8 +374,9 @@ class TTSEngine:
         rate = str(get_voice_sample_rate(voice))
         stderr_dest = subprocess.PIPE if verbose else subprocess.DEVNULL
 
+        piper_bin = _find_piper_binary() or "piper"
         piper = subprocess.Popen(
-            ["piper", "--model", str(voice_path), "--output_raw"],
+            [piper_bin, "--model", str(voice_path), "--output_raw"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=stderr_dest,
@@ -433,7 +443,7 @@ class TTSEngine:
         Used by the Settings → Voice Out → Test Voice button.
         Raises RuntimeError if no usable TTS engine is found.
         """
-        piper_bin   = shutil.which("piper")
+        piper_bin   = _find_piper_binary()
         espeak_bin  = shutil.which("espeak-ng")
         aplay_bin   = shutil.which("aplay")
         voice_path  = get_voice_path(voice)
