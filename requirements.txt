@@ -1,6 +1,6 @@
 annotated-doc==0.0.4
 anyio==4.12.1
-av==17.0.0
+av==17.0.1
 certifi==2026.2.25
 cffi==2.0.0
 click==8.3.1
