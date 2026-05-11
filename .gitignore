@@ -31,3 +31,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Rust PoC
+rust-poc/**/target/

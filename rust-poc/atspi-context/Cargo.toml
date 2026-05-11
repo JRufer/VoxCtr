@@ -1,0 +1,17 @@
+[package]
+name = "atspi-context"
+version = "0.1.0"
+edition = "2021"
+description = "Rust proof-of-concept replicating VoxCtr's src/atspi_context.py"
+publish = false
+
+[dependencies]
+atspi = { version = "0.30", features = ["tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal", "time", "io-std"] }
+futures-lite = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
