@@ -40,7 +40,7 @@ _VALID_DICTATION_MODES = {"normal", "code"}
 _VALID_OVERLAY_STYLES_BUILTIN = {"waveform", "pulse", "voice_card"}
 _VALID_TTS_ENGINES = {"piper", "espeak"}
 _VALID_OLLAMA_MODES = {"off", "clean", "formal", "casual", "bullet", "concise"}
-_VALID_DELIVERY_TYPES = {"inject", "clipboard", "exec", "pipe", "socket", "file", "dbus"}
+_VALID_DELIVERY_TYPES = {"inject", "clipboard", "exec", "pipe", "socket", "file", "dbus", "http", "webhook"}
 _VALID_GESTURE_TYPES = {"hold", "toggle", "double_tap", "chord"}
 _VALID_PP_LEGACY = {"default", "none", "strip_fillers", "ollama_only", "snippets_only"}
 
