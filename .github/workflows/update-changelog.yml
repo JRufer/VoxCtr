@@ -1,0 +1,96 @@
+name: Update Website Changelog
+
+# Fires whenever a tag is pushed to this repo.
+# Requires a secret named WEBSITE_PAT: a GitHub Personal Access Token
+# with `repo` (contents write) scope on the jrufer/voxctr-website repository.
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  update-changelog:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout VoxCtr (with full tag history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract tag name and message
+        id: tag_info
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+          # Annotated tag message (empty for lightweight tags)
+          TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME" \
+            | sed '/^-----BEGIN PGP/,/^-----END PGP/d' \
+            | sed 's/[[:space:]]*$//' \
+            | awk 'NF || !blank { print; blank = !NF }' \
+            | sed -e 's/^[[:space:]]*//' -e '/^$/d')
+
+          # Fall back to commit subject + body if no annotated message
+          if [ -z "$TAG_MESSAGE" ]; then
+            TAG_MESSAGE=$(git log -1 --format="%s%n%n%b" "$TAG_NAME" \
+              | sed 's/[[:space:]]*$//' \
+              | awk 'NF || !blank { print; blank = !NF }')
+          fi
+
+          [ -z "$TAG_MESSAGE" ] && TAG_MESSAGE="No message provided."
+
+          {
+            echo "tag_message<<EOF"
+            printf '%s\n' "$TAG_MESSAGE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout VoxCtr-Website
+        uses: actions/checkout@v4
+        with:
+          repository: jrufer/voxctr-website
+          token: ${{ secrets.WEBSITE_PAT }}
+          path: voxctr-website
+
+      - name: Prepend changelog entry
+        env:
+          TAG_NAME: ${{ steps.tag_info.outputs.tag_name }}
+          TAG_MESSAGE: ${{ steps.tag_info.outputs.tag_message }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, datetime, pathlib
+
+          tag_name    = os.environ["TAG_NAME"]
+          tag_message = os.environ["TAG_MESSAGE"].strip()
+          date        = datetime.date.today().strftime("%Y-%m-%d")
+
+          changelog = pathlib.Path("voxctr-website/changelog.md")
+
+          new_entry = f"## [{tag_name}] - {date}\n\n{tag_message}\n\n---\n"
+
+          if changelog.exists():
+              content = changelog.read_text()
+              if content.startswith("# "):
+                  # Keep the top-level heading; insert the new entry right after it
+                  nl = content.find("\n")
+                  content = content[:nl+1] + "\n" + new_entry + "\n" + content[nl+1:].lstrip("\n")
+              else:
+                  content = new_entry + "\n" + content
+          else:
+              content = "# Changelog\n\n" + new_entry + "\n"
+
+          changelog.write_text(content)
+          print(f"Changelog updated for {tag_name}")
+          PYEOF
+
+      - name: Commit and push to voxctr-website
+        run: |
+          cd voxctr-website
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add changelog.md
+          git diff --staged --quiet && echo "No changes to commit." && exit 0
+          git commit -m "changelog: add entry for ${{ steps.tag_info.outputs.tag_name }}"
+          git push
