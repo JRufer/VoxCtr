@@ -464,7 +464,10 @@ pub async fn get_custom_overlays() -> Result<Vec<CustomOverlayInfo>, String> {
                     let mut folder_name = entry.file_name().to_string_lossy().to_string();
 
                     // Automatically resolve naming conflicts with built-in styles
-                    let reserved = ["waveform", "pulse", "blue_wave", "voice_card", "none"];
+                    let reserved = [
+                        "waveform", "pulse", "blue_wave", "voice_card", "none",
+                        "mono_bars", "spectrum", "terminal", "vinyl",
+                    ];
                     if reserved.contains(&folder_name.to_lowercase().as_str()) {
                         folder_name = format!("{}_custom", folder_name);
                     }

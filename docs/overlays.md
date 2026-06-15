@@ -54,7 +54,7 @@ If the configured target monitor is unplugged or disconnected at runtime, the Ta
 
 ## Built-in Styles
 
-Four built-in styles are available — each with its own visual identity, its own kind of audio visualizer, its own load/unload animation, and a clear indicator of the active routing target. The default is **Ocean Wave**.
+Eight built-in styles are available — each with its own visual identity, its own kind of audio visualizer, its own load/unload animation, and a clear indicator of the active routing target. The default is **Ocean Wave**.
 
 All styles share three state palettes: **Recording** (the style's signature color), **Initializing** (amber, while the microphone stream is connecting), and **Processing** (sky blue, while the AI is transcribing).
 
@@ -84,6 +84,34 @@ A sonar/radar dial paired with a target-lock plate.
 - **Target indicator**: a "PULSE // TARGET LOCK" plate beside the dial with a pulsing reticle (⌖) and lock frame showing the active target label.
 - **Load/unload**: the dial drops in and the lock plate slides out from behind it; both reverse on unload.
 - **States**: "TARGET LOCK" (tangerine), "ACQUIRING" (amber), "ANALYZING" (blue).
+
+### Mono Bars (`"mono_bars"`)
+A hyper-minimal, pure black & white panel — no color, no gradients, no glow.
+- **Visualizer**: a 5-bar level meter, centre-weighted so the middle bar reacts most strongly, with a gentle ripple traveling across the row while recording and all bars pulsing in lock-step while processing.
+- **Target indicator**: a small caption beneath the bars showing the active target label.
+- **Load/unload**: the whole panel simply fades in and out — no motion, scaling, or color, in keeping with its minimal aesthetic.
+- **States**: "LISTENING" (dot lit, blinking), "STANDBY" (dim, dot hollow — initializing), "PROCESSING" (bars pulse together, dot blinks faster).
+
+### Neon Spectrum (`"spectrum"`)
+A 16-band equalizer in a deep-violet panel with a magenta-to-cyan gradient and a soft glow.
+- **Visualizer**: 16 bars across a magenta → purple → cyan gradient. Bass (left) bands swing wider and slower; treble (right) bands flicker faster with a smaller share of the level.
+- **Target indicator**: an "OUT ▸" chip in the header showing the active target label.
+- **Load/unload**: the panel rises up out of the floor — its height grows while the bars stay anchored to the bottom edge — and sinks back down on unload.
+- **States**: "· LIVE" (magenta LED), "· WARMING UP" (amber, initializing), "· ANALYZING" (blue, bars pulse in a traveling wave while processing).
+
+### Retro Terminal (`"terminal"`)
+A DOS-blue console window with a three-dot title bar and monospace readouts.
+- **Visualizer**: a block-character ASCII meter (`█`/`·`) that fills left-to-right with the audio level.
+- **Target indicator**: a `$ voxctrl listen --target "..."` command line showing the active target label.
+- **Load/unload**: the console drops down from the top edge on load and retracts back up on unload.
+- **States**: "[REC ]" (white meter, "streaming to output"), "[INIT]" (amber, "connecting input device"), "[PROC]" (sky blue, "transcribing audio stream"), with a blinking text cursor.
+
+### Analog VU (`"vinyl"`)
+A warm, vintage VU meter in cream and amber tones with a real dial face.
+- **Visualizer**: a spring-loaded needle that kicks toward the audio level and settles with realistic ballistics (the same critically-damped spring used for load/unload animations), sweeping across a `-20` to `+3` scale.
+- **Target indicator**: a caption beneath the meter face showing the active target label.
+- **Load/unload**: the panel fades in and settles upward slightly into place on load, and reverses on unload.
+- **States**: red LED + needle resting at `-20` (idle/standby), amber LED (initializing), blue LED with the needle sweeping on its own (processing), red LED with the needle tracking your voice (recording).
 
 ### Speaking Pill
 

@@ -8,6 +8,10 @@
   import Waveform from "./Waveform.svelte";
   import Pulse from "./Pulse.svelte";
   import BlueWave from "./BlueWave.svelte";
+  import MonoBars from "./MonoBars.svelte";
+  import Spectrum from "./Spectrum.svelte";
+  import Terminal from "./Terminal.svelte";
+  import Vinyl from "./Vinyl.svelte";
 
   interface CustomOverlay {
     name: string;
@@ -181,6 +185,14 @@
       <Pulse recording={$recording} active={animateActive} />
     {:else if $config.ui.overlay_style === "blue_wave"}
       <BlueWave recording={$recording} speaking={$speaking} active={animateActive} />
+    {:else if $config.ui.overlay_style === "mono_bars"}
+      <MonoBars recording={$recording} active={animateActive} />
+    {:else if $config.ui.overlay_style === "spectrum"}
+      <Spectrum recording={$recording} active={animateActive} />
+    {:else if $config.ui.overlay_style === "terminal"}
+      <Terminal recording={$recording} active={animateActive} />
+    {:else if $config.ui.overlay_style === "vinyl"}
+      <Vinyl recording={$recording} active={animateActive} />
     {:else if activeCustomOverlay}
       {@html `<style>${activeCustomOverlay.css}</style>`}
       <div class="custom-overlay-content" class:active={animateActive} use:executeScripts>

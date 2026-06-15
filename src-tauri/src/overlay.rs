@@ -56,6 +56,13 @@ slint::slint! {
         in property <[float]> pill-bars: [];
         in property <[BubbleData]> bubbles: [];
 
+        // Mono bars (mono_bars), spectrum bars (spectrum), ASCII meter
+        // (terminal) and needle path (vinyl)
+        in property <[float]> mono-bars: [];
+        in property <[float]> spectrum-bars: [];
+        in property <string> ascii-meter: "";
+        in property <string> vu-needle-path: "";
+
         // ─────────────────────────────────────────────────────────────
         // 1. WAVEFORM — "OSC-01" green phosphor oscilloscope.
         //    Loads like a CRT powering on (expands from a scanline),
@@ -672,6 +679,376 @@ slint::slint! {
         }
 
         // ─────────────────────────────────────────────────────────────
+        // 5. MONO BARS — hyper-minimal black & white 5-bar level meter.
+        //    Pure greyscale: no color, no gradients, no glow. Fades in
+        //    and the bars grow from the baseline on load, shrink back
+        //    on unload.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "mono_bars" && reveal-main > 0.004) : Rectangle {
+            x: (560px - 190px) / 2;
+            y: 39px;
+            width: 190px;
+            height: 112px;
+            clip: true;
+            background: #000000;
+            border-width: 1px;
+            border-color: rgba(255, 255, 255, 0.16);
+            border-radius: 6px;
+            opacity: Math.min(1.0, reveal-main);
+
+            // Status row
+            HorizontalLayout {
+                x: 18px;
+                y: 14px;
+                width: 154px;
+                height: 12px;
+                spacing: 6px;
+
+                Rectangle {
+                    width: 6px;
+                    height: 6px;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 3px;
+                    border-width: 1px;
+                    border-color: rgba(245, 245, 245, 0.7);
+                    background: (!is-processing && is-audio-ready) ? #f5f5f5 : transparent;
+                    opacity: is-processing ? (0.3 + 0.7 * blink) : (!is-audio-ready ? 0.35 : (0.5 + 0.5 * blink));
+                }
+
+                Text {
+                    text: is-processing ? "PROCESSING" : (!is-audio-ready ? "STANDBY" : "LISTENING");
+                    color: rgba(255, 255, 255, 0.55);
+                    font-size: 8px;
+                    font-weight: 700;
+                    font-family: "Outfit";
+                    letter-spacing: 2px;
+                    vertical-alignment: center;
+                }
+            }
+
+            // 5-bar minimal wave
+            for h[i] in mono-bars : Rectangle {
+                x: 37px + i * 26px;
+                y: 84px - h * Math.min(1.0, reveal-main) * 1px;
+                width: 12px;
+                height: h * Math.min(1.0, reveal-main) * 1px;
+                border-radius: 6px;
+                background: #f5f5f5;
+                opacity: is-processing ? 0.55 : (!is-audio-ready ? 0.3 : 1.0);
+            }
+
+            // Baseline
+            Rectangle { x: 18px; y: 84px; width: 154px; height: 1px; background: rgba(255, 255, 255, 0.12); }
+
+            // Target label
+            Text {
+                x: 18px;
+                y: 92px;
+                width: 154px;
+                height: 14px;
+                text: target-label;
+                color: rgba(255, 255, 255, 0.4);
+                font-size: 8.5px;
+                font-weight: 600;
+                font-family: "Outfit";
+                letter-spacing: 0.5px;
+                overflow: elide;
+                horizontal-alignment: center;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // 6. NEON SPECTRUM — a 16-band equalizer in a magenta-to-cyan
+        //    gradient. Powers up from the floor: the panel's height
+        //    grows while the content stays anchored to the bottom edge,
+        //    so the bars appear to rise into view. Reverses on unload.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "spectrum" && reveal-main > 0.004) : Rectangle {
+            x: 60px;
+            y: 150px - 132px * Math.min(1.0, reveal-main);
+            width: 440px;
+            height: 132px * Math.min(1.0, reveal-main);
+            clip: true;
+            border-radius: 16px;
+            background: @linear-gradient(160deg, #1b0c2e 0%, #0a0614 100%);
+            border-width: 1px;
+            border-color: rgba(232, 121, 249, 0.25);
+            opacity: reveal-main > 0.2 ? 1.0 : reveal-main * 5.0;
+            drop-shadow-blur: 26px;
+            drop-shadow-color: rgba(192, 132, 252, 0.22);
+
+            // Fixed-size inner content, bottom-anchored so the bars read
+            // as rising up out of the floor as the panel grows.
+            Rectangle {
+                x: 0;
+                y: parent.height - 132px;
+                width: 440px;
+                height: 132px;
+
+                // Header
+                HorizontalLayout {
+                    x: 20px; y: 12px; width: 400px; height: 16px; spacing: 8px;
+
+                    Rectangle {
+                        width: 7px; height: 7px; border-radius: 3.5px;
+                        y: (parent.height - self.height) / 2;
+                        background: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #e879f9);
+                        drop-shadow-blur: 6px;
+                        drop-shadow-color: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #e879f9);
+                        opacity: 0.4 + 0.6 * blink;
+                    }
+                    Text {
+                        text: "SPECTRUM // EQ-16";
+                        color: #f5d0fe;
+                        font-size: 10px;
+                        font-weight: 800;
+                        font-family: "Outfit";
+                        letter-spacing: 1.5px;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: is-processing ? "· ANALYZING" : (!is-audio-ready ? "· WARMING UP" : "· LIVE");
+                        color: rgba(245, 208, 254, 0.35);
+                        font-size: 9px;
+                        font-weight: 500;
+                        font-family: "Outfit";
+                        letter-spacing: 1px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Rectangle {
+                        horizontal-stretch: 0;
+                        background: rgba(232, 121, 249, 0.08);
+                        border-width: 1px;
+                        border-color: rgba(232, 121, 249, 0.3);
+                        border-radius: 4px;
+
+                        HorizontalLayout {
+                            padding-left: 8px; padding-right: 8px; padding-top: 2px; padding-bottom: 2px;
+                            spacing: 5px; alignment: center;
+
+                            Text {
+                                text: "OUT ▸";
+                                color: #e879f9;
+                                font-size: 8.5px;
+                                font-weight: 800;
+                                font-family: "Outfit";
+                                letter-spacing: 1px;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: target-label;
+                                color: #fae8ff;
+                                font-size: 8.5px;
+                                font-weight: 700;
+                                font-family: "Outfit";
+                                letter-spacing: 0.6px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                max-width: 150px;
+                            }
+                        }
+                    }
+                }
+
+                // Equalizer bars
+                for h[i] in spectrum-bars : Rectangle {
+                    x: 20px + i * 25.5px;
+                    y: 116px - h * 1px;
+                    width: 19px;
+                    height: h * 1px;
+                    border-radius: 3px;
+                    background: @linear-gradient(180deg, #f0abfc 0%, #c084fc 45%, #38bdf8 100%);
+                    opacity: 0.45 + 0.55 * (h / 96.0);
+                }
+
+                // Floor line
+                Rectangle { x: 20px; y: 116px; width: 400px; height: 1px; background: rgba(232, 121, 249, 0.15); }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // 7. RETRO TERMINAL — a DOS-blue console window with monospace
+        //    readouts and a block-character level meter. Drops down
+        //    from the top edge on load, retracts back up on unload.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "terminal" && reveal-main > 0.004) : Rectangle {
+            x: 90px;
+            y: 16px;
+            width: 380px;
+            height: 130px * Math.min(1.0, reveal-main);
+            clip: true;
+            background: #0d1b4c;
+            border-width: 1.5px;
+            border-color: rgba(125, 211, 252, 0.35);
+            border-radius: 8px;
+            opacity: reveal-main > 0.2 ? 1.0 : reveal-main * 5.0;
+            drop-shadow-blur: 20px;
+            drop-shadow-color: rgba(8, 15, 48, 0.6);
+
+            // Title bar
+            Rectangle {
+                x: 0; y: 0; width: 380px; height: 24px;
+                background: rgba(255, 255, 255, 0.06);
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    spacing: 6px;
+
+                    Rectangle { width: 8px; height: 8px; border-radius: 4px; y: (parent.height - self.height) / 2; background: rgba(255, 255, 255, 0.22); }
+                    Rectangle { width: 8px; height: 8px; border-radius: 4px; y: (parent.height - self.height) / 2; background: rgba(255, 255, 255, 0.22); }
+                    Rectangle { width: 8px; height: 8px; border-radius: 4px; y: (parent.height - self.height) / 2; background: rgba(255, 255, 255, 0.22); }
+
+                    Text {
+                        text: "VOXCTRL — /dev/mic0";
+                        color: rgba(224, 242, 254, 0.55);
+                        font-size: 9px;
+                        font-weight: 700;
+                        font-family: "Outfit";
+                        letter-spacing: 1px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // Body
+            VerticalLayout {
+                x: 16px; y: 34px; width: 348px; height: 88px;
+                spacing: 8px;
+
+                Text {
+                    text: "$ voxctrl listen --target \"" + target-label + "\"";
+                    color: rgba(186, 230, 253, 0.7);
+                    font-size: 10px;
+                    font-weight: 600;
+                    font-family: "monospace";
+                    overflow: elide;
+                }
+
+                Text {
+                    text: (is-processing ? "[PROC] " : (!is-audio-ready ? "[INIT] " : "[REC ] ")) + ascii-meter;
+                    color: is-processing ? #7dd3fc : (!is-audio-ready ? #fcd34d : #ffffff);
+                    font-size: 11px;
+                    font-weight: 700;
+                    font-family: "monospace";
+                    letter-spacing: 1px;
+                }
+
+                Text {
+                    text: (is-processing ? "transcribing audio stream" : (!is-audio-ready ? "connecting input device" : "streaming to output")) + (blink > 0.5 ? "_" : " ");
+                    color: rgba(186, 230, 253, 0.45);
+                    font-size: 9.5px;
+                    font-weight: 500;
+                    font-family: "monospace";
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // 8. ANALOG VU — a warm vintage VU meter with a spring-loaded
+        //    needle that kicks and settles with your voice. Fades in
+        //    and rises slightly into place on load, settles back down
+        //    on unload.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "vinyl" && reveal-main > 0.004) : Rectangle {
+            x: 120px;
+            y: 24px + (1.0 - Math.min(1.0, reveal-main)) * 16px;
+            width: 320px;
+            height: 132px;
+            clip: true;
+            border-radius: 14px;
+            background: @linear-gradient(180deg, #f7ecd9 0%, #e7d6b8 100%);
+            border-width: 1.5px;
+            border-color: rgba(120, 89, 53, 0.35);
+            opacity: Math.min(1.0, reveal-main);
+            drop-shadow-blur: 22px;
+            drop-shadow-color: rgba(0, 0, 0, 0.35);
+
+            // Header
+            HorizontalLayout {
+                x: 16px; y: 12px; width: 288px; height: 14px; spacing: 8px;
+
+                Text {
+                    text: "VU";
+                    color: #5b4530;
+                    font-size: 12px;
+                    font-weight: 900;
+                    font-family: "Outfit";
+                    letter-spacing: 2px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: is-processing ? "ANALOG // PROCESSING" : (!is-audio-ready ? "ANALOG // WARMING UP" : "ANALOG // INPUT LEVEL");
+                    color: rgba(91, 69, 48, 0.55);
+                    font-size: 8px;
+                    font-weight: 700;
+                    font-family: "Outfit";
+                    letter-spacing: 1.5px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Rectangle {
+                    horizontal-stretch: 0;
+                    width: 8px; height: 8px; border-radius: 4px;
+                    y: (parent.height - self.height) / 2;
+                    background: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #dc2626);
+                    drop-shadow-blur: 6px;
+                    drop-shadow-color: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #dc2626);
+                    opacity: 0.4 + 0.6 * blink;
+                }
+            }
+
+            // Meter face
+            Rectangle {
+                x: 16px; y: 30px; width: 288px; height: 72px;
+                border-radius: 8px;
+                background: rgba(255, 252, 244, 0.55);
+                border-width: 1px;
+                border-color: rgba(120, 89, 53, 0.25);
+
+                // Scale ticks (the rightmost, in the red, is the +3dB mark)
+                for t in [0, 1, 2, 3, 4, 5, 6] : Rectangle {
+                    x: 18px + t * 42px;
+                    y: 14px;
+                    width: 1.5px;
+                    height: t == 6 ? 30px : 22px;
+                    background: t == 6 ? #dc2626 : rgba(91, 69, 48, 0.4);
+                }
+                Text { x: 12px; y: 40px; text: "-20"; color: rgba(91, 69, 48, 0.5); font-size: 7px; font-family: "Outfit"; }
+                Text { x: 122px; y: 40px; text: "0"; color: rgba(91, 69, 48, 0.5); font-size: 7px; font-family: "Outfit"; }
+                Text { x: 252px; y: 34px; text: "+3"; color: #dc2626; font-size: 7px; font-weight: 800; font-family: "Outfit"; }
+
+                // Needle (path rebuilt every frame in Rust, spring-driven)
+                Path {
+                    x: 0; y: 0; width: 288px; height: 72px;
+                    viewbox-width: 288; viewbox-height: 72;
+                    commands: vu-needle-path;
+                    stroke: #292524;
+                    stroke-width: 2px;
+                    fill: transparent;
+                }
+
+                // Pivot cap
+                Rectangle {
+                    x: 138px; y: 64px; width: 12px; height: 12px; border-radius: 6px;
+                    background: #292524;
+                }
+            }
+
+            // Target label
+            Text {
+                x: 16px; y: 110px;
+                width: 288px;
+                text: target-label;
+                color: rgba(91, 69, 48, 0.65);
+                font-size: 9.5px;
+                font-weight: 700;
+                font-family: "Outfit";
+                overflow: elide;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
         // Speaking pill — slides up from the bottom while the system
         // responds, with a live mini-equalizer.
         // ─────────────────────────────────────────────────────────────
@@ -889,6 +1266,101 @@ fn led_step(current: f32, target: f32) -> f32 {
     if target > current { target } else { current * 0.86 }
 }
 
+// ── Mono bars (mono_bars style) ───────────────────────────────────────
+const MONO_BAR_MIN: f32 = 8.0;
+const MONO_BAR_MAX: f32 = 52.0;
+
+/// Bar height in px for bar `i` of `n` (always within [MONO_BAR_MIN,
+/// MONO_BAR_MAX]). Bars are centre-weighted and ripple gently across the
+/// row while recording, in lock-step while processing, and sit flat at
+/// the baseline otherwise.
+fn mono_bar_height(i: usize, n: usize, level: f32, phase: f32, recording: bool, processing: bool, ready: bool, noise: f32) -> f32 {
+    let mid = (n as f32 - 1.0) / 2.0;
+    let envelope = 1.0 - (i as f32 - mid).abs() / (mid + 1.0) * 0.4;
+    let amp = if processing {
+        ((phase * 4.0 - i as f32 * 0.85).sin() * 0.5 + 0.5) * envelope
+    } else if recording && !ready {
+        0.0
+    } else if recording {
+        let ripple = (phase * 3.0 - i as f32 * 0.8).sin();
+        (level * envelope * (0.9 + 0.1 * ripple) * (0.85 + 0.3 * noise)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    MONO_BAR_MIN + (MONO_BAR_MAX - MONO_BAR_MIN) * amp
+}
+
+// ── Neon spectrum (spectrum style) ──────────────────────────────────────
+const SPECTRUM_BARS: usize = 16;
+const SPECTRUM_MIN: f32 = 6.0;
+const SPECTRUM_MAX: f32 = 96.0;
+
+/// Bar height in px for band `i` of `n` (always within [SPECTRUM_MIN,
+/// SPECTRUM_MAX]). Lower bands ("bass") swing wider and slower; higher
+/// bands ("treble") flicker faster with a smaller share of the level.
+fn spectrum_bar_height(i: usize, n: usize, level: f32, phase: f32, recording: bool, processing: bool, ready: bool, noise: f32) -> f32 {
+    let band = i as f32 / (n as f32 - 1.0);
+    let amp = if processing {
+        ((phase * 2.4 - band * 6.0).sin() * 0.5 + 0.5).powf(1.5)
+    } else if recording && !ready {
+        noise * 0.06
+    } else if recording {
+        let band_freq = 2.0 + band * 9.0;
+        let band_phase = i as f32 * 0.7;
+        let wobble = (phase * band_freq + band_phase).sin() * 0.5 + 0.5;
+        let band_gain = 1.0 - band * 0.35;
+        (level * band_gain * (0.35 + 0.65 * wobble) * (0.7 + 0.6 * noise)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    SPECTRUM_MIN + (SPECTRUM_MAX - SPECTRUM_MIN) * amp
+}
+
+// ── Retro terminal (terminal style) ─────────────────────────────────────
+const ASCII_METER_WIDTH: usize = 20;
+
+/// Build a fixed-width block-character meter for the terminal's level
+/// readout. While processing it shows a scanning block bouncing back and
+/// forth; while recording it fills left-to-right with the audio level.
+fn ascii_meter(level: f32, phase: f32, recording: bool, processing: bool, ready: bool) -> String {
+    let w = ASCII_METER_WIDTH;
+    if processing {
+        let cycle = 2 * w;
+        let raw = (phase * 10.0) as usize % cycle;
+        let pos = if raw < w { raw } else { cycle - 1 - raw };
+        (0..w).map(|i| if i == pos { '█' } else { '·' }).collect()
+    } else if recording && !ready {
+        (0..w).map(|i| if i % 4 == 0 { '·' } else { ' ' }).collect()
+    } else if recording {
+        let filled = (level.clamp(0.0, 1.0) * w as f32).round() as usize;
+        (0..w).map(|i| if i < filled { '█' } else { '·' }).collect()
+    } else {
+        "·".repeat(w)
+    }
+}
+
+// ── Analog VU (vinyl style) ──────────────────────────────────────────────
+const VU_PIVOT_X: f32 = 144.0;
+const VU_PIVOT_Y: f32 = 70.0;
+const VU_RADIUS: f32 = 58.0;
+const VU_ANGLE_MIN: f32 = -0.95; // resting position (full left)
+const VU_ANGLE_MAX: f32 = 0.95; // full-scale (full right)
+
+/// Map a 0..1 audio level to a needle angle (radians from straight up).
+fn vu_target_angle(level: f32) -> f32 {
+    VU_ANGLE_MIN + level.clamp(0.0, 1.0) * (VU_ANGLE_MAX - VU_ANGLE_MIN)
+}
+
+/// The needle: a line from the pivot to a point on the dial rim at `angle`
+/// radians from straight up.
+fn vu_needle_path(angle: f32) -> String {
+    format!(
+        "M {VU_PIVOT_X} {VU_PIVOT_Y} L {:.1} {:.1}",
+        VU_PIVOT_X + angle.sin() * VU_RADIUS,
+        VU_PIVOT_Y - angle.cos() * VU_RADIUS
+    )
+}
+
 fn main() {
     let ui = OverlayWindow::new().unwrap();
 
@@ -973,6 +1445,8 @@ fn main() {
     let mut cur_level = 0.0_f32;
     let mut osc_hist: VecDeque<f32> = VecDeque::from(vec![0.0_f32; 126]);
     let mut led_cols = [0.0_f32; 20];
+    let mut vu_angle = VU_ANGLE_MIN;
+    let mut vu_vel = 0.0_f32;
     let mut lcg_state = 12345_u32;
     let mut shown = false;
 
@@ -1130,6 +1604,45 @@ fn main() {
                     cols.push(*c);
                 }
                 ui.set_led_cols(cols.into());
+            }
+
+            // Mono bars: hyper-minimal 5-bar black & white level meter.
+            "mono_bars" => {
+                let n = 5;
+                let bars = std::rc::Rc::new(slint::VecModel::default());
+                for i in 0..n {
+                    bars.push(mono_bar_height(i, n, cur_level, phase, rec, proc, ready, rand()));
+                }
+                ui.set_mono_bars(bars.into());
+            }
+
+            // Neon spectrum: 16-band magenta-to-cyan equalizer.
+            "spectrum" => {
+                let n = SPECTRUM_BARS;
+                let bars = std::rc::Rc::new(slint::VecModel::default());
+                for i in 0..n {
+                    bars.push(spectrum_bar_height(i, n, cur_level, phase, rec, proc, ready, rand()));
+                }
+                ui.set_spectrum_bars(bars.into());
+            }
+
+            // Retro terminal: block-character ASCII level meter.
+            "terminal" => {
+                ui.set_ascii_meter(ascii_meter(cur_level, phase, rec, proc, ready).into());
+            }
+
+            // Analog VU: spring-loaded needle kicks toward the level and
+            // settles back to rest when idle.
+            "vinyl" => {
+                let target_angle = if proc {
+                    vu_target_angle(0.3 + 0.25 * (phase * 2.0).sin().abs())
+                } else if rec && ready {
+                    vu_target_angle(cur_level)
+                } else {
+                    VU_ANGLE_MIN
+                };
+                spring(&mut vu_angle, &mut vu_vel, target_angle, DT);
+                ui.set_vu_needle_path(vu_needle_path(vu_angle).into());
             }
 
             _ => {}
@@ -1396,5 +1909,140 @@ mod tests {
         // level must light at least the bottom row of the centre column.
         let t = led_column_target(10, 20, 0.05, 0.0, true, false, true, 0.5);
         assert!(t * 6.0 >= 1.0, "quiet speech should light an LED, got {t}");
+    }
+
+    // ── Mono bars (mono_bars) ─────────────────────────────────────────
+
+    #[test]
+    fn mono_bars_stay_within_range() {
+        for i in 0..5 {
+            for &(rec, proc, ready) in &[(true, false, true), (true, false, false), (false, true, true), (false, false, true)] {
+                for &phase in &[0.0_f32, 1.3, 5.0, 12.0] {
+                    let h = mono_bar_height(i, 5, 1.0, phase, rec, proc, ready, 1.0);
+                    assert!(
+                        (MONO_BAR_MIN..=MONO_BAR_MAX).contains(&h),
+                        "bar {i} out of range: {h}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mono_bars_sit_at_baseline_when_idle() {
+        assert_eq!(mono_bar_height(2, 5, 1.0, 0.0, false, false, true, 1.0), MONO_BAR_MIN);
+        assert_eq!(mono_bar_height(2, 5, 1.0, 0.0, true, false, false, 1.0), MONO_BAR_MIN);
+    }
+
+    #[test]
+    fn mono_bars_grow_with_level() {
+        let quiet = mono_bar_height(2, 5, 0.0, 0.0, true, false, true, 1.0);
+        let loud = mono_bar_height(2, 5, 1.0, 0.0, true, false, true, 1.0);
+        assert_eq!(quiet, MONO_BAR_MIN);
+        assert!(loud > quiet, "bars must grow louder with voice level");
+    }
+
+    #[test]
+    fn mono_bars_are_centre_weighted() {
+        let edge = mono_bar_height(0, 5, 0.8, 0.0, true, false, true, 0.5);
+        let centre = mono_bar_height(2, 5, 0.8, 0.0, true, false, true, 0.5);
+        assert!(centre >= edge, "centre bar should be at least as tall as an edge bar");
+    }
+
+    // ── Neon spectrum (spectrum) ────────────────────────────────────────
+
+    #[test]
+    fn spectrum_bars_stay_within_range() {
+        for i in 0..SPECTRUM_BARS {
+            for &(rec, proc, ready) in &[(true, false, true), (true, false, false), (false, true, true), (false, false, true)] {
+                for &phase in &[0.0_f32, 2.2, 7.7] {
+                    let h = spectrum_bar_height(i, SPECTRUM_BARS, 1.0, phase, rec, proc, ready, 1.0);
+                    assert!(
+                        (SPECTRUM_MIN..=SPECTRUM_MAX).contains(&h),
+                        "band {i} out of range: {h}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn spectrum_bars_sit_at_floor_when_idle() {
+        assert_eq!(spectrum_bar_height(0, SPECTRUM_BARS, 1.0, 0.0, false, false, true, 1.0), SPECTRUM_MIN);
+    }
+
+    #[test]
+    fn spectrum_bars_react_to_level() {
+        let quiet = spectrum_bar_height(0, SPECTRUM_BARS, 0.0, 0.0, true, false, true, 1.0);
+        let loud = spectrum_bar_height(0, SPECTRUM_BARS, 1.0, 0.0, true, false, true, 1.0);
+        assert_eq!(quiet, SPECTRUM_MIN);
+        assert!(loud > quiet, "spectrum bars must rise with voice level");
+    }
+
+    // ── Retro terminal (terminal) ───────────────────────────────────────
+
+    #[test]
+    fn ascii_meter_is_always_the_configured_width() {
+        for &(rec, proc, ready) in &[(true, false, true), (true, false, false), (false, true, true), (false, false, true)] {
+            let m = ascii_meter(0.5, 1.0, rec, proc, ready);
+            assert_eq!(m.chars().count(), ASCII_METER_WIDTH);
+        }
+    }
+
+    #[test]
+    fn ascii_meter_fills_with_level_when_recording() {
+        assert_eq!(ascii_meter(0.0, 0.0, true, false, true), "·".repeat(ASCII_METER_WIDTH));
+        assert_eq!(ascii_meter(1.0, 0.0, true, false, true), "█".repeat(ASCII_METER_WIDTH));
+
+        let half = ascii_meter(0.5, 0.0, true, false, true);
+        let filled = half.chars().filter(|&c| c == '█').count();
+        assert_eq!(filled, ASCII_METER_WIDTH / 2);
+    }
+
+    #[test]
+    fn ascii_meter_scans_while_processing() {
+        let m = ascii_meter(0.5, 0.0, false, true, true);
+        assert_eq!(m.chars().filter(|&c| c == '█').count(), 1, "exactly one lit cell while scanning");
+
+        // The scanning position must move as phase advances.
+        let m2 = ascii_meter(0.5, 0.5, false, true, true);
+        assert_ne!(m, m2, "scanner must move over time");
+    }
+
+    // ── Analog VU (vinyl) ────────────────────────────────────────────────
+
+    #[test]
+    fn vu_target_angle_spans_the_dial() {
+        assert_eq!(vu_target_angle(0.0), VU_ANGLE_MIN);
+        assert_eq!(vu_target_angle(1.0), VU_ANGLE_MAX);
+        assert!(vu_target_angle(1.0) > vu_target_angle(0.0));
+    }
+
+    #[test]
+    fn vu_needle_starts_at_pivot_and_stays_on_radius() {
+        for angle in [VU_ANGLE_MIN, 0.0, VU_ANGLE_MAX] {
+            let path = vu_needle_path(angle);
+            assert!(path.starts_with(&format!("M {VU_PIVOT_X} {VU_PIVOT_Y}")));
+
+            let nums: Vec<f32> = path
+                .split_whitespace()
+                .filter_map(|t| t.parse::<f32>().ok())
+                .collect();
+            let (tx, ty) = (nums[2], nums[3]);
+            let dist = ((tx - VU_PIVOT_X).powi(2) + (ty - VU_PIVOT_Y).powi(2)).sqrt();
+            assert!((dist - VU_RADIUS).abs() < 0.2, "needle tip must sit on the dial radius, got {dist}");
+        }
+    }
+
+    #[test]
+    fn vu_needle_points_straight_up_at_zero_angle() {
+        let path = vu_needle_path(0.0);
+        let nums: Vec<f32> = path
+            .split_whitespace()
+            .filter_map(|t| t.parse::<f32>().ok())
+            .collect();
+        let (tx, ty) = (nums[2], nums[3]);
+        assert!((tx - VU_PIVOT_X).abs() < 0.01, "zero angle must point straight up");
+        assert!(ty < VU_PIVOT_Y, "needle tip must be above the pivot");
     }
 }

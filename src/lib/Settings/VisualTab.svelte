@@ -29,6 +29,10 @@
     { value: "waveform", label: "Waveform" },
     { value: "pulse", label: "Pulse Ring" },
     { value: "blue_wave", label: "Ocean Wave" },
+    { value: "mono_bars", label: "Mono Bars" },
+    { value: "spectrum", label: "Neon Spectrum" },
+    { value: "terminal", label: "Retro Terminal" },
+    { value: "vinyl", label: "Analog VU" },
     ...customOverlays.map(o => ({ value: o.name, label: o.name }))
   ]);
 
