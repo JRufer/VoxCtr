@@ -463,6 +463,11 @@ pub async fn get_custom_overlays() -> Result<Vec<CustomOverlayInfo>, String> {
                 if file_type.is_dir() {
                     let mut folder_name = entry.file_name().to_string_lossy().to_string();
 
+                    // Filter out legacy gradient-wave
+                    if folder_name.to_lowercase() == "gradient-wave" || folder_name.to_lowercase() == "gradient_wave" {
+                        continue;
+                    }
+
                     // Automatically resolve naming conflicts with built-in styles
                     let reserved = [
                         "waveform", "pulse", "blue_wave", "voice_card", "none",

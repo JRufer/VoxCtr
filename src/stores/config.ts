@@ -125,7 +125,7 @@ const defaultConfig: AppConfig = {
   },
   ui: {
     show_overlay: true,
-    overlay_style: "blue_wave",
+    overlay_style: "mono_bars",
     overlay_position: "center",
     overlay_monitor: "primary",
     auto_show_settings: true,
