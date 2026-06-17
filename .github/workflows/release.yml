@@ -102,10 +102,10 @@ jobs:
 
       - name: Install CUDA Toolkit (Linux)
         if: runner.os == 'Linux' && matrix.cuda
-        uses: Jimver/cuda-toolkit@v0.2.16
+        uses: Jimver/cuda-toolkit@v0.2.35
         id: cuda-linux
         with:
-          cuda: "12.4.0"
+          cuda: "12.8.0"
           linux-local-args: '["--toolkit"]'
 
       # Export the extra CMake variables that whisper.cpp's CUDA build needs.
@@ -121,9 +121,9 @@ jobs:
 
       - name: Install CUDA Toolkit (Windows)
         if: runner.os == 'Windows' && matrix.cuda
-        uses: Jimver/cuda-toolkit@v0.2.16
+        uses: Jimver/cuda-toolkit@v0.2.35
         with:
-          cuda: "12.4.0"
+          cuda: "12.8.0"
 
       - name: Configure CUDA MSBuild and environment (Windows)
         if: runner.os == 'Windows' && matrix.cuda
