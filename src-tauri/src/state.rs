@@ -16,6 +16,9 @@ pub struct AppState {
     pub processing: Arc<AtomicBool>,
     /// True while TTS is playing back
     pub speaking: Arc<AtomicBool>,
+    /// Live mirror of `ui.show_overlay` so the hot status-forwarding loops can
+    /// gate the native overlay without locking the config on every audio sample.
+    pub overlay_enabled: Arc<AtomicBool>,
     /// True while MCP server is actively recording/listening to the microphone
     pub mcp_recording: Arc<AtomicBool>,
     /// True when dynamic stream has successfully opened and is active (Option A)
@@ -127,6 +130,14 @@ impl AppState {
 
     pub fn set_speaking(&self, v: bool) {
         self.speaking.store(v, Ordering::SeqCst);
+    }
+
+    pub fn is_overlay_enabled(&self) -> bool {
+        self.overlay_enabled.load(Ordering::SeqCst)
+    }
+
+    pub fn set_overlay_enabled(&self, v: bool) {
+        self.overlay_enabled.store(v, Ordering::SeqCst);
     }
 
     pub fn is_mcp_recording(&self) -> bool {

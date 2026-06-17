@@ -95,6 +95,7 @@ pub async fn save_config(
     state.set_dynamic_stream(new_config.audio.dynamic_stream);
     state.set_input_device_index(new_config.audio.input_device_index);
     state.set_gain(new_config.audio.gain);
+    state.set_overlay_enabled(new_config.ui.show_overlay);
 
     // Dynamic TTS engine lifecycle management
     {

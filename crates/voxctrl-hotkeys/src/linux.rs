@@ -291,7 +291,7 @@ fn handle_press(
 fn handle_release(
     key: &str,
     states: &mut Vec<BindingState>,
-    _pressed: &HashSet<String>,
+    pressed: &HashSet<String>,
     tx: &GestureSender,
 ) {
     // Collect keys for any currently active DoubleTapHold gestures
@@ -311,16 +311,37 @@ fn handle_release(
 
         match s.binding.gesture {
             GestureType::Hold => {
-                if let Some(cancel) = s.hold_cancel.take() {
+                // Is any *other* key of this binding still held? `pressed` still
+                // contains the key currently being released (the caller removes it
+                // only after this returns), so exclude it explicitly.
+                let others_still_held = s
+                    .binding
+                    .keys
+                    .iter()
+                    .any(|k| k.as_str() != key && pressed.contains(k));
+
+                if s.hold_active.load(std::sync::atomic::Ordering::SeqCst) {
+                    // Recording is active. Stop only once the *whole* combo has been
+                    // released. If we stopped on the first key-up, transcription could
+                    // be injected while a hotkey modifier (e.g. Super/Ctrl) is still
+                    // down — the Wayland compositor then interprets the synthetic
+                    // keystrokes as shortcuts and swallows them, so the text never
+                    // reaches the cursor. wtype cannot clear a physically-held
+                    // modifier, so the only reliable fix is to wait for full release.
+                    if !others_still_held {
+                        s.hold_cancel.take();
+                        s.hold_active.store(false, std::sync::atomic::Ordering::SeqCst);
+                        let _ = tx.send(GestureEvent {
+                            binding_id: s.binding.id.clone(),
+                            binding_label: s.binding.label.clone(),
+                            target_id: s.binding.target_ids_string(),
+                            kind: GestureKind::Stop,
+                        });
+                    }
+                } else if let Some(cancel) = s.hold_cancel.take() {
+                    // Still within the hold threshold (Start not yet fired).
+                    // Releasing any key breaks the pending combo, so cancel the timer.
                     cancel.cancel();
-                }
-                if s.hold_active.swap(false, std::sync::atomic::Ordering::SeqCst) {
-                    let _ = tx.send(GestureEvent {
-                        binding_id: s.binding.id.clone(),
-                        binding_label: s.binding.label.clone(),
-                        target_id: s.binding.target_ids_string(),
-                        kind: GestureKind::Stop,
-                    });
                 }
             }
             GestureType::DoubleTap => {
@@ -613,6 +634,47 @@ mod tests {
         // Assert we get GestureKind::Stop immediately on release
         let event = rx.recv().await.unwrap();
         assert_eq!(event.binding_id, "test_hold");
+        assert_eq!(event.kind, GestureKind::Stop);
+    }
+
+    #[tokio::test]
+    async fn test_hold_multikey_stops_only_on_full_release() {
+        // Regression: a Hold combo (Super+Space) must not emit Stop until *every*
+        // key is released. Stopping on the first key-up let transcription be
+        // injected while Super was still held, which Wayland compositors swallow
+        // as a shortcut — so the dictated text never reached the cursor.
+        let (tx, mut rx) = crate::channel();
+        let mut states = vec![make_test_binding(
+            "test_hold_combo",
+            GestureType::Hold,
+            vec!["KEY_LEFTMETA", "KEY_SPACE"],
+        )];
+        let mut pressed = HashSet::new();
+
+        // Press the full combo.
+        pressed.insert("KEY_LEFTMETA".to_string());
+        handle_press("KEY_LEFTMETA", &mut states, &pressed, &tx);
+        pressed.insert("KEY_SPACE".to_string());
+        handle_press("KEY_SPACE", &mut states, &pressed, &tx);
+
+        // Wait past the hold threshold to receive Start.
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.kind, GestureKind::Start);
+
+        // Release SPACE first while LEFTMETA is still held — must NOT stop yet.
+        handle_release("KEY_SPACE", &mut states, &pressed, &tx);
+        pressed.remove("KEY_SPACE");
+        assert!(
+            rx.try_recv().is_err(),
+            "Stop fired while a hotkey modifier was still held"
+        );
+
+        // Release the last key — now Stop should fire.
+        handle_release("KEY_LEFTMETA", &mut states, &pressed, &tx);
+        pressed.remove("KEY_LEFTMETA");
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.binding_id, "test_hold_combo");
         assert_eq!(event.kind, GestureKind::Stop);
     }
 
