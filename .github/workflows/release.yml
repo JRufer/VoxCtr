@@ -45,14 +45,14 @@ jobs:
 
           # ── Windows CPU ────────────────────────────────────────────────────
           - name: windows-cpu
-            os: windows-latest
+            os: windows-2022
             features: ""
             artifact_label: windows-x86_64
             cuda: false
 
           # ── Windows CUDA ───────────────────────────────────────────────────
           - name: windows-cuda
-            os: windows-latest
+            os: windows-2022
             features: "cuda"
             artifact_label: windows-x86_64-cuda
             cuda: true
