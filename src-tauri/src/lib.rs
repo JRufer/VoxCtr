@@ -175,6 +175,7 @@ pub fn run() {
         recording: Arc::new(AtomicBool::new(false)),
         processing: Arc::new(AtomicBool::new(false)),
         speaking: Arc::new(AtomicBool::new(false)),
+        overlay_enabled: Arc::new(AtomicBool::new(cfg_data.ui.show_overlay)),
         mcp_recording: Arc::new(AtomicBool::new(false)),
         audio_ready: Arc::new(AtomicBool::new(false)),
         dynamic_stream: Arc::new(AtomicBool::new(cfg_data.audio.dynamic_stream)),
@@ -591,10 +592,14 @@ pub fn run() {
                 while let Ok(level) = audio_level_rx.recv() {
                     let _ = handle.emit("audio-level", level);
 
-                    // Forward to Slint overlay channel
-                    let is_recording = state_for_audio_level.is_recording();
-                    let is_processing = state_for_audio_level.is_processing();
-                    let is_speaking = state_for_audio_level.is_speaking();
+                    // Forward to Slint overlay channel. When the overlay is
+                    // disabled, report idle state so the native window never maps
+                    // (a mapped overlay steals keyboard focus on Wayland and breaks
+                    // text injection).
+                    let overlay_on = state_for_audio_level.is_overlay_enabled();
+                    let is_recording = overlay_on && state_for_audio_level.is_recording();
+                    let is_processing = overlay_on && state_for_audio_level.is_processing();
+                    let is_speaking = overlay_on && state_for_audio_level.is_speaking();
                     let audio_ready = state_for_audio_level.is_audio_ready();
                     let active_target_label = {
                         if let Ok(label) = state_for_audio_level.active_binding_label.try_lock() {
@@ -839,12 +844,21 @@ pub fn run() {
                     });
                     let _ = handle.emit("status-tick", payload.clone());
 
-                    // Forward status to Slint overlay channel
+                    // Forward status to Slint overlay channel. When the overlay is
+                    // disabled, force the visibility flags off so the native window
+                    // never maps — a mapped overlay grabs keyboard focus on Wayland
+                    // and prevents transcribed text from reaching the cursor.
+                    let overlay_on = state_for_ticker.is_overlay_enabled();
                     let mut payload_value = payload.clone();
                     if let Some(obj) = payload_value.as_object_mut() {
                         obj.insert("type".to_string(), serde_json::json!("status"));
                         obj.insert("audio_level".to_string(), serde_json::json!(0.0));
                         obj.insert("overlay_style".to_string(), serde_json::json!(overlay_style));
+                        if !overlay_on {
+                            obj.insert("recording".to_string(), serde_json::json!(false));
+                            obj.insert("processing".to_string(), serde_json::json!(false));
+                            obj.insert("speaking".to_string(), serde_json::json!(false));
+                        }
                     }
                     if let Ok(json_str) = serde_json::to_string(&payload_value) {
                         let _ = state_for_ticker.overlay_tx.send(json_str);
@@ -1173,6 +1187,7 @@ mod tests {
             recording: Arc::new(AtomicBool::new(false)),
             processing: Arc::new(AtomicBool::new(false)),
             speaking: Arc::new(AtomicBool::new(false)),
+            overlay_enabled: Arc::new(AtomicBool::new(true)),
             mcp_recording: Arc::new(AtomicBool::new(false)),
             audio_ready: Arc::new(AtomicBool::new(false)),
             dynamic_stream: Arc::new(AtomicBool::new(false)),
