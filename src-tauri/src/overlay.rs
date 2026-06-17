@@ -1489,13 +1489,17 @@ fn main() {
         };
 
         // ── Window mapping ──────────────────────────────────────────────
-        // Map the overlay exactly once and keep it mapped for the lifetime of
-        // the process. On Wayland, hide()/show() re-maps the surface and the
-        // compositor re-grabs keyboard focus for the overlay on every dictation,
+        // Map the overlay lazily the first time it is actually needed, then
+        // keep it mapped for the lifetime of the process. On Wayland,
+        // hide()/show() re-maps the surface and the compositor (KWin) grabs
+        // keyboard focus for the freshly-mapped overlay on every dictation —
         // stealing focus from the user's window so injected text never reaches
-        // the cursor. Keeping the window mapped (transparent when idle) avoids
-        // the per-dictation focus grab entirely.
-        if !shown {
+        // the cursor. Mapping once (with real content) and never unmapping
+        // avoids the per-dictation focus grab; when idle we simply render a
+        // transparent frame instead of hiding.
+        let visible_needed = active_main || active_pill || reveal_main > 0.004 || reveal_pill > 0.004;
+
+        if visible_needed && !shown {
             if let Err(e) = ui.show() {
                 eprintln!("[overlay] Failed to show window: {:?}", e);
             }
@@ -1508,10 +1512,13 @@ fn main() {
             shown = true;
         }
 
-        // When fully idle, push a single transparent frame and then stop
-        // updating, so the still-mapped window stays invisible without driving
-        // continuous redraws.
-        let visible_needed = active_main || active_pill || reveal_main > 0.004 || reveal_pill > 0.004;
+        // Nothing has needed the overlay yet — leave it unmapped.
+        if !shown {
+            return;
+        }
+
+        // Mapped but idle: push a single transparent frame, then stop updating
+        // so the window stays invisible without driving continuous redraws.
         if !visible_needed {
             if !idle {
                 ui.set_reveal_main(0.0);

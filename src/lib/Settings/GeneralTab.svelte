@@ -15,15 +15,6 @@
 
 
   <div class="field-group">
-    <h3>Overlay</h3>
-    <label class="field">
-      <span>Show visual overlay while dictating</span>
-      <input type="checkbox" bind:checked={cfg.ui.show_overlay} onchange={markDirty} />
-    </label>
-    <p class="hint">Displays the animated waveform overlay during dictation. Turn off if the overlay interferes with text insertion on your desktop.</p>
-  </div>
-
-  <div class="field-group">
     <h3>History</h3>
     <label class="field">
       <span>Enable transcript history</span>
