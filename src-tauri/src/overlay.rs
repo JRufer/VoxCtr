@@ -1449,6 +1449,7 @@ fn main() {
     let mut vu_vel = 0.0_f32;
     let mut lcg_state = 12345_u32;
     let mut shown = false;
+    let mut idle = false;
 
     const DT: f32 = 0.016;
 
@@ -1487,14 +1488,17 @@ fn main() {
             (lcg_state >> 8) as f32 / ((u32::MAX >> 8) as f32)
         };
 
-        // ── Window visibility (kept alive through the unload anim) ──
-        let visible_needed = active_main || active_pill || reveal_main > 0.004 || reveal_pill > 0.004;
-        if visible_needed && !shown {
+        // ── Window mapping ──────────────────────────────────────────────
+        // Map the overlay exactly once and keep it mapped for the lifetime of
+        // the process. On Wayland, hide()/show() re-maps the surface and the
+        // compositor re-grabs keyboard focus for the overlay on every dictation,
+        // stealing focus from the user's window so injected text never reaches
+        // the cursor. Keeping the window mapped (transparent when idle) avoids
+        // the per-dictation focus grab entirely.
+        if !shown {
             if let Err(e) = ui.show() {
                 eprintln!("[overlay] Failed to show window: {:?}", e);
             }
-            // Re-assert pass-through + always-on-top every time the window
-            // (re)appears — some WMs reset these across hide/show cycles.
             ui.window().with_winit_window(|w| {
                 if let Err(e) = w.set_cursor_hittest(false) {
                     eprintln!("[overlay] Failed to make window click-through: {:?}", e);
@@ -1502,16 +1506,23 @@ fn main() {
                 w.set_window_level(i_slint_backend_winit::winit::window::WindowLevel::AlwaysOnTop);
             });
             shown = true;
-        } else if !visible_needed && shown {
-            if let Err(e) = ui.hide() {
-                eprintln!("[overlay] Failed to hide window: {:?}", e);
-            }
-            shown = false;
         }
 
-        if !shown {
+        // When fully idle, push a single transparent frame and then stop
+        // updating, so the still-mapped window stays invisible without driving
+        // continuous redraws.
+        let visible_needed = active_main || active_pill || reveal_main > 0.004 || reveal_pill > 0.004;
+        if !visible_needed {
+            if !idle {
+                ui.set_reveal_main(0.0);
+                ui.set_reveal_pill(0.0);
+                ui.set_level(0.0);
+                idle = true;
+            }
             return;
         }
+        idle = false;
+
         if tx > -10000 {
             ui.window().set_position(slint::PhysicalPosition::new(tx, ty));
         }
