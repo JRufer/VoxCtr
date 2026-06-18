@@ -64,6 +64,7 @@ gtk = { version = "0.18", features = ["v3_24"] }
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 cuda = ["voxctrl-inference/cuda"]
+vulkan = ["voxctrl-inference/vulkan"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

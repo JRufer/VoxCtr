@@ -688,7 +688,7 @@ pub fn run() {
 
             // Spawn the Slint overlay helper process
             if let Some(overlay_path) = get_overlay_path() {
-                println!("Spawning Slint overlay helper: {:?}", overlay_path);
+                tracing::info!("Spawning Slint overlay helper: {:?}", overlay_path);
                 match std::process::Command::new(&overlay_path)
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::inherit())
@@ -709,8 +709,12 @@ pub fn run() {
                         }
                         // Wait for child in background so it doesn't become a zombie
                         std::thread::spawn(move || {
-                            let _ = child.wait();
-                            println!("Slint overlay process exited.");
+                            let status = child.wait();
+                            // Logged on stderr (tracing) so it is visible even when
+                            // stdout is block-buffered behind a pipe. If this fires
+                            // after the first dictation, the overlay is crashing
+                            // rather than hitting a window-mapping issue.
+                            tracing::warn!("Slint overlay process exited: {:?}", status);
                         });
                     }
                     Err(e) => {
@@ -1010,47 +1014,45 @@ pub fn calculate_overlay_y(
 }
 
 pub fn get_overlay_path() -> Option<std::path::PathBuf> {
+    // Logged via tracing (stderr) so the resolved path is visible even when
+    // stdout is block-buffered behind a pipe.
     if let Ok(mut current_path) = std::env::current_exe() {
-        println!("get_overlay_path: current_exe = {:?}", current_path);
+        tracing::info!("get_overlay_path: current_exe = {:?}", current_path);
         current_path.pop(); // Pop binary name
         let bin_name = if cfg!(target_os = "windows") {
             "voxctrl-overlay.exe"
         } else {
             "voxctrl-overlay"
         };
-        // Check same dir
+        // Check same dir (where the bundled sidecar lives next to the main app)
         let p1 = current_path.join(bin_name);
-        println!("get_overlay_path: checking p1 = {:?}", p1);
         if p1.exists() {
-            println!("get_overlay_path: found p1!");
+            tracing::info!("get_overlay_path: found alongside main binary: {:?}", p1);
             return Some(p1);
         }
         // Check parent dir (if running in deps/)
         current_path.pop();
         let p2 = current_path.join(bin_name);
-        println!("get_overlay_path: checking p2 = {:?}", p2);
         if p2.exists() {
-            println!("get_overlay_path: found p2!");
+            tracing::info!("get_overlay_path: found in parent dir: {:?}", p2);
             return Some(p2);
         }
 
-        // Check relative to current working directory
+        // Dev-only fallback: relative to the current working directory.
         if let Ok(cwd) = std::env::current_dir() {
             let p3 = cwd.join("target").join("debug").join(bin_name);
-            println!("get_overlay_path: checking p3 = {:?}", p3);
             if p3.exists() {
-                println!("get_overlay_path: found p3!");
+                tracing::info!("get_overlay_path: found in target/debug: {:?}", p3);
                 return Some(p3);
             }
             let p4 = cwd.join("src-tauri").join("target").join("debug").join(bin_name);
-            println!("get_overlay_path: checking p4 = {:?}", p4);
             if p4.exists() {
-                println!("get_overlay_path: found p4!");
+                tracing::info!("get_overlay_path: found in src-tauri/target/debug: {:?}", p4);
                 return Some(p4);
             }
         }
     }
-    println!("get_overlay_path: failed to find overlay binary!");
+    tracing::error!("get_overlay_path: overlay binary not found");
     None
 }
 

@@ -25,6 +25,10 @@ tempfile = { workspace = true }
 [features]
 default = []
 cuda = ["whisper-rs/cuda"]
+# Portable GPU acceleration via the ggml Vulkan backend. Works on NVIDIA/AMD/
+# Intel with just the host Vulkan driver and bundles into an AppImage without
+# CUDA's heavy runtime. Falls back to CPU when no Vulkan device is present.
+vulkan = ["whisper-rs/vulkan"]
 
 # Moonshine ONNX backend via onnxruntime
 moonshine = ["dep:ort", "dep:ndarray"]

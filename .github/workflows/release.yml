@@ -43,6 +43,16 @@ jobs:
             artifact_label: linux-x86_64-cuda
             cuda: true
 
+          # ── Linux Vulkan ───────────────────────────────────────────────────
+          # Portable GPU AppImage: accelerates NVIDIA/AMD/Intel via the host
+          # Vulkan driver, with CPU fallback. Far lighter to bundle than CUDA.
+          - name: linux-vulkan
+            os: ubuntu-22.04
+            features: "vulkan"
+            artifact_label: linux-x86_64-vulkan
+            cuda: false
+            vulkan: true
+
           # ── Windows CPU ────────────────────────────────────────────────────
           - name: windows-cpu
             os: windows-2022
@@ -79,6 +89,21 @@ jobs:
             squashfs-tools \
             pkg-config \
             build-essential
+
+      # ── Vulkan SDK (Linux) ──────────────────────────────────────────────────
+      # The ggml Vulkan backend compiles its compute shaders at build time with
+      # glslc, which ships in the LunarG Vulkan SDK. End-users only need their
+      # GPU's Vulkan driver at runtime (bundled loader finds the host ICD).
+      - name: Install Vulkan SDK (Linux)
+        if: runner.os == 'Linux' && matrix.vulkan
+        run: |
+          wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc \
+            | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc >/dev/null
+          sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-jammy.list \
+            https://packages.lunarg.com/vulkan/lunarg-vulkan-jammy.list
+          sudo apt-get update -q
+          sudo apt-get install -y vulkan-sdk
+          glslc --version
 
       # ── CUDA toolkit ────────────────────────────────────────────────────────
       # Installs CUDA headers + libraries for compilation only.
@@ -175,11 +200,20 @@ jobs:
       # and run without FUSE (uses unsquashfs from squashfs-tools instead).
       # QT_QPA_PLATFORM=offscreen prevents Qt platform errors in headless CI.
       - name: Build AppImage + deb (Linux, CPU)
-        if: runner.os == 'Linux' && !matrix.cuda
+        if: runner.os == 'Linux' && !matrix.cuda && !matrix.vulkan
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
           QT_QPA_PLATFORM: offscreen
         run: npm run tauri build
+
+      # Portable GPU AppImage. whisper.cpp's Vulkan backend links only
+      # libvulkan (lightweight, unlike CUDA), so linuxdeploy bundles it fine.
+      - name: Build AppImage + deb (Linux, Vulkan)
+        if: runner.os == 'Linux' && matrix.vulkan
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          QT_QPA_PLATFORM: offscreen
+        run: npm run tauri build -- --features vulkan
 
       # CUDA build uses --bundles deb only: the CUDA toolkit populates system
       # library paths with hundreds of CUDA .so files that linuxdeploy tries to
