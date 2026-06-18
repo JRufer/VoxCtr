@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "cargo build --bin voxctrl-overlay && npm run dev",
-    "beforeBuildCommand": "cargo build --bin voxctrl-overlay --release && node scripts/prepare-sidecar.mjs && npm run build"
+    "beforeDevCommand": "node scripts/prepare-sidecar.mjs --ensure && cargo build --bin voxctrl-overlay && node scripts/prepare-sidecar.mjs && npm run dev",
+    "beforeBuildCommand": "node scripts/prepare-sidecar.mjs --ensure && cargo build --bin voxctrl-overlay --release && node scripts/prepare-sidecar.mjs && npm run build"
   },
   "app": {
     "security": {
