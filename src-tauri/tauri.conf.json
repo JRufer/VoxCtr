@@ -7,7 +7,7 @@
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "cargo build --bin voxctrl-overlay && npm run dev",
-    "beforeBuildCommand": "cargo build --bin voxctrl-overlay --release && npm run build"
+    "beforeBuildCommand": "cargo build --bin voxctrl-overlay --release && node scripts/prepare-sidecar.mjs && npm run build"
   },
   "app": {
     "security": {
@@ -61,7 +61,9 @@
       "resources/cublas64_12.dll",
       "resources/cublasLt64_12.dll"
     ],
-    "externalBin": [],
+    "externalBin": [
+      "binaries/voxctrl-overlay"
+    ],
     "linux": {
       "deb": {
         "depends": [

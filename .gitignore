@@ -32,6 +32,9 @@ Thumbs.db
 # Logs
 *.log
 
+# Tauri sidecar binaries staged at build time (see scripts/prepare-sidecar.mjs)
+/src-tauri/binaries/
+
 # Rust
 /target/
 **/target/

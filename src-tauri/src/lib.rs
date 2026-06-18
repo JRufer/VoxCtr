@@ -753,17 +753,33 @@ pub fn run() {
                     let is_recording = state_for_ticker.is_recording();
                     let is_processing = state_for_ticker.is_processing();
 
-                    if let Some(tray) = handle.tray_by_id("main-tray") {
-                        if is_processing {
-                            let icon = &processing_frames[frame_idx];
-                            let _ = tray.set_icon(Some(icon.clone()));
-                            frame_idx = (frame_idx + 1) % 6;
-                            was_animating = true;
-                        } else if was_animating || is_recording != last_recording {
-                            let icon = if is_recording { &record_on_icon } else { &record_off_icon };
-                            let _ = tray.set_icon(Some(icon.clone()));
-                            was_animating = false;
-                        }
+                    // Decide whether the tray icon needs updating this tick and,
+                    // if so, which frame to show. The actual `set_icon` call must
+                    // happen on the GTK main thread: on Linux the tray is backed by
+                    // ayatana-appindicator/GTK, which is not thread-safe. Calling it
+                    // from this Tokio worker thread makes icon updates unreliable —
+                    // the animated icon flickers or disappears entirely on
+                    // appindicator-based desktops (e.g. GNOME). `run_on_main_thread`
+                    // marshals the update onto the loop that owns the tray.
+                    let next_icon: Option<tauri::image::Image<'static>> = if is_processing {
+                        let icon = processing_frames[frame_idx].clone();
+                        frame_idx = (frame_idx + 1) % 6;
+                        was_animating = true;
+                        Some(icon)
+                    } else if was_animating || is_recording != last_recording {
+                        was_animating = false;
+                        Some(if is_recording { record_on_icon.clone() } else { record_off_icon.clone() })
+                    } else {
+                        None
+                    };
+
+                    if let Some(icon) = next_icon {
+                        let handle_for_icon = handle.clone();
+                        let _ = handle.run_on_main_thread(move || {
+                            if let Some(tray) = handle_for_icon.tray_by_id("main-tray") {
+                                let _ = tray.set_icon(Some(icon));
+                            }
+                        });
                     }
 
                     let is_mcp_recording = state_for_ticker.is_mcp_recording();
