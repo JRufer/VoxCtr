@@ -1387,12 +1387,29 @@ fn main() {
 
         loop {
             line.clear();
-            if reader.read_line(&mut line).is_err() || line.is_empty() {
-                // Pipe closed, exit
-                slint::invoke_from_event_loop(move || {
-                    let _ = slint::quit_event_loop();
-                }).unwrap();
-                break;
+            match reader.read_line(&mut line) {
+                Ok(0) => {
+                    // Clean EOF: the parent closed our stdin, so shut down.
+                    eprintln!("[overlay] stdin closed (EOF); exiting event loop");
+                    let _ = slint::invoke_from_event_loop(|| {
+                        let _ = slint::quit_event_loop();
+                    });
+                    break;
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    // Transient interruption (e.g. EINTR): keep reading instead
+                    // of tearing down the overlay for the rest of the session.
+                    eprintln!("[overlay] stdin read interrupted, retrying: {e}");
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("[overlay] stdin read error; exiting event loop: {e}");
+                    let _ = slint::invoke_from_event_loop(|| {
+                        let _ = slint::quit_event_loop();
+                    });
+                    break;
+                }
             }
 
             if let Ok(msg) = serde_json::from_str::<serde_json::Value>(&line) {
@@ -1510,6 +1527,7 @@ fn main() {
                 w.set_window_level(i_slint_backend_winit::winit::window::WindowLevel::AlwaysOnTop);
             });
             shown = true;
+            eprintln!("[overlay] window mapped (kept mapped for the session)");
         }
 
         // Nothing has needed the overlay yet — leave it unmapped.
@@ -1681,7 +1699,11 @@ fn main() {
         }
     });
 
-    slint::run_event_loop_until_quit().unwrap();
+    if let Err(e) = slint::run_event_loop_until_quit() {
+        eprintln!("[overlay] event loop ended with error: {e}");
+    } else {
+        eprintln!("[overlay] event loop ended");
+    }
 }
 
 #[cfg(test)]
