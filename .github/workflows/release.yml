@@ -195,9 +195,13 @@ jobs:
         run: node_modules/.bin/tauri build --bundles deb -- --features cuda
 
       # ── Tauri build (Windows) ───────────────────────────────────────────────
+      # NSIS (setup.exe) only — the advertised Windows installer. The WiX/MSI
+      # bundler's `light.exe` fails to harvest the voxctrl-overlay sidecar, and
+      # the MSI is a secondary, unadvertised artifact. Call tauri directly so
+      # `--bundles nsis` reaches tauri instead of cargo.
       - name: Build installer (Windows, CPU)
         if: runner.os == 'Windows' && !matrix.cuda
-        run: npm run tauri build
+        run: npx tauri build --bundles nsis
 
       - name: Copy real CUDA DLLs (Windows, CUDA)
         if: runner.os == 'Windows' && matrix.cuda
@@ -209,7 +213,7 @@ jobs:
 
       - name: Build installer (Windows, CUDA)
         if: runner.os == 'Windows' && matrix.cuda
-        run: npm run tauri build -- --features cuda
+        run: npx tauri build --bundles nsis -- --features cuda
 
       # ── Collect and rename Linux artifacts ──────────────────────────────────
       # Search the whole workspace so the path is correct regardless of whether
