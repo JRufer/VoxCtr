@@ -1,17 +1,25 @@
 name: Release
 
-# Trigger: push a version tag (e.g. git tag v0.1.4 && git push --tags)
-# Can also be triggered manually from the Actions tab to re-run a failed build.
+# Trigger: every push to master builds and (re)creates the release for the
+# current app version (read from src-tauri/tauri.conf.json). Bump the version
+# there to start a fresh release; pushes at the same version refresh it.
+# Can also be triggered manually with an explicit tag to (re-)build.
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - master
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re-)build (e.g. v0.1.4)"
-        required: true
+        description: "Tag to (re-)build (e.g. v0.1.4). Defaults to the app version in tauri.conf.json."
+        required: false
         type: string
+
+# Only one release build per branch at a time; a newer push cancels an
+# in-progress one so the release reflects the latest commit.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write   # needed to create/update GitHub releases
@@ -310,13 +318,19 @@ jobs:
     if: always() && contains(needs.build.result, 'success')
 
     steps:
+      # Needed to read the app version for the default tag name.
+      - uses: actions/checkout@v4
+
       - name: Resolve tag name
         id: tag
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          # Manual dispatch may override the tag; otherwise derive it from the
+          # app version (e.g. 0.2.4 -> v0.2.4).
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
             echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
-            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+            echo "name=v${VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
       # Download everything produced by the build matrix
@@ -345,12 +359,17 @@ jobs:
             | Platform | File suffix | GPU required |
             |---|---|---|
             | Linux | `-linux-x86_64.AppImage` | None |
+            | Linux (GPU) | `-linux-x86_64-vulkan.AppImage` | Any Vulkan GPU |
             | Linux (NVIDIA) | `-linux-x86_64-cuda.deb` | NVIDIA driver 520+ |
             | Windows | `-windows-x86_64-setup.exe` | None |
             | Windows (NVIDIA) | `-windows-x86_64-cuda-setup.exe` | NVIDIA driver 520+ |
 
             **CUDA builds** use your GPU for Whisper inference (~3–10× faster).
             They require an NVIDIA driver but **not** the CUDA Toolkit.
+
+            **The Vulkan AppImage** is a portable GPU build: it accelerates any
+            NVIDIA/AMD/Intel GPU via the host Vulkan driver, and falls back to
+            CPU when no GPU is present.
 
             **CPU builds** run on any hardware, including AMD, Intel, and ARM.
 
