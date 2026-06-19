@@ -1535,8 +1535,15 @@ fn main() {
             return;
         }
 
-        // Mapped but idle: push a single transparent frame, then stop updating
-        // so the window stays invisible without driving continuous redraws.
+        // Mapped but idle: keep the window invisible (reveal == 0 draws
+        // nothing) but DON'T stop driving the surface. On Wayland, a window
+        // that stops drawing entirely also stops receiving frame callbacks from
+        // some compositors (Mutter/KWin) — so when the next dictation arrives,
+        // Slint marks the window dirty but the compositor never delivers a
+        // frame and the overlay is never re-presented. The result is the
+        // overlay showing exactly once per session. Nudging winit to redraw on
+        // every idle tick keeps the frame-callback loop alive; the idle frame
+        // is essentially free since nothing is drawn.
         if !visible_needed {
             if !idle {
                 ui.set_reveal_main(0.0);
@@ -1544,6 +1551,7 @@ fn main() {
                 ui.set_level(0.0);
                 idle = true;
             }
+            ui.window().with_winit_window(|w| w.request_redraw());
             return;
         }
         idle = false;
