@@ -223,6 +223,43 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: npm run tauri build -- --features vulkan
 
+      # linuxdeploy bundles whatever graphics/Wayland/input libraries exist on
+      # the build host. On ubuntu-22.04 those are older than modern desktops, and
+      # loading them instead of the host's copies breaks the Slint overlay's
+      # Wayland frame callbacks (it renders once, then the compositor never sends
+      # another frame) and trips "unrecognized keysym" xkbcommon errors. Strip
+      # them so the AppImage falls through to the host's libraries at runtime —
+      # this is what the AppImage excludelist exists for, and why a local
+      # build_appimage.sh (which bundles the user's own newer libs) works while
+      # the CI build did not. libvulkan is intentionally left bundled.
+      - name: Slim AppImage to host graphics/input libraries (Linux)
+        if: runner.os == 'Linux' && !matrix.cuda
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          set -euo pipefail
+          appimage=$(find . -path '*/bundle/appimage/*.AppImage' ! -name '*.zsync' | head -1)
+          if [ -z "${appimage:-}" ]; then echo "No AppImage found to slim"; exit 1; fi
+          echo "Slimming $appimage"
+          chmod +x ./appimagetool.bin
+
+          work=$(mktemp -d)
+          cp "$appimage" "$work/in.AppImage"
+          chmod +x "$work/in.AppImage"
+          ( cd "$work" && ./in.AppImage --appimage-extract >/dev/null )
+
+          root="$work/squashfs-root"
+          for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
+                     'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
+                     'libgbm.so*' 'libdrm.so*' \
+                     'libxkbcommon.so*' 'libxkbcommon-x11.so*'; do
+            find "$root" -name "$pat" -print -delete 2>/dev/null || true
+          done
+
+          rm -f "$appimage"
+          ARCH=x86_64 ./appimagetool.bin "$root" "$appimage"
+          echo "Repackaged $appimage ($(du -h "$appimage" | cut -f1))"
+
       # CUDA build uses --bundles deb only: the CUDA toolkit populates system
       # library paths with hundreds of CUDA .so files that linuxdeploy tries to
       # bundle into the AppImage, causing it to OOM or fail. deb packaging does
