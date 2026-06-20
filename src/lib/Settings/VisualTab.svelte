@@ -33,6 +33,11 @@
     { value: "spectrum", label: "Neon Spectrum" },
     { value: "terminal", label: "Retro Terminal" },
     { value: "vinyl", label: "Analog VU" },
+    { value: "aurora", label: "Aurora Ribbon" },
+    { value: "holo", label: "Holo Ring" },
+    { value: "petals", label: "Frequency Petals" },
+    { value: "dotstrip", label: "Minimal Dot Strip" },
+    { value: "starfield", label: "Starfield Spectrum" },
     ...customOverlays.map(o => ({ value: o.name, label: o.name }))
   ]);
 

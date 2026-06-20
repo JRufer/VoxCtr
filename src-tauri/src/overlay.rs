@@ -11,6 +11,19 @@ slint::slint! {
         o: float,
     }
 
+    export struct StarData {
+        x: float,
+        y: float,
+        r: float,
+        o: float,
+    }
+
+    export struct HoloNode {
+        x: float,
+        y: float,
+        o: float,
+    }
+
     export component OverlayWindow inherits Window {
         // Window properties
         always-on-top: true;
@@ -62,6 +75,31 @@ slint::slint! {
         in property <[float]> spectrum-bars: [];
         in property <string> ascii-meter: "";
         in property <string> vu-needle-path: "";
+
+        // Aurora ribbon (aurora)
+        in property <string> aurora-path: "";
+
+        // Holo ring (holo): pre-rotated orbital ring traces (computed in
+        // Rust, since Path/Rectangle have no rotation-angle) + per-node
+        // position/flash opacity
+        in property <string> holo-ring1-path: "";
+        in property <string> holo-ring2-path: "";
+        in property <string> holo-ring3-path: "";
+        in property <[HoloNode]> holo-nodes: [];
+
+        // Frequency petals (petals): pre-rotated spoke paths, grouped into
+        // three colour tiers (computed in Rust)
+        in property <string> petal-path-a: "";
+        in property <string> petal-path-b: "";
+        in property <string> petal-path-c: "";
+
+        // Minimal dot strip (dotstrip): per-dot size/brightness
+        in property <[float]> dot-bars: [];
+
+        // Starfield spectrum (starfield): fixed star field + connected
+        // level path threaded through the brighter "active" stars
+        in property <[StarData]> stars: [];
+        in property <string> starfield-path: "";
 
         // ─────────────────────────────────────────────────────────────
         // 1. WAVEFORM — "OSC-01" green phosphor oscilloscope.
@@ -1049,6 +1087,396 @@ slint::slint! {
         }
 
         // ─────────────────────────────────────────────────────────────
+        // 9. AURORA RIBBON — a flowing gradient ribbon that bends with
+        //    your voice, glowing cyan → violet → pink. Fades in with a
+        //    gentle rise, fades out the same way on unload.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "aurora" && reveal-main > 0.004) : Rectangle {
+            x: 28px;
+            y: 32px + (1.0 - Math.min(1.0, reveal-main)) * 14px;
+            width: 504px;
+            height: 126px;
+            clip: true;
+            border-radius: 16px;
+            background: @linear-gradient(165deg, rgba(8, 10, 18, 0.92) 0%, rgba(5, 6, 12, 0.96) 100%);
+            border-width: 1px;
+            border-color: rgba(168, 139, 250, 0.22);
+            opacity: Math.min(1.0, reveal-main);
+            drop-shadow-blur: 30px;
+            drop-shadow-color: rgba(124, 58, 237, 0.18);
+
+            HorizontalLayout {
+                x: 22px; y: 16px; width: 460px; height: 14px; spacing: 8px;
+
+                Rectangle {
+                    width: 6px; height: 6px; border-radius: 3px;
+                    y: (parent.height - self.height) / 2;
+                    background: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #a78bfa);
+                    drop-shadow-blur: 7px;
+                    drop-shadow-color: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #a78bfa);
+                    opacity: 0.4 + 0.6 * blink;
+                }
+                Text {
+                    text: "AURORA";
+                    color: #e9d5ff;
+                    font-size: 10px;
+                    font-weight: 800;
+                    font-family: "Outfit";
+                    letter-spacing: 2px;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: is-processing ? "· DRIFTING" : (!is-audio-ready ? "· WAKING" : "· LIVE");
+                    color: rgba(233, 213, 255, 0.4);
+                    font-size: 9px;
+                    font-weight: 500;
+                    font-family: "Outfit";
+                    letter-spacing: 1px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    horizontal-stretch: 0;
+                    text: target-label;
+                    color: rgba(233, 213, 255, 0.55);
+                    font-size: 9px;
+                    font-weight: 700;
+                    font-family: "Outfit";
+                    vertical-alignment: center;
+                    overflow: elide;
+                    max-width: 150px;
+                }
+            }
+
+            // Glow pass beneath the ribbon
+            Path {
+                x: 0; y: 38px; width: 504px; height: 78px;
+                viewbox-width: 504; viewbox-height: 78;
+                commands: aurora-path;
+                fill: transparent;
+                stroke: #a78bfa;
+                stroke-width: 12px;
+                opacity: 0.18;
+            }
+            // Crisp ribbon trace, tri-tone (cyan / violet / pink) drawn as
+            // three colour passes so the line reads as a gradient.
+            Path {
+                x: 0; y: 38px; width: 168px; height: 78px;
+                viewbox-width: 168; viewbox-height: 78;
+                commands: aurora-path;
+                clip: true;
+                fill: transparent;
+                stroke: #67e8f9;
+                stroke-width: 3px;
+            }
+            Path {
+                x: 168px; y: 38px; width: 168px; height: 78px;
+                viewbox-width: 504; viewbox-height: 78;
+                viewbox-x: 168;
+                commands: aurora-path;
+                clip: true;
+                fill: transparent;
+                stroke: #c4b5fd;
+                stroke-width: 3px;
+            }
+            Path {
+                x: 336px; y: 38px; width: 168px; height: 78px;
+                viewbox-width: 504; viewbox-height: 78;
+                viewbox-x: 336;
+                commands: aurora-path;
+                clip: true;
+                fill: transparent;
+                stroke: #f9a8d4;
+                stroke-width: 3px;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // 10. HOLO RING — rotating holographic orbital rings (like an
+        //     atom) with particle nodes that flash as the sweep passes.
+        //     Scales up and fades in on load, shrinks back on unload.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "holo" && reveal-main > 0.004) : Rectangle {
+            width: 250px * Math.max(0.001, Math.min(1.0, 0.4 + reveal-main * 0.6));
+            height: 190px * Math.max(0.001, Math.min(1.0, 0.4 + reveal-main * 0.6));
+            x: (560px - self.width) / 2;
+            y: (190px - self.height) / 2;
+            opacity: Math.min(1.0, reveal-main);
+
+            Text {
+                x: 24px; y: 16px;
+                text: "HOLO RING";
+                color: #f5d0fe;
+                font-size: 10px;
+                font-weight: 800;
+                font-family: "Outfit";
+                letter-spacing: 2px;
+            }
+            Rectangle {
+                x: 14px; y: 17px; width: 6px; height: 6px; border-radius: 3px;
+                background: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #e879f9);
+                opacity: 0.4 + 0.6 * blink;
+            }
+
+            Rectangle {
+                x: (parent.width - 180px) / 2;
+                y: (parent.height - 180px) / 2;
+                width: 180px;
+                height: 180px;
+
+                // Three orbital rings, evenly spaced in rotation. The
+                // rotated ellipse trace is pre-computed in Rust each tick
+                // (Path has no rotation-angle property in Slint).
+                Path {
+                    x: 0; y: 0; width: 180px; height: 180px;
+                    viewbox-width: 180; viewbox-height: 180;
+                    commands: holo-ring1-path;
+                    fill: transparent;
+                    stroke: #67e8f9;
+                    stroke-width: 1.4px;
+                    opacity: 0.42;
+                }
+                Path {
+                    x: 0; y: 0; width: 180px; height: 180px;
+                    viewbox-width: 180; viewbox-height: 180;
+                    commands: holo-ring2-path;
+                    fill: transparent;
+                    stroke: #d946ef;
+                    stroke-width: 1.4px;
+                    opacity: 0.42;
+                }
+                Path {
+                    x: 0; y: 0; width: 180px; height: 180px;
+                    viewbox-width: 180; viewbox-height: 180;
+                    commands: holo-ring3-path;
+                    fill: transparent;
+                    stroke: #f9a8d4;
+                    stroke-width: 1.4px;
+                    opacity: 0.42;
+                }
+
+                // Particle nodes around the rim, flashing as the sweep
+                // passes. Positions are pre-computed in Rust (Math.cos/sin
+                // need angle-typed arguments, not raw floats).
+                for nd[ni] in holo-nodes : Rectangle {
+                    width: 4.5px; height: 4.5px; border-radius: 2.25px;
+                    x: nd.x * 1px - 2.25px;
+                    y: nd.y * 1px - 2.25px;
+                    background: #f0abfc;
+                    opacity: nd.o;
+                    drop-shadow-blur: 5px;
+                    drop-shadow-color: #f0abfc;
+                }
+
+                // Audio-reactive core
+                Rectangle {
+                    width: (10px + level * 10px);
+                    height: self.width;
+                    border-radius: self.width / 2;
+                    x: 90px - self.width / 2;
+                    y: 90px - self.height / 2;
+                    background: #ffffff;
+                    opacity: 0.85 + 0.15 * blink;
+                    drop-shadow-blur: 14px;
+                    drop-shadow-color: is-processing ? #38bdf8 : #e879f9;
+                }
+            }
+
+            Text {
+                x: (parent.width - self.width) / 2;
+                y: parent.height - 24px;
+                width: 220px;
+                text: is-processing ? "decoding…" : (!is-audio-ready ? "calibrating…" : target-label);
+                color: rgba(245, 208, 254, 0.6);
+                font-size: 9.5px;
+                font-weight: 700;
+                font-family: "Outfit";
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // 11. FREQUENCY PETALS — a radial mandala of spokes blooming
+        //     outward from a centre point, colour-shifting magenta to
+        //     violet with intensity. Blooms open on load, close on
+        //     unload.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "petals" && reveal-main > 0.004) : Rectangle {
+            width: 190px;
+            height: 190px;
+            x: (560px - self.width) / 2;
+            y: 0;
+            opacity: Math.min(1.0, reveal-main);
+
+            Rectangle {
+                x: (parent.width - 170px) / 2;
+                y: 6px;
+                width: 170px;
+                height: 170px;
+
+                // Each spoke is a pre-rotated capsule path computed in Rust
+                // (Rectangle has no rotation-angle property in Slint),
+                // grouped into three colour tiers for a gradient-like look.
+                Path {
+                    x: 0; y: 0; width: 170px; height: 170px;
+                    viewbox-width: 170; viewbox-height: 170;
+                    commands: petal-path-a;
+                    fill: #fdf4ff;
+                    opacity: 0.85;
+                }
+                Path {
+                    x: 0; y: 0; width: 170px; height: 170px;
+                    viewbox-width: 170; viewbox-height: 170;
+                    commands: petal-path-b;
+                    fill: #f0abfc;
+                    opacity: 0.85;
+                }
+                Path {
+                    x: 0; y: 0; width: 170px; height: 170px;
+                    viewbox-width: 170; viewbox-height: 170;
+                    commands: petal-path-c;
+                    fill: #a78bfa;
+                    opacity: 0.85;
+                }
+
+                // Center hub
+                Rectangle {
+                    width: 22px; height: 22px; border-radius: 11px;
+                    x: 85px - 11px; y: 85px - 11px;
+                    background: #fdf4ff;
+                    opacity: 0.85 + 0.15 * blink;
+                    drop-shadow-blur: 14px;
+                    drop-shadow-color: #e879f9;
+                }
+            }
+
+            Text {
+                x: (parent.width - self.width) / 2;
+                y: parent.height - 20px;
+                width: 170px;
+                text: is-processing ? "blooming…" : (!is-audio-ready ? "budding…" : target-label);
+                color: rgba(253, 244, 255, 0.55);
+                font-size: 9px;
+                font-weight: 700;
+                font-family: "Outfit";
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // 12. MINIMAL DOT STRIP — an ultra-compact pill of dots that
+        //     light up and grow with your voice. The most unobtrusive
+        //     style. Fades and slightly grows in on load.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "dotstrip" && reveal-main > 0.004) : Rectangle {
+            width: 220px * Math.max(0.001, 0.85 + Math.min(1.0, reveal-main) * 0.15);
+            height: 56px;
+            x: (560px - self.width) / 2;
+            y: (190px - self.height) / 2;
+            border-radius: 28px;
+            background: rgba(10, 10, 12, 0.88);
+            border-width: 1px;
+            border-color: rgba(255, 255, 255, 0.08);
+            opacity: Math.min(1.0, reveal-main);
+            drop-shadow-blur: 22px;
+            drop-shadow-color: rgba(0, 0, 0, 0.5);
+
+            HorizontalLayout {
+                alignment: center;
+                spacing: 7px;
+
+                for s[i] in dot-bars : Rectangle {
+                    width: 7px * s;
+                    height: self.width;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: self.width / 2;
+                    background: is-processing ? #38bdf8 : (!is-audio-ready ? rgba(255, 255, 255, 0.18) : #ff6b35);
+                    opacity: 0.35 + 0.65 * Math.min(1.0, (s - 1.0) / 1.4);
+                    drop-shadow-blur: s > 1.5 ? 6px : 0px;
+                    drop-shadow-color: is-processing ? #38bdf8 : #ff6b35;
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
+        // 13. STARFIELD SPECTRUM — a constellation over a deep indigo
+        //     field, with a connected waveform thread running through
+        //     the brighter "active" stars. Fades in, drifts slightly.
+        // ─────────────────────────────────────────────────────────────
+        if (overlay-style == "starfield" && reveal-main > 0.004) : Rectangle {
+            x: 28px;
+            y: 32px + (1.0 - Math.min(1.0, reveal-main)) * 14px;
+            width: 504px;
+            height: 126px;
+            clip: true;
+            border-radius: 16px;
+            background: @radial-gradient(circle, #131b35 0%, #05060c 70%);
+            border-width: 1px;
+            border-color: rgba(99, 102, 241, 0.25);
+            opacity: Math.min(1.0, reveal-main);
+            drop-shadow-blur: 28px;
+            drop-shadow-color: rgba(99, 102, 241, 0.18);
+
+            HorizontalLayout {
+                x: 22px; y: 16px; width: 460px; height: 14px; spacing: 8px;
+
+                Rectangle {
+                    width: 6px; height: 6px; border-radius: 3px;
+                    y: (parent.height - self.height) / 2;
+                    background: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #818cf8);
+                    drop-shadow-blur: 7px;
+                    drop-shadow-color: is-processing ? #38bdf8 : (!is-audio-ready ? #f59e0b : #818cf8);
+                    opacity: 0.4 + 0.6 * blink;
+                }
+                Text {
+                    text: "STARFIELD";
+                    color: #c7d2fe;
+                    font-size: 10px;
+                    font-weight: 800;
+                    font-family: "Outfit";
+                    letter-spacing: 2px;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                Text {
+                    horizontal-stretch: 0;
+                    text: target-label;
+                    color: rgba(199, 210, 254, 0.55);
+                    font-size: 9px;
+                    font-weight: 700;
+                    font-family: "Outfit";
+                    vertical-alignment: center;
+                    overflow: elide;
+                    max-width: 150px;
+                }
+            }
+
+            // Background stars
+            for st[i] in stars : Rectangle {
+                width: st.r * 1px;
+                height: self.width;
+                border-radius: self.width / 2;
+                x: st.x * 1px;
+                y: st.y * 1px;
+                background: #e0e7ff;
+                opacity: st.o;
+            }
+
+            // Connected level thread running through the active stars
+            Path {
+                x: 0; y: 0; width: 504px; height: 126px;
+                viewbox-width: 504; viewbox-height: 126;
+                commands: starfield-path;
+                fill: transparent;
+                stroke: is-processing ? #7dd3fc : #818cf8;
+                stroke-width: 1.5px;
+                opacity: 0.7;
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────
         // Speaking pill — slides up from the bottom while the system
         // responds, with a live mini-equalizer.
         // ─────────────────────────────────────────────────────────────
@@ -1361,6 +1789,200 @@ fn vu_needle_path(angle: f32) -> String {
     )
 }
 
+// ── Aurora ribbon (aurora style) ──────────────────────────────────────────
+const AURORA_MID: f32 = 39.0;
+
+/// A flowing double-sine ribbon trace across the panel. Louder voice widens
+/// the swing; processing slows and smooths it into a gentle drift.
+fn aurora_path(width: f32, level: f32, phase: f32, processing: bool, ready: bool) -> String {
+    let amp = if processing {
+        10.0 + 4.0 * (phase * 0.9).sin()
+    } else if !ready {
+        3.0
+    } else {
+        6.0 + level * 24.0
+    };
+    let mut d = String::with_capacity(1024);
+    let mut x = 0.0_f32;
+    while x <= width {
+        let y = AURORA_MID
+            + (x * 0.018 + phase * 1.6).sin() * amp
+            + (x * 0.031 - phase * 0.9).sin() * amp * 0.35;
+        if x == 0.0 {
+            let _ = write!(d, "M {x:.0} {y:.1}");
+        } else {
+            let _ = write!(d, " L {x:.0} {y:.1}");
+        }
+        x += 6.0;
+    }
+    d
+}
+
+// ── Holo ring (holo style) ────────────────────────────────────────────────
+const HOLO_CX: f32 = 90.0;
+const HOLO_CY: f32 = 90.0;
+const HOLO_RX: f32 = 60.0;
+const HOLO_RY: f32 = 34.0;
+const HOLO_NODE_ANGLES: [f32; 6] = [0.0, 60.0, 120.0, 180.0, 240.0, 300.0];
+
+/// One orbital ring as a rotated ellipse, traced as a closed Bezier path
+/// around (HOLO_CX, HOLO_CY), offset by `rotation_deg`.
+fn holo_ring_path(rotation_deg: f32) -> String {
+    let rot = rotation_deg.to_radians();
+    let (cr, sr) = (rot.cos(), rot.sin());
+    // Sample the unrotated ellipse and rotate each point about the centre.
+    let pt = |t: f32| -> (f32, f32) {
+        let ex = HOLO_RX * t.cos();
+        let ey = HOLO_RY * t.sin();
+        (HOLO_CX + ex * cr - ey * sr, HOLO_CY + ex * sr + ey * cr)
+    };
+    let steps = 24;
+    let mut d = String::with_capacity(512);
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32 * std::f32::consts::TAU;
+        let (x, y) = pt(t);
+        if i == 0 {
+            let _ = write!(d, "M {x:.1} {y:.1}");
+        } else {
+            let _ = write!(d, " L {x:.1} {y:.1}");
+        }
+    }
+    let _ = write!(d, " Z");
+    d
+}
+
+/// Position of particle node `node_angle_deg` on the rim, rotated by the
+/// current sweep `rotation_deg`.
+fn holo_node_pos(rotation_deg: f32, node_angle_deg: f32) -> (f32, f32) {
+    let t = (node_angle_deg + rotation_deg).to_radians();
+    (HOLO_CX + t.cos() * HOLO_RX, HOLO_CY + t.sin() * HOLO_RY)
+}
+
+/// Particle nodes flash as the sweep passes their bearing, then fade until
+/// the next revolution (mirrors `blip_opacity`).
+fn holo_node_opacity(rotation_deg: f32, node_angle_deg: f32) -> f32 {
+    let d = (rotation_deg - node_angle_deg).rem_euclid(360.0);
+    (1.0 - d / 90.0).clamp(0.15, 1.0)
+}
+
+// ── Frequency petals (petals style) ───────────────────────────────────────
+const PETAL_COUNT: usize = 24;
+const PETAL_MAX: f32 = 58.0;
+const PETAL_CX: f32 = 85.0;
+const PETAL_CY: f32 = 85.0;
+const PETAL_HALF_W: f32 = 2.5;
+
+/// Spoke length in px for petal `i` of `n`, blooming outward with voice
+/// energy (mirrors `spectrum_bar_height`'s radial envelope shape).
+fn petal_length(i: usize, n: usize, level: f32, phase: f32, recording: bool, processing: bool, ready: bool, noise: f32) -> f32 {
+    let band = i as f32 / n as f32;
+    let amp = if processing {
+        ((phase * 2.2 + band * std::f32::consts::TAU).sin() * 0.5 + 0.5).powf(1.4)
+    } else if recording && !ready {
+        0.04 + 0.03 * noise
+    } else if recording {
+        let wobble = (phase * 3.4 + band * 7.0).sin() * 0.5 + 0.5;
+        (level * (0.5 + 0.5 * wobble) * (0.75 + 0.5 * noise)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    14.0 + (PETAL_MAX - 14.0) * amp
+}
+
+/// One spoke as a rounded capsule path, rotated by `angle_deg`.
+fn petal_spoke_path(angle_deg: f32, length: f32) -> String {
+    let a = angle_deg.to_radians();
+    let (c, s) = (a.cos(), a.sin());
+    let rotate = |x: f32, y: f32| -> (f32, f32) { (PETAL_CX + x * c - y * s, PETAL_CY + x * s + y * c) };
+    let (x0, y0) = rotate(0.0, PETAL_HALF_W);
+    let (x1, y1) = rotate(length, PETAL_HALF_W);
+    let (x2, y2) = rotate(length, -PETAL_HALF_W);
+    let (x3, y3) = rotate(0.0, -PETAL_HALF_W);
+    format!(
+        "M {x0:.1} {y0:.1} L {x1:.1} {y1:.1} A {PETAL_HALF_W} {PETAL_HALF_W} 0 0 1 {x2:.1} {y2:.1} L {x3:.1} {y3:.1} Z"
+    )
+}
+
+/// Build the combined multi-subpath string for every third spoke starting
+/// at `offset` (used to split the spokes into three colour tiers).
+fn petal_group_path(lengths: &[f32], offset: usize) -> String {
+    let n = lengths.len();
+    let mut d = String::with_capacity(lengths.len() * 80);
+    for i in (offset..n).step_by(3) {
+        d.push_str(&petal_spoke_path(i as f32 * (360.0 / n as f32), lengths[i]));
+        d.push(' ');
+    }
+    d
+}
+
+// ── Minimal dot strip (dotstrip style) ────────────────────────────────────
+const DOTSTRIP_DOTS: usize = 9;
+
+/// Scale factor (roughly 1.0..2.2) for dot `i` of `n`, lighting up
+/// centre-out with voice energy (mirrors `mono_bar_height`'s envelope).
+fn dotstrip_scale(i: usize, n: usize, level: f32, phase: f32, recording: bool, processing: bool, ready: bool, noise: f32) -> f32 {
+    let mid = (n as f32 - 1.0) / 2.0;
+    let envelope = 1.0 - (i as f32 - mid).abs() / (mid + 1.0) * 0.5;
+    let amp = if processing {
+        ((phase * 4.0 - i as f32 * 0.7).sin() * 0.5 + 0.5) * envelope
+    } else if recording && !ready {
+        0.05
+    } else if recording {
+        let ripple = (phase * 3.2 - i as f32 * 0.6).sin();
+        (level * envelope * (0.9 + 0.1 * ripple) * (0.85 + 0.3 * noise)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    1.0 + amp * 1.2
+}
+
+// ── Starfield spectrum (starfield style) ──────────────────────────────────
+const STARFIELD_STAR_COUNT: usize = 36;
+const STARFIELD_W: f32 = 504.0;
+const STARFIELD_H: f32 = 126.0;
+const STARFIELD_MID: f32 = 74.0;
+const STARFIELD_AMP: f32 = 26.0;
+
+/// Deterministic fixed star layout, generated once at startup with a tiny
+/// LCG so the field doesn't reshuffle every frame.
+fn build_starfield(seed: &mut u32) -> Vec<StarData> {
+    let mut next = || -> f32 {
+        *seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+        (*seed >> 8) as f32 / ((u32::MAX >> 8) as f32)
+    };
+    (0..STARFIELD_STAR_COUNT)
+        .map(|_| StarData {
+            x: next() * STARFIELD_W,
+            y: 14.0 + next() * (STARFIELD_H - 24.0),
+            r: 1.0 + next() * 1.8,
+            o: 0.15 + next() * 0.35,
+        })
+        .collect()
+}
+
+/// Twinkle opacity for a star with a fixed per-star `phase_offset`: a slow
+/// shimmer that brightens with voice energy.
+fn star_twinkle(base_o: f32, level: f32, phase: f32, phase_offset: f32) -> f32 {
+    let shimmer = (phase * 1.3 + phase_offset).sin() * 0.5 + 0.5;
+    (base_o + shimmer * 0.25 + level * 0.3).clamp(0.0, 1.0)
+}
+
+/// Render the level-history ring buffer as a connected thread across the
+/// starfield panel (mirrors `build_osc_path`).
+fn starfield_path(hist: &VecDeque<f32>) -> String {
+    let mut d = String::with_capacity(2048);
+    for (i, v) in hist.iter().enumerate() {
+        let x = i as f32 * 4.0;
+        let y = (STARFIELD_MID - v * STARFIELD_AMP).clamp(4.0, STARFIELD_H - 4.0);
+        if i == 0 {
+            let _ = write!(d, "M {x:.0} {y:.1}");
+        } else {
+            let _ = write!(d, " L {x:.0} {y:.1}");
+        }
+    }
+    d
+}
+
 fn main() {
     let ui = OverlayWindow::new().unwrap();
 
@@ -1467,6 +2089,11 @@ fn main() {
     let mut lcg_state = 12345_u32;
     let mut shown = false;
     let mut idle = false;
+    let mut holo_rotation = 0.0_f32;
+    let mut starfield_hist: VecDeque<f32> = VecDeque::from(vec![0.0_f32; 126]);
+    let mut starfield_seed = 99991_u32;
+    let stars = build_starfield(&mut starfield_seed);
+    let star_offsets: Vec<f32> = (0..stars.len()).map(|i| i as f32 * 0.71).collect();
 
     const DT: f32 = 0.016;
 
@@ -1687,6 +2314,73 @@ fn main() {
                 };
                 spring(&mut vu_angle, &mut vu_vel, target_angle, DT);
                 ui.set_vu_needle_path(vu_needle_path(vu_angle).into());
+            }
+
+            // Aurora ribbon: a flowing sine trace, glow + tri-tone passes
+            // all share the same underlying path.
+            "aurora" => {
+                ui.set_aurora_path(aurora_path(504.0, cur_level, phase, proc, ready).into());
+            }
+
+            // Holo ring: a steadily rotating sweep with orbital ring traces
+            // and particle nodes that flash as the sweep passes.
+            "holo" => {
+                let speed = if proc { 140.0 } else if rec && ready { 90.0 + cur_level * 120.0 } else { 30.0 };
+                holo_rotation = (holo_rotation + speed * DT).rem_euclid(360.0);
+                ui.set_holo_ring1_path(holo_ring_path(holo_rotation).into());
+                ui.set_holo_ring2_path(holo_ring_path(holo_rotation + 60.0).into());
+                ui.set_holo_ring3_path(holo_ring_path(holo_rotation + 120.0).into());
+
+                let nodes = std::rc::Rc::new(slint::VecModel::default());
+                for &na in HOLO_NODE_ANGLES.iter() {
+                    let (x, y) = holo_node_pos(holo_rotation, na);
+                    let o = holo_node_opacity(holo_rotation, na);
+                    nodes.push(HoloNode { x, y, o });
+                }
+                ui.set_holo_nodes(nodes.into());
+            }
+
+            // Frequency petals: a radial mandala of spokes blooming
+            // outward, split into three colour tiers.
+            "petals" => {
+                let n = PETAL_COUNT;
+                let lengths: Vec<f32> = (0..n)
+                    .map(|i| petal_length(i, n, cur_level, phase, rec, proc, ready, rand()))
+                    .collect();
+                ui.set_petal_path_a(petal_group_path(&lengths, 0).into());
+                ui.set_petal_path_b(petal_group_path(&lengths, 1).into());
+                ui.set_petal_path_c(petal_group_path(&lengths, 2).into());
+            }
+
+            // Minimal dot strip: a compact row of dots lighting up
+            // centre-out with the voice level.
+            "dotstrip" => {
+                let n = DOTSTRIP_DOTS;
+                let dots = std::rc::Rc::new(slint::VecModel::default());
+                for i in 0..n {
+                    dots.push(dotstrip_scale(i, n, cur_level, phase, rec, proc, ready, rand()));
+                }
+                ui.set_dot_bars(dots.into());
+            }
+
+            // Starfield spectrum: a fixed constellation with a connected
+            // level-history thread running through it.
+            "starfield" => {
+                let sample = osc_sample(rec, proc, ready, cur_level, phase, rand() * 2.0 - 1.0);
+                starfield_hist.pop_front();
+                starfield_hist.push_back(sample);
+                ui.set_starfield_path(starfield_path(&starfield_hist).into());
+
+                let live_stars = std::rc::Rc::new(slint::VecModel::default());
+                for (st, &offset) in stars.iter().zip(star_offsets.iter()) {
+                    live_stars.push(StarData {
+                        x: st.x,
+                        y: st.y,
+                        r: st.r,
+                        o: star_twinkle(st.o, cur_level, phase, offset),
+                    });
+                }
+                ui.set_stars(live_stars.into());
             }
 
             _ => {}
@@ -2092,5 +2786,172 @@ mod tests {
         let (tx, ty) = (nums[2], nums[3]);
         assert!((tx - VU_PIVOT_X).abs() < 0.01, "zero angle must point straight up");
         assert!(ty < VU_PIVOT_Y, "needle tip must be above the pivot");
+    }
+
+    // ── Aurora ribbon (aurora) ───────────────────────────────────────────
+
+    #[test]
+    fn aurora_path_spans_the_full_width() {
+        let path = aurora_path(504.0, 0.5, 0.0, false, true);
+        let nums: Vec<f32> = path.split_whitespace().filter_map(|t| t.parse::<f32>().ok()).collect();
+        assert_eq!(nums[0], 0.0, "trace must start at the left edge");
+        assert!(nums[nums.len() - 2] >= 498.0, "trace must reach the right edge");
+    }
+
+    #[test]
+    fn aurora_swing_grows_with_level() {
+        let quiet = aurora_path(120.0, 0.0, 1.3, false, true);
+        let loud = aurora_path(120.0, 1.0, 1.3, false, true);
+        let spread = |p: &str| -> f32 {
+            let ys: Vec<f32> = p
+                .split_whitespace()
+                .filter_map(|t| t.parse::<f32>().ok())
+                .skip(1)
+                .step_by(2)
+                .collect();
+            ys.iter().cloned().fold(f32::MIN, f32::max) - ys.iter().cloned().fold(f32::MAX, f32::min)
+        };
+        assert!(spread(&loud) > spread(&quiet), "louder voice must widen the ribbon's swing");
+    }
+
+    // ── Holo ring (holo) ─────────────────────────────────────────────────
+
+    #[test]
+    fn holo_ring_path_is_closed_and_centred() {
+        let path = holo_ring_path(0.0);
+        assert!(path.starts_with("M "));
+        assert!(path.ends_with(" Z"));
+        let nums: Vec<f32> = path
+            .trim_end_matches(" Z")
+            .split_whitespace()
+            .filter_map(|t| t.parse::<f32>().ok())
+            .collect();
+        for chunk in nums.chunks(2) {
+            let (x, y) = (chunk[0], chunk[1]);
+            let dist = ((x - HOLO_CX).powi(2) + (y - HOLO_CY).powi(2)).sqrt();
+            assert!(dist <= HOLO_RX + 0.1, "ring point must stay within the major radius, got {dist}");
+        }
+    }
+
+    #[test]
+    fn holo_node_orbits_the_centre() {
+        let (x, y) = holo_node_pos(0.0, 0.0);
+        assert!((x - (HOLO_CX + HOLO_RX)).abs() < 0.01, "node at angle 0 sits on the rim's +x edge");
+        assert!((y - HOLO_CY).abs() < 0.01);
+    }
+
+    #[test]
+    fn holo_node_flashes_on_sweep_pass_and_fades_after() {
+        let on_pass = holo_node_opacity(60.0, 60.0);
+        let half_turn_away = holo_node_opacity(60.0, 240.0);
+        assert!(on_pass > half_turn_away, "node bearing matching the sweep must be brighter");
+        assert!(on_pass <= 1.0 && half_turn_away >= 0.15);
+    }
+
+    // ── Frequency petals (petals) ────────────────────────────────────────
+
+    #[test]
+    fn petal_length_grows_with_level() {
+        let quiet = petal_length(0, PETAL_COUNT, 0.0, 0.0, true, false, true, 0.0);
+        let loud = petal_length(0, PETAL_COUNT, 1.0, 0.0, true, false, true, 0.0);
+        assert!(loud > quiet);
+    }
+
+    #[test]
+    fn petal_length_sits_at_baseline_when_idle() {
+        let idle = petal_length(3, PETAL_COUNT, 0.8, 1.0, false, false, true, 0.5);
+        assert_eq!(idle, 14.0);
+    }
+
+    #[test]
+    fn petal_spoke_path_is_anchored_at_the_centre() {
+        let path = petal_spoke_path(0.0, 30.0);
+        let nums: Vec<f32> = path
+            .split_whitespace()
+            .filter_map(|t| t.parse::<f32>().ok())
+            .collect();
+        let (x0, y0) = (nums[0], nums[1]);
+        let dist = ((x0 - PETAL_CX).powi(2) + (y0 - PETAL_CY).powi(2)).sqrt();
+        assert!(dist <= PETAL_HALF_W + 0.1, "spoke base must sit near the hub centre");
+    }
+
+    #[test]
+    fn petal_group_path_only_includes_every_third_spoke() {
+        let lengths = vec![20.0; PETAL_COUNT];
+        let group = petal_group_path(&lengths, 0);
+        // Each spoke contributes exactly one "M" subpath start.
+        let count = group.matches('M').count();
+        assert_eq!(count, PETAL_COUNT / 3);
+    }
+
+    // ── Minimal dot strip (dotstrip) ─────────────────────────────────────
+
+    #[test]
+    fn dotstrip_scale_grows_with_level() {
+        let quiet = dotstrip_scale(4, DOTSTRIP_DOTS, 0.0, 0.0, true, false, true, 0.0);
+        let loud = dotstrip_scale(4, DOTSTRIP_DOTS, 1.0, 0.0, true, false, true, 0.0);
+        assert!(loud > quiet);
+    }
+
+    #[test]
+    fn dotstrip_scale_sits_at_baseline_when_idle() {
+        let idle = dotstrip_scale(4, DOTSTRIP_DOTS, 0.9, 1.0, false, false, true, 0.5);
+        assert_eq!(idle, 1.0);
+    }
+
+    #[test]
+    fn dotstrip_scale_is_centre_weighted() {
+        let centre = dotstrip_scale(4, DOTSTRIP_DOTS, 1.0, 0.0, true, false, true, 0.0);
+        let edge = dotstrip_scale(0, DOTSTRIP_DOTS, 1.0, 0.0, true, false, true, 0.0);
+        assert!(centre >= edge, "centre dot should react at least as strongly as an edge dot");
+    }
+
+    // ── Starfield spectrum (starfield) ───────────────────────────────────
+
+    #[test]
+    fn starfield_layout_is_deterministic_and_in_bounds() {
+        let mut seed_a = 99991_u32;
+        let mut seed_b = 99991_u32;
+        let stars_a = build_starfield(&mut seed_a);
+        let stars_b = build_starfield(&mut seed_b);
+        assert_eq!(stars_a.len(), STARFIELD_STAR_COUNT);
+        for (a, b) in stars_a.iter().zip(stars_b.iter()) {
+            assert_eq!(a.x, b.x, "same seed must produce the same layout");
+            assert_eq!(a.y, b.y);
+        }
+        for s in &stars_a {
+            assert!(s.x >= 0.0 && s.x <= STARFIELD_W);
+            assert!(s.y >= 0.0 && s.y <= STARFIELD_H);
+        }
+    }
+
+    #[test]
+    fn star_twinkle_brightens_with_level() {
+        let quiet = star_twinkle(0.2, 0.0, 0.0, 0.0);
+        let loud = star_twinkle(0.2, 1.0, 0.0, 0.0);
+        assert!(loud > quiet);
+    }
+
+    #[test]
+    fn starfield_path_has_one_point_per_sample() {
+        let hist: VecDeque<f32> = VecDeque::from(vec![0.0_f32; 126]);
+        let path = starfield_path(&hist);
+        assert_eq!(path.matches('L').count() + 1, hist.len());
+    }
+
+    #[test]
+    fn starfield_trace_stays_inside_the_panel() {
+        let mut hist: VecDeque<f32> = VecDeque::from(vec![0.0_f32; 126]);
+        hist[60] = 5.0;
+        let path = starfield_path(&hist);
+        let ys: Vec<f32> = path
+            .split_whitespace()
+            .filter_map(|t| t.parse::<f32>().ok())
+            .skip(1)
+            .step_by(2)
+            .collect();
+        for y in ys {
+            assert!(y >= 0.0 && y <= STARFIELD_H, "trace must stay inside the panel, got {y}");
+        }
     }
 }
