@@ -15,6 +15,8 @@ The main VoxCtrl process spawns the `voxctrl-overlay` helper binary at startup a
 
 The overlay is shown automatically when recording starts and hidden when transcription completes (provided `ui.show_overlay` is enabled). The active style is determined by `config.ui.overlay_style` and is hot-switched without restarting the helper.
 
+> **Note:** `src/lib/Overlay/` contains a parallel set of Svelte components (and a `/overlay` route) mirroring 8 of the styles below, plus support for fetching custom HTML overlays via `get_custom_overlays`. This layer is currently inactive in production — no Tauri window loads `/overlay` — and it predates the native Slint renderer becoming the only overlay path. Treat the styles below as describing the native Slint helper only.
+
 ### Load & Unload Animations
 
 Every built-in style plays a dedicated load animation when it appears and an unload animation when it disappears. Animations are driven by a slightly-underdamped spring (so overlays land with a subtle bounce), and the helper window intentionally **stays alive until the unload animation finishes** instead of vanishing on the same frame recording stops. Each style interprets the spring's progress in its own way — see the per-style descriptions below.
@@ -54,7 +56,7 @@ If the configured target monitor is unplugged or disconnected at runtime, the Ta
 
 ## Built-in Styles
 
-Eight built-in styles are available — each with its own visual identity, its own kind of audio visualizer, its own load/unload animation, and a clear indicator of the active routing target. The default is **Ocean Wave**.
+Thirteen built-in styles are available — each with its own visual identity, its own kind of audio visualizer, its own load/unload animation, and a clear indicator of the active routing target. The default is **Ocean Wave**.
 
 All styles share three state palettes: **Recording** (the style's signature color), **Initializing** (amber, while the microphone stream is connecting), and **Processing** (sky blue, while the AI is transcribing).
 
@@ -112,6 +114,41 @@ A warm, vintage VU meter in cream and amber tones with a real dial face.
 - **Target indicator**: a caption beneath the meter face showing the active target label.
 - **Load/unload**: the panel fades in and settles upward slightly into place on load, and reverses on unload.
 - **States**: red LED + needle resting at `-20` (idle/standby), amber LED (initializing), blue LED with the needle sweeping on its own (processing), red LED with the needle tracking your voice (recording).
+
+### Aurora Ribbon (`"aurora"`)
+A flowing holographic ribbon panel in violet, with a tri-tone (cyan → violet → pink) sine trace drawn as three overlapping colour passes to fake a gradient stroke.
+- **Visualizer**: a single flowing sine-wave ribbon whose amplitude widens with voice energy, rendered as a soft glow pass beneath a crisp tri-tone trace.
+- **Target indicator**: a label in the header beside the "AURORA" title.
+- **Load/unload**: the whole panel fades in and out in place.
+- **States**: "· LIVE" (violet LED), "· WAKING" (amber, initializing), "· DRIFTING" (blue, processing — the ribbon slows into a gentle drift).
+
+### Holo Ring (`"holo"`)
+A rotating holographic atom: three orbital rings sweeping around a glowing core, with particle nodes flashing as the sweep passes.
+- **Visualizer**: three concentric elliptical rings (cyan/magenta/pink) that continuously rotate — faster while processing or speaking louder — plus six rim particle nodes that flash brightest as the rotation passes their bearing, and an audio-reactive core circle that swells with the microphone level.
+- **Target indicator**: a caption beneath the rings showing the active target label.
+- **Load/unload**: the whole assembly scales up and fades in on load, shrinks back on unload.
+- **States**: "calibrating…" (amber, initializing), "decoding…" (blue, processing — sweep spins fastest).
+
+### Frequency Petals (`"petals"`)
+A radial mandala of 24 spokes blooming outward from a glowing centre hub, magenta to violet.
+- **Visualizer**: spokes arranged in a full circle, each lengthening with voice energy in a centre-weighted radial envelope (mirrors the Neon Spectrum band shape, wrapped into a circle).
+- **Target indicator**: a caption beneath the flower showing the active target label.
+- **Load/unload**: the mandala blooms open on load and closes back on unload.
+- **States**: "budding…" (amber, initializing), "blooming…" (blue, processing — spokes pulse in a traveling wave).
+
+### Minimal Dot Strip (`"dotstrip"`)
+An ultra-compact pill of dots — the most unobtrusive style.
+- **Visualizer**: a row of 9 dots that grow and brighten centre-out with voice energy, with a gentle ripple traveling across the row while recording and all dots pulsing in lock-step while processing.
+- **Target indicator**: none on the pill itself — kept deliberately minimal.
+- **Load/unload**: the pill fades in with a slight grow, and reverses on unload.
+- **States**: dim dots (initializing), orange (recording), blue (processing).
+
+### Starfield Spectrum (`"starfield"`)
+A constellation over a deep indigo field, with a connected waveform thread running through it.
+- **Visualizer**: a fixed field of 36 twinkling background stars (brightness shimmers and responds to voice energy) plus a connected level-history thread drawn across the panel like a sparkline.
+- **Target indicator**: a label in the header beside the "STARFIELD" title.
+- **Load/unload**: the panel fades in and drifts slightly into place, reversing on unload.
+- **States**: indigo LED (recording), amber LED (initializing), blue LED and thread colour (processing).
 
 ### Speaking Pill
 

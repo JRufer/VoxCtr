@@ -140,11 +140,11 @@ VoxCtrl uses Tokio for async I/O plus dedicated OS threads for latency-sensitive
 
 ## Frontend Architecture
 
-The Svelte frontend is a single-page app with three logical "pages" rendered as separate Tauri windows:
+The Svelte frontend is a single-page app whose routes back the Tauri windows declared in `tauri.conf.json` (`settings`, `history`, `udev-warning`):
 
 ```
 App.svelte  (route switcher)
-  ├── /settings  → Settings component (sidebar with 9 tabs)
+  ├── /settings      → Settings component (sidebar with 9 tabs)
   │     ├── GeneralTab
   │     ├── EngineTab
   │     ├── RoutingTab     (targets + bindings editor)
@@ -155,15 +155,25 @@ App.svelte  (route switcher)
   │     ├── OllamaTab
   │     └── AboutTab
   │
-  ├── /overlay   → Overlay component (web overlay layer; the on-screen HUD
-  │     │          for built-in styles is the native voxctrl-overlay helper)
-  │     ├── BlueWave       (default — "Ocean Wave" tide pool)
-  │     ├── VoiceCard      ("Voice Card" VU LED matrix card)
-  │     ├── Waveform       (green-phosphor oscilloscope)
-  │     └── Pulse          ("Pulse Ring" sonar dial)
-  │
-  └── /history   → History component
+  ├── /history       → History component
+  └── /udev-warning  → Udev diagnostics component
 ```
+
+The on-screen overlay HUD is rendered entirely by the native `voxctrl-overlay`
+Slint helper process (see [Overlay UI Guide](./overlays.md)), not by the
+frontend. `App.svelte` also has a route guard for `/overlay`, and
+`src/lib/Overlay/` still contains a parallel set of Svelte components
+(`Overlay.svelte`, `BlueWave.svelte`, `VoiceCard.svelte`, `Waveform.svelte`,
+`Pulse.svelte`, `MonoBars.svelte`, `Spectrum.svelte`, `Terminal.svelte`,
+`Vinyl.svelte`) that mirror eight of the built-in Slint styles. **No Tauri
+window currently loads `/overlay`** — `tauri.conf.json` only declares
+`settings`, `history`, and `udev-warning` windows, and nothing in
+`src-tauri/src/lib.rs` opens one dynamically. This Svelte layer (and the
+related `get_custom_overlays` custom-HTML-overlay feature it was built to
+host) is inactive/legacy code from before the native Slint renderer became
+the only overlay path; it has not been kept in sync with the five styles
+added after it (Aurora Ribbon, Holo Ring, Frequency Petals, Minimal Dot
+Strip, Starfield Spectrum).
 
 **State management:**
 - `src/stores/config.ts` — reactive `AppConfig` with 400ms debounced auto-save via `save_config` IPC; also listens for `config-changed` events

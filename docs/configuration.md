@@ -147,7 +147,7 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | Key | Type | Values | Default | Description |
 |---|---|---|---|---|
 | `show_overlay` | bool | | `true` | Whether the overlay window is currently visible |
-| `overlay_style` | string | `"voice_card"`, `"waveform"`, `"pulse"`, `"blue_wave"`, `"none"` | `"blue_wave"` | HUD visualization style |
+| `overlay_style` | string | `"voice_card"`, `"waveform"`, `"pulse"`, `"blue_wave"`, `"mono_bars"`, `"spectrum"`, `"terminal"`, `"vinyl"`, `"aurora"`, `"holo"`, `"petals"`, `"dotstrip"`, `"starfield"`, `"none"`, or a custom overlay name | `"blue_wave"` | HUD visualization style |
 | `overlay_position` | string | `"top"`, `"center"`, `"bottom"` | `"center"` | Screen positioning of the overlay window |
 | `overlay_monitor` | string | `"primary"` or monitor name | `"primary"` | Specific display screen for visual overlay |
 | `auto_show_settings` | bool | | `true` | Auto-show Settings window on startup |

@@ -266,7 +266,7 @@ mod tests {
     fn test_default_config_values() {
         let cfg = AppConfig::default();
         assert!(cfg.ui.auto_show_settings);
-        assert_eq!(cfg.ui.overlay_style, OverlayStyle::BlueWave);
+        assert_eq!(cfg.ui.overlay_style, "blue_wave");
     }
 }
 ```

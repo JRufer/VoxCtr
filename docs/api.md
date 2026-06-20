@@ -367,7 +367,7 @@ interface AudioConfig {
 
 interface UiConfig {
   show_overlay: boolean;
-  overlay_style: "voice_card" | "waveform" | "pulse" | "blue_wave" | "none";
+  overlay_style: "voice_card" | "waveform" | "pulse" | "blue_wave" | "mono_bars" | "spectrum" | "terminal" | "vinyl" | "aurora" | "holo" | "petals" | "dotstrip" | "starfield" | "none" | string; // string = a custom overlay's name
   overlay_position: string;
   overlay_monitor: string;
   auto_show_settings: boolean;

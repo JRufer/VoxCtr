@@ -42,7 +42,7 @@ A single hotkey binding can route to **multiple targets simultaneously**.
 
 ### Visualization & HUD
 - Transparent floating overlay window with real-time audio visualization
-- Four overlay styles: Blue Wave (default), Voice Card, Waveform, Pulse
+- 13 overlay styles: Blue Wave (default), Voice Card, Waveform, Pulse Ring, Mono Bars, Neon Spectrum, Retro Terminal, Analog VU, Aurora Ribbon, Holo Ring, Frequency Petals, Minimal Dot Strip, Starfield Spectrum
 - Auto-show on recording start, auto-hide on completion
 
 ### Post-Processing Pipeline

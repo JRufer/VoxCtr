@@ -12,7 +12,7 @@ VoxCtrl opens separate native windows managed by Tauri, plus a native overlay he
 | Overlay | `voxctrl-overlay` helper (Slint) | 560 × 190 | Transparent, always-on-top, no decorations, click-through |
 | History | `/history` | 600 × 500 | Resizable, standard chrome |
 
-The Tauri windows are declared in `src-tauri/tauri.conf.json`, start hidden (`visible: false`), and are shown programmatically. The overlay is a separate native process (`src-tauri/src/overlay.rs`) spawned at startup and driven over stdin; the Svelte `/overlay` route hosts the web counterparts of the same visualizers (used for custom HTML overlays).
+The Tauri windows are declared in `src-tauri/tauri.conf.json`, start hidden (`visible: false`), and are shown programmatically. The overlay is a separate native process (`src-tauri/src/overlay.rs`) spawned at startup and driven over stdin. There is also a `/overlay` route and a matching set of Svelte components in `src/lib/Overlay/`, but no Tauri window currently loads that route — it's legacy/inactive code left over from before the native Slint renderer became the only overlay path, and it only mirrors 8 of the 13 current styles (the 5 newest styles have no Svelte counterpart).
 
 ---
 
@@ -98,19 +98,46 @@ The window coordinates are calculated dynamically relative to the active display
 
 ### Visualization Styles
 
-Set via `ui.overlay_style` in config. Each style has a unique identity, audio visualizer, and target indicator — see the [Overlay UI Guide](./overlays.md) for full details. Svelte components with the same designs live in `src/lib/Overlay/` for the web overlay layer.
+Set via `ui.overlay_style` in config. Each style has a unique identity, audio visualizer, and target indicator — see the [Overlay UI Guide](./overlays.md) for full details. Eight of the thirteen styles also have a same-named (but currently unused — see above) Svelte component in `src/lib/Overlay/`, noted below where one exists.
 
 #### `blue_wave` (default) — Ocean Wave
-A glass tide pool: three layered waves whose tide rises with the microphone level, rising bubbles, and a buoy tag bobbing on the surface that shows the active target. Water fills on load and drains on unload. Component: `BlueWave.svelte`.
+A glass tide pool: three layered waves whose tide rises with the microphone level, rising bubbles, and a buoy tag bobbing on the surface that shows the active target. Water fills on load and drains on unload. Svelte component: `BlueWave.svelte`.
 
 #### `voice_card` — Voice Card
-A membership-card design with a gold chip, holographic sheen, and a 20×6 VU-meter LED dot matrix (green→amber→red) with fast-attack/slow-decay ballistics. The active target is embossed in the card's `TARGET` field. Deals in/out with a card flip. Component: `VoiceCard.svelte`.
+A membership-card design with a gold chip, holographic sheen, and a 20×6 VU-meter LED dot matrix (green→amber→red) with fast-attack/slow-decay ballistics. The active target is embossed in the card's `TARGET` field. Deals in/out with a card flip. Svelte component: `VoiceCard.svelte`.
 
 #### `waveform` — Oscilloscope
-A green-phosphor oscilloscope with a live scrolling line trace of the microphone signal, graticule grid, and a `TGT ▸` target readout chip. Powers on/off like a CRT (expands from / collapses to a scanline). Component: `Waveform.svelte`.
+A green-phosphor oscilloscope with a live scrolling line trace of the microphone signal, graticule grid, and a `TGT ▸` target readout chip. Powers on/off like a CRT (expands from / collapses to a scanline). Svelte component: `Waveform.svelte`.
 
 #### `pulse` — Pulse Ring
-A sonar/radar dial: rotating sweep arm with trailing wedge, expanding audio pulse rings, contact blips, and an audio-reactive core — paired with a pulsing "TARGET LOCK" plate showing the active target. Component: `Pulse.svelte`.
+A sonar/radar dial: rotating sweep arm with trailing wedge, expanding audio pulse rings, contact blips, and an audio-reactive core — paired with a pulsing "TARGET LOCK" plate showing the active target. Svelte component: `Pulse.svelte`.
+
+#### `mono_bars` — Mono Bars
+A pure black & white, centre-weighted 5-bar level meter with no color or glow. Svelte component: `MonoBars.svelte`.
+
+#### `spectrum` — Neon Spectrum
+A 16-band magenta-to-cyan equalizer that rises out of the floor on load. Svelte component: `Spectrum.svelte`.
+
+#### `terminal` — Retro Terminal
+A DOS-blue console with a block-character ASCII meter and a `$ voxctrl listen --target "..."` command line. Svelte component: `Terminal.svelte`.
+
+#### `vinyl` — Analog VU
+A vintage VU meter with a spring-loaded needle sweeping a `-20` to `+3` dial. Svelte component: `Vinyl.svelte`.
+
+#### `aurora` — Aurora Ribbon
+A flowing, tri-tone (cyan/violet/pink) sine ribbon trace whose swing widens with voice energy. No Svelte component.
+
+#### `holo` — Holo Ring
+A rotating holographic atom of orbital rings and particle nodes that flash as the sweep passes. No Svelte component.
+
+#### `petals` — Frequency Petals
+A radial mandala of spokes blooming outward from a centre hub, magenta to violet. No Svelte component.
+
+#### `dotstrip` — Minimal Dot Strip
+An ultra-compact pill of dots that grow and brighten centre-out with voice energy. No Svelte component.
+
+#### `starfield` — Starfield Spectrum
+A constellation over a deep indigo field with a connected level-history thread running through it. No Svelte component.
 
 #### `none`
 Overlay is disabled entirely.
