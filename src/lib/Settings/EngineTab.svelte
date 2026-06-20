@@ -43,6 +43,8 @@
     }))
   );
 
+  let cudaEnabled = $state(false);
+
   let deviceOptions = $derived([
     { value: "auto", label: "Auto" },
     ...(cudaEnabled ? [{ value: "cuda", label: "CUDA (NVIDIA)" }] : []),
@@ -59,7 +61,6 @@
   let checking = $state(false);
   let downloading = $state(false);
   let modelDirError = $state<string | null>(null);
-  let cudaEnabled = $state(false);
 
   async function checkAllModelsDownloaded() {
     checking = true;

@@ -105,6 +105,14 @@ npm run dev
 # Note: Tauri commands won't work in browser — mock them if needed
 ```
 
+### Type-Check the Frontend
+```bash
+npm run check        # Runs svelte-check (Svelte + TypeScript) against tsconfig.json
+```
+This is the same check CI runs on every push/PR. Tailwind `@apply`/`@reference`
+warnings from `svelte-check` are expected (it does not parse Tailwind directives)
+and do not fail the build; only genuine type errors do.
+
 ### Backend Only
 ```bash
 cargo build -p voxctrl-inference  # Build a specific crate
