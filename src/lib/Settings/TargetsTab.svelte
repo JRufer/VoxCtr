@@ -56,10 +56,6 @@
       strip_newlines: false,
       processing: {
         apply_snippets: true,
-        ollama_enabled: false,
-        ollama_model: "",
-        ollama_mode: "custom",
-        ollama_prompt: "",
       }
     };
   }

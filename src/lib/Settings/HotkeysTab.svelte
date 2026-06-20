@@ -355,10 +355,6 @@
       strip_newlines: false,
       processing: {
         apply_snippets: true,
-        ollama_enabled: false,
-        ollama_model: "",
-        ollama_mode: "custom",
-        ollama_prompt: "",
       }
     };
   }
@@ -528,11 +524,11 @@
                         <button
                           type="button"
                           class="custom-dropdown-item"
-                          disabled={editingBinding.target_ids.includes(t.id) && t.id !== tid}
+                          disabled={editingBinding!.target_ids!.includes(t.id) && t.id !== tid}
                           onclick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            editingBinding!.target_ids[idx] = t.id;
+                            editingBinding!.target_ids![idx] = t.id;
                             activeDropdownIdx = null;
                           }}
                         >

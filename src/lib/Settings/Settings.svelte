@@ -77,7 +77,7 @@
                     const { getCurrentWindow } = await import("@tauri-apps/api/window");
                     const currentWin = getCurrentWindow();
                     await currentWin.show();
-                    await currentWin.focus();
+                    await currentWin.setFocus();
                   } catch (winErr) {
                     console.error("Failed to programmatically show settings window on startup:", winErr);
                   }

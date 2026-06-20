@@ -33,33 +33,35 @@
     }
   }
 
-  onMount(async () => {
-    try {
-      // Run history and target fetches concurrently
-      const [fetchedHistory, fetchedTargets] = await Promise.all([
-        invoke<HistoryEntry[]>("get_history"),
-        invoke<OutputTarget[]>("get_targets")
-      ]);
-      entries = fetchedHistory.slice(0, 100);
-      targets = fetchedTargets;
-    } catch (err) {
-      console.error("Failed to load history or targets", err);
-    } finally {
-      loading = false;
-    }
+  onMount(() => {
+    // Initial load (history + targets) runs concurrently.
+    (async () => {
+      try {
+        const [fetchedHistory, fetchedTargets] = await Promise.all([
+          invoke<HistoryEntry[]>("get_history"),
+          invoke<OutputTarget[]>("get_targets")
+        ]);
+        entries = fetchedHistory.slice(0, 100);
+        targets = fetchedTargets;
+      } catch (err) {
+        console.error("Failed to load history or targets", err);
+      } finally {
+        loading = false;
+      }
+    })();
 
-    // Reactively refresh when window is focused or when backend status updates are dispatched
-    const unlistenFocus = await listen("tauri://focus", () => {
-      loadHistory();
-    });
+    // Reactively refresh when the window is focused or when backend status
+    // updates are dispatched. onMount must return a synchronous cleanup, so we
+    // track the unlisten handles and invoke them once they resolve.
+    let unlistenFocus: (() => void) | undefined;
+    let unlistenStatus: (() => void) | undefined;
 
-    const unlistenStatus = await listen("status-tick", () => {
-      loadHistory();
-    });
+    listen("tauri://focus", () => loadHistory()).then((u) => (unlistenFocus = u));
+    listen("status-tick", () => loadHistory()).then((u) => (unlistenStatus = u));
 
     return () => {
-      unlistenFocus();
-      unlistenStatus();
+      unlistenFocus?.();
+      unlistenStatus?.();
     };
   });
 

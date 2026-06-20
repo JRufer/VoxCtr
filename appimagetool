@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Headless FUSE-bypass appimagetool wrapper script
-# Bypasses system FUSE mounting requirements and Qt connection issues
-# when bundling AppImages inside containerized or headless environments.
-
-export QT_QPA_PLATFORM=offscreen
-exec "$(dirname "$0")/appimagetool.bin" --appimage-extract-and-run "$@"

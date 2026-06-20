@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [development, main]
+    branches: [master]
   pull_request:
-    branches: [development, main]
+    branches: [master]
 
 env:
   CARGO_HTTP_MULTIPLEXING: false
@@ -108,6 +108,8 @@ jobs:
 
       - run: npm install
 
-      # svelte-check + tsc
+      # svelte-check (Svelte + TypeScript type checking)
       - run: npm run check
-        continue-on-error: true  # remove once svelte-check is added to package.json
+
+      # Frontend unit tests (vitest)
+      - run: npm run test:unit

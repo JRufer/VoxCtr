@@ -7,7 +7,7 @@
 
   // Snippets editing
   let snippetList = $state<{key: string, val: string}[]>(
-    Object.entries(cfg.features.snippets).map(([k, v]) => ({ key: k, val: v }))
+    Object.entries(cfg.features.snippets).map(([k, v]) => ({ key: k, val: v as string }))
   );
 
   function syncSnippets() {

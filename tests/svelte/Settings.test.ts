@@ -29,7 +29,7 @@ const mockFocus = vi.fn();
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(() => ({
     show: mockShow,
-    focus: mockFocus,
+    setFocus: mockFocus,
   })),
 }));
 

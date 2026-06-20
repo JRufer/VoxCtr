@@ -9,6 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "python3 scripts/run_tests.py",
     "test:unit": "vitest run"
   },
@@ -26,6 +27,7 @@
     "@testing-library/svelte": "^5.2.4",
     "jsdom": "^26.0.0",
     "svelte": "^5",
+    "svelte-check": "^4.6.0",
     "tailwindcss": "^4.3.0",
     "typescript": "^5",
     "vite": "^5",

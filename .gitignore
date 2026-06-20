@@ -44,3 +44,17 @@ Thumbs.db
 
 # Node
 node_modules/
+
+# NOTE: dist/ (the `vite build` output) is intentionally tracked, not ignored.
+# src-tauri/Cargo.toml sets `default = ["custom-protocol"]`, which forces
+# Tauri's generate_context! into production mode on every build (including
+# `tauri dev`), and that requires frontendDist (../dist) to exist at compile
+# time. Keep dist/ committed and regenerate it (`npm run build`) when the
+# frontend changes.
+
+# Vite config temp files
+vite.config.ts.timestamp-*.mjs
+vite.config.*.timestamp-*
+
+# Rustup toolchain config (machine-local)
+/.rustup/
