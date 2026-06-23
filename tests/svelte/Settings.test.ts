@@ -80,6 +80,7 @@ describe("Settings.svelte Startup Redirect", () => {
         mode: "clean",
         custom_prompt: null,
         endpoint: "http://localhost:11434",
+        api_key: null,
         timeout_secs: 8,
       },
       tts: {

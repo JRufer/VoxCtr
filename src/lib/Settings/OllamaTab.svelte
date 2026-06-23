@@ -41,6 +41,7 @@
       const res = await invoke<TestResult>("test_ollama", {
         endpoint: cfg.ollama.endpoint,
         timeoutSecs: cfg.ollama.timeout_secs,
+        apiKey: cfg.ollama.api_key,
       });
       testStatus = { success: res.success, message: res.message };
       if (res.success) {
@@ -65,13 +66,17 @@
 </script>
 
 <section>
-  <h2>Ollama LLM Post-Processing</h2>
+  <h2>OpenAI API LLM Post-Processing</h2>
 
   <div class="field-group">
     <h3>Connection</h3>
     <label class="field">
-      <span>Endpoint</span>
-      <input type="text" bind:value={cfg.ollama.endpoint} onchange={markDirty} />
+      <span>Server URL</span>
+      <input type="text" bind:value={cfg.ollama.endpoint} onchange={markDirty} placeholder="http://localhost:11434" />
+    </label>
+    <label class="field">
+      <span>API Key (optional)</span>
+      <input type="password" bind:value={cfg.ollama.api_key} onchange={markDirty} placeholder="Required for most non-localhost servers" />
     </label>
     <label class="field">
       <span>Model (Default)</span>

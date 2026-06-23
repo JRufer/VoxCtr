@@ -230,7 +230,11 @@ pub struct OllamaConfig {
     pub mode: OllamaMode,
     /// Used when mode == Custom. "{text}" is substituted.
     pub custom_prompt: Option<String>,
+    /// Base URL of any OpenAI-API-compatible server (Ollama, LM Studio, OpenAI, etc.)
     pub endpoint: String,
+    /// Optional bearer token, sent as `Authorization: Bearer <key>` when set.
+    #[serde(default)]
+    pub api_key: Option<String>,
     pub timeout_secs: u64,
 }
 
@@ -242,6 +246,7 @@ impl Default for OllamaConfig {
             mode: OllamaMode::Clean,
             custom_prompt: None,
             endpoint: "http://localhost:11434".into(),
+            api_key: None,
             timeout_secs: 30,
         }
     }

@@ -243,15 +243,16 @@ interface AudioDeviceInfo {
 
 ---
 
-### Ollama
+### OpenAI API
 
-#### `test_ollama(endpoint: string, timeoutSecs: number) → OllamaTestResult`
-Pings an Ollama endpoint and lists available models.
+#### `test_ollama(endpoint: string, timeoutSecs: number, apiKey?: string) → OllamaTestResult`
+Pings an OpenAI-API-compatible server (Ollama, LM Studio, OpenAI, etc.) and lists available models.
 
 ```typescript
 const result = await invoke<OllamaTestResult>('test_ollama', {
   endpoint: 'http://localhost:11434',
-  timeoutSecs: 5
+  timeoutSecs: 5,
+  apiKey: null
 });
 ```
 
@@ -390,6 +391,7 @@ interface OllamaConfig {
   mode: "clean" | "formal" | "casual" | "bullet" | "concise" | "custom";
   custom_prompt: string | null;
   endpoint: string;
+  api_key: string | null;
   timeout_secs: number;
 }
 

@@ -61,6 +61,7 @@ Full schema with defaults:
   "ollama": {
     "enabled": false,
     "endpoint": "http://localhost:11434",
+    "api_key": null,
     "model": "llama3.2:1b",
     "mode": "clean",
     "custom_prompt": null,
@@ -179,10 +180,15 @@ Example with snippets:
 
 ### `ollama` section
 
+Despite the key name (kept for config-file backward compatibility), this section configures a connection to
+**any OpenAI-API-compatible server** — Ollama, LM Studio, vLLM, OpenAI itself, etc. VoxCtrl talks to the
+server's `/v1/models` and `/v1/chat/completions` endpoints.
+
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Enable Ollama post-processing |
-| `endpoint` | string | `"http://localhost:11434"` | Ollama API base URL |
+| `enabled` | bool | `false` | Enable LLM post-processing |
+| `endpoint` | string | `"http://localhost:11434"` | Base URL of the OpenAI-API-compatible server |
+| `api_key` | string or null | `null` | Optional bearer token, sent as `Authorization: Bearer <key>`. Required by most non-localhost servers (e.g. OpenAI). |
 | `model` | string | `"llama3.2:1b"` | Model name |
 | `mode` | string | `"clean"` | Rewrite style: `clean`/`formal`/`casual`/`bullet`/`concise`/`custom` |
 | `custom_prompt` | string or null | `null` | Instruction when mode is `custom`; use `{text}` as placeholder, or text is appended after the prompt |

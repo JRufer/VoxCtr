@@ -548,6 +548,7 @@ pub struct OllamaTestResult {
 pub async fn test_ollama(
     endpoint: String,
     timeout_secs: u64,
+    api_key: Option<String>,
 ) -> Result<OllamaTestResult, String> {
     use voxctrl_config::{OllamaConfig, OllamaMode};
     let cfg = OllamaConfig {
@@ -556,6 +557,7 @@ pub async fn test_ollama(
         model: String::new(),
         mode: OllamaMode::Clean,
         custom_prompt: None,
+        api_key,
         timeout_secs,
     };
     let client = voxctrl_llm::OllamaClient::new(cfg);
@@ -564,7 +566,7 @@ pub async fn test_ollama(
             Ok(models) => {
                 Ok(OllamaTestResult {
                     success: true,
-                    message: "Successfully connected to Ollama!".to_string(),
+                    message: "Successfully connected!".to_string(),
                     models,
                 })
             }
@@ -579,7 +581,7 @@ pub async fn test_ollama(
     } else {
         Ok(OllamaTestResult {
             success: false,
-            message: format!("Failed to connect to Ollama at '{}'. Make sure Ollama is running.", endpoint),
+            message: format!("Failed to connect to server at '{}'. Check the URL and API key.", endpoint),
             models: Vec::new(),
         })
     }

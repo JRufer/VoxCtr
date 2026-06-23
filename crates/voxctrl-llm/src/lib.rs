@@ -27,18 +27,34 @@ fn mode_prompt(mode: &OllamaMode, text: &str) -> String {
     }
 }
 
-// ── Ollama API types ──────────────────────────────────────────────────────────
+// ── OpenAI-compatible API types ────────────────────────────────────────────────
 
 #[derive(Serialize)]
-struct GenerateRequest<'a> {
+struct ChatMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(Serialize)]
+struct ChatCompletionRequest<'a> {
     model: &'a str,
-    prompt: &'a str,
+    messages: Vec<ChatMessage<'a>>,
     stream: bool,
 }
 
 #[derive(Deserialize)]
-struct GenerateResponse {
-    response: String,
+struct ChatCompletionChoice {
+    message: ChatCompletionMessage,
+}
+
+#[derive(Deserialize)]
+struct ChatCompletionMessage {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ChatCompletionResponse {
+    choices: Vec<ChatCompletionChoice>,
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
@@ -63,7 +79,15 @@ impl OllamaClient {
         }
     }
 
-    /// Lazily probe if Ollama is reachable. Cached after first check.
+    fn auth_header(&self) -> Option<String> {
+        self.config
+            .api_key
+            .as_ref()
+            .filter(|k| !k.is_empty())
+            .map(|k| format!("Bearer {k}"))
+    }
+
+    /// Lazily probe if the server is reachable. Cached after first check.
     pub async fn is_available(&self) -> bool {
         {
             let guard = self.available.lock().unwrap();
@@ -71,25 +95,26 @@ impl OllamaClient {
                 return v;
             }
         }
-        let url = format!("{}/api/tags", self.config.endpoint);
-        let ok = self
-            .http
-            .get(&url)
-            .timeout(Duration::from_secs(2))
+        let url = format!("{}/v1/models", self.config.endpoint);
+        let mut req = self.http.get(&url).timeout(Duration::from_secs(2));
+        if let Some(auth) = self.auth_header() {
+            req = req.header("Authorization", auth);
+        }
+        let ok = req
             .send()
             .await
             .map(|r| r.status().is_success())
             .unwrap_or(false);
         *self.available.lock().unwrap() = Some(ok);
         if ok {
-            info!("Ollama reachable at {}", self.config.endpoint);
+            info!("LLM server reachable at {}", self.config.endpoint);
         } else {
-            warn!("Ollama not reachable at {}", self.config.endpoint);
+            warn!("LLM server not reachable at {}", self.config.endpoint);
         }
         ok
     }
 
-    /// Post-process text through Ollama. Returns original text on any failure.
+    /// Post-process text through the configured LLM server. Returns original text on any failure.
     pub async fn process(&self, text: &str) -> String {
         if !self.config.enabled {
             return text.to_string();
@@ -112,37 +137,46 @@ impl OllamaClient {
             mode_prompt(&self.config.mode, text)
         };
 
-        let url = format!("{}/api/generate", self.config.endpoint);
-        let req = GenerateRequest {
+        let url = format!("{}/v1/chat/completions", self.config.endpoint);
+        let req = ChatCompletionRequest {
             model: &self.config.model,
-            prompt: &prompt,
+            messages: vec![ChatMessage { role: "user", content: &prompt }],
             stream: false,
         };
 
-        match self.http.post(&url).json(&req).send().await {
+        let mut builder = self.http.post(&url).json(&req);
+        if let Some(auth) = self.auth_header() {
+            builder = builder.header("Authorization", auth);
+        }
+
+        match builder.send().await {
             Ok(resp) if resp.status().is_success() => {
-                match resp.json::<GenerateResponse>().await {
-                    Ok(body) => {
-                        let result = body.response.trim().to_string();
+                match resp.json::<ChatCompletionResponse>().await {
+                    Ok(mut body) => {
+                        let result = body
+                            .choices
+                            .pop()
+                            .map(|c| c.message.content.trim().to_string())
+                            .unwrap_or_else(|| text.to_string());
                         debug!(
                             input_len = text.len(),
                             output_len = result.len(),
-                            "Ollama processed"
+                            "LLM processed"
                         );
                         result
                     }
                     Err(e) => {
-                        warn!("Ollama response parse error: {e}");
+                        warn!("LLM response parse error: {e}");
                         text.to_string()
                     }
                 }
             }
             Ok(resp) => {
-                warn!("Ollama HTTP {}", resp.status());
+                warn!("LLM HTTP {}", resp.status());
                 text.to_string()
             }
             Err(e) => {
-                warn!("Ollama request error: {e}");
+                warn!("LLM request error: {e}");
                 text.to_string()
             }
         }
@@ -153,17 +187,21 @@ impl OllamaClient {
         *self.available.lock().unwrap() = None;
     }
 
-    /// Retrieve the list of available local models from the Ollama instance.
+    /// Retrieve the list of available models from the OpenAI-API-compatible server.
     pub async fn list_models(&self) -> Result<Vec<String>, String> {
-        let url = format!("{}/api/tags", self.config.endpoint);
-        let resp = self.http.get(&url).send().await.map_err(|e| e.to_string())?;
+        let url = format!("{}/v1/models", self.config.endpoint);
+        let mut builder = self.http.get(&url);
+        if let Some(auth) = self.auth_header() {
+            builder = builder.header("Authorization", auth);
+        }
+        let resp = builder.send().await.map_err(|e| e.to_string())?;
         if resp.status().is_success() {
             #[derive(serde::Deserialize)]
-            struct ModelItem { name: String }
+            struct ModelItem { id: String }
             #[derive(serde::Deserialize)]
-            struct TagsResponse { models: Vec<ModelItem> }
-            let tags = resp.json::<TagsResponse>().await.map_err(|e| e.to_string())?;
-            Ok(tags.models.into_iter().map(|m| m.name).collect())
+            struct ModelsResponse { data: Vec<ModelItem> }
+            let models = resp.json::<ModelsResponse>().await.map_err(|e| e.to_string())?;
+            Ok(models.data.into_iter().map(|m| m.id).collect())
         } else {
             Err(format!("HTTP error: {}", resp.status()))
         }
