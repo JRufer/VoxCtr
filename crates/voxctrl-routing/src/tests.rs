@@ -2,6 +2,11 @@ use crate::models::{DeliveryType, OutputTarget};
 use crate::loader::{load_targets, save_targets};
 use crate::targets::build_target;
 
+/// Serializes tests that mutate process-global env vars (PATH, WAYLAND_DISPLAY)
+/// for clipboard backend detection, since cargo test runs tests concurrently
+/// and these vars are shared process-wide.
+static CLIPBOARD_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_mcp_config_roundtrip() {
     let temp_dir = std::env::temp_dir().join(format!("voxctrl_test_{}", chrono::Utc::now().timestamp_millis()));
@@ -259,6 +264,7 @@ async fn test_inject_target_failure_no_injection() {
 // 2. Clipboard Target
 #[tokio::test]
 async fn test_clipboard_target_success() {
+    let _guard = CLIPBOARD_ENV_LOCK.lock().unwrap();
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Clipboard;
     let target = build_target(config);
@@ -275,6 +281,7 @@ async fn test_clipboard_target_success() {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn test_clipboard_target_linux_cli() {
+    let _guard = CLIPBOARD_ENV_LOCK.lock().unwrap();
     let temp_dir = std::env::temp_dir().join(format!("voxctrl_clipboard_test_{}", chrono::Utc::now().timestamp_millis()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
