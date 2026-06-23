@@ -536,7 +536,7 @@ pub fn run() {
                 voxctrl_routing::targets::set_openai_callback(std::sync::Arc::new(move |req| {
                     let state = state.clone();
                     Box::pin(async move {
-                        let cfg = state.config.lock().await.ollama.clone();
+                        let cfg = state.config.lock().await.data.ollama.clone();
                         let client = voxctrl_llm::OllamaClient::new(cfg);
                         client
                             .complete(
