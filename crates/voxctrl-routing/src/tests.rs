@@ -36,6 +36,10 @@ fn test_mcp_config_roundtrip() {
         mcp_path: Some("/tmp/custom-mcp.sock".into()),
         mcp_tool: Some("speak_text".into()),
         mcp_args: Some(serde_json::json!({ "message": "{TEXT}" })),
+        openai_prompt: None,
+        openai_model: None,
+        openai_max_tokens: None,
+        openai_timeout_secs: None,
         send_on_release: true,
         append_newline: false,
         strip_newlines: false,
@@ -143,6 +147,10 @@ async fn test_mcp_delivery_handshake() {
         mcp_path: Some(socket_path.clone()),
         mcp_tool: Some("speak_text".into()),
         mcp_args: Some(serde_json::json!({ "text": "{TEXT}" })),
+        openai_prompt: None,
+        openai_model: None,
+        openai_max_tokens: None,
+        openai_timeout_secs: None,
         send_on_release: true,
         append_newline: false,
         strip_newlines: false,
@@ -1075,6 +1083,10 @@ async fn test_mcp_delivery_failure_server_error() {
         mcp_path: Some(socket_path.clone()),
         mcp_tool: Some("speak_text".into()),
         mcp_args: Some(serde_json::json!({ "text": "{TEXT}" })),
+        openai_prompt: None,
+        openai_model: None,
+        openai_max_tokens: None,
+        openai_timeout_secs: None,
         send_on_release: true,
         append_newline: false,
         strip_newlines: false,
@@ -1122,6 +1134,10 @@ fn test_strip_newlines_config_roundtrip() {
         mcp_path: None,
         mcp_tool: None,
         mcp_args: None,
+        openai_prompt: None,
+        openai_model: None,
+        openai_max_tokens: None,
+        openai_timeout_secs: None,
         send_on_release: true,
         append_newline: false,
         strip_newlines: true,
@@ -1139,6 +1155,111 @@ fn test_strip_newlines_config_roundtrip() {
     assert!(loaded_target.strip_newlines);
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_openai_api_config_roundtrip() {
+    let temp_dir = std::env::temp_dir().join(format!("voxctrl_openai_api_test_{}", chrono::Utc::now().timestamp_millis()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let target = OutputTarget {
+        id: "summarize".into(),
+        label: "Summarize via LLM".into(),
+        delivery: DeliveryType::OpenaiApi,
+        command: None,
+        pipe_path: None,
+        socket_host: None,
+        socket_port: None,
+        socket_unix: None,
+        file_path: None,
+        file_prefix: "".into(),
+        file_timestamp: false,
+        file_mode: "append".into(),
+        dbus_signal: None,
+        http_url: None,
+        http_method: "POST".into(),
+        http_headers: None,
+        http_json_template: None,
+        webhook_url: None,
+        webhook_secret: None,
+        webhook_json_template: None,
+        mcp_path: None,
+        mcp_tool: None,
+        mcp_args: None,
+        openai_prompt: Some("Summarize in 3 bullet points.".into()),
+        openai_model: Some("gpt-4o-mini".into()),
+        openai_max_tokens: Some(500),
+        openai_timeout_secs: Some(30),
+        send_on_release: true,
+        append_newline: false,
+        strip_newlines: false,
+        initial_prompt: None,
+        processing: Default::default(),
+        response_pipe: None,
+    };
+
+    save_targets(&[target.clone()], &temp_dir).unwrap();
+    let loaded = load_targets(&temp_dir).unwrap();
+
+    assert_eq!(loaded.len(), 1);
+    let loaded_target = &loaded[0];
+    assert_eq!(loaded_target.delivery, DeliveryType::OpenaiApi);
+    assert_eq!(loaded_target.openai_prompt.as_deref(), Some("Summarize in 3 bullet points."));
+    assert_eq!(loaded_target.openai_model.as_deref(), Some("gpt-4o-mini"));
+    assert_eq!(loaded_target.openai_max_tokens, Some(500));
+    assert_eq!(loaded_target.openai_timeout_secs, Some(30));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn test_openai_api_target_failure_no_callback_registered() {
+    // No process-wide call to set_openai_callback has happened in this test binary's
+    // execution of this test, so the target must fail gracefully rather than panic.
+    let config = OutputTarget {
+        id: "summarize".into(),
+        label: "Summarize via LLM".into(),
+        delivery: DeliveryType::OpenaiApi,
+        command: None,
+        pipe_path: None,
+        socket_host: None,
+        socket_port: None,
+        socket_unix: None,
+        file_path: None,
+        file_prefix: "".into(),
+        file_timestamp: false,
+        file_mode: "append".into(),
+        dbus_signal: None,
+        http_url: None,
+        http_method: "POST".into(),
+        http_headers: None,
+        http_json_template: None,
+        webhook_url: None,
+        webhook_secret: None,
+        webhook_json_template: None,
+        mcp_path: None,
+        mcp_tool: None,
+        mcp_args: None,
+        openai_prompt: Some("Summarize".into()),
+        openai_model: None,
+        openai_max_tokens: None,
+        openai_timeout_secs: None,
+        send_on_release: true,
+        append_newline: false,
+        strip_newlines: false,
+        initial_prompt: None,
+        processing: Default::default(),
+        response_pipe: None,
+    };
+
+    let target = build_target(config);
+
+    let test_res = target.test().await;
+    assert!(!test_res.reachable);
+
+    let deliver_res = target.deliver("hello").await;
+    assert!(!deliver_res.success);
+    assert!(deliver_res.error.unwrap().contains("not initialized"));
 }
 
 #[test]

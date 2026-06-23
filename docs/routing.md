@@ -211,6 +211,31 @@ delivery = "speak"
 
 ---
 
+#### `openai_api` — OpenAI API Call
+Sends the transcribed text to an OpenAI-API-compatible chat completions endpoint and delivers
+the model's response (not the original transcription). Uses the server URL, API key, and
+default model configured in the OpenAI API settings tab (`config.ollama`) unless overridden.
+
+```toml
+[[target]]
+id = "summarize"
+label = "Summarize via LLM"
+delivery = "openai_api"
+openai_prompt = "Summarize the following transcript in 3 bullet points."
+openai_model = "gpt-4o-mini"      # Optional: overrides the global model for this target
+openai_max_tokens = 500           # Optional: caps response length
+openai_timeout_secs = 30          # Optional: overrides the global request timeout
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `openai_prompt` | string | null | System message instructing the model; transcribed text is sent as the user message |
+| `openai_model` | string | null (inherit) | Overrides `ollama.model` for this target |
+| `openai_max_tokens` | integer | null (server default) | Caps the response length |
+| `openai_timeout_secs` | integer | null (inherit) | Overrides `ollama.timeout_secs` for this target |
+
+---
+
 ### Per-Target Processing
 
 Each target can override global post-processing settings. All fields are optional (`null` = inherit global config):

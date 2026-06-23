@@ -220,7 +220,8 @@
               { value: "http", label: "HTTP Custom Client" },
               { value: "webhook", label: "Send Webhook Event" },
               { value: "mcp", label: "Call MCP Server Tool" },
-              { value: "speak", label: "Speak Text Aloud (TTS)" }
+              { value: "speak", label: "Speak Text Aloud (TTS)" },
+              { value: "openai_api", label: "OpenAI API Call" }
             ]}
           />
         </label>
@@ -465,6 +466,65 @@
                   ⚠️ {mcpArgsError}
                 </span>
               {/if}
+            </div>
+          </div>
+        {/if}
+
+        {#if editingTarget.delivery === "openai_api"}
+          <div class="morph-section mcp-container">
+            <h5>OpenAI API Call Settings</h5>
+            <p class="hint">Uses the server URL, API key, and default model configured in the OpenAI API settings tab unless overridden below.</p>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">Instruction / System Prompt</span>
+              </div>
+              <textarea
+                rows="3"
+                bind:value={editingTarget.openai_prompt}
+                placeholder="e.g. Summarize the following transcript in 3 bullet points."
+                use:autoResize
+              ></textarea>
+              <p class="hint">Sent as the system message; the transcribed text is sent as the user message.</p>
+            </div>
+
+            <div class="field col mt-2">
+              <div class="field-label-row">
+                <span class="field-title">Model Override</span>
+                <span class="field-tag">Optional</span>
+              </div>
+              <input
+                type="text"
+                bind:value={editingTarget.openai_model}
+                placeholder="Leave empty to use the default model"
+                class="full-width-input"
+              />
+            </div>
+
+            <div class="field col mt-2">
+              <div class="field-label-row">
+                <span class="field-title">Max Response Tokens</span>
+                <span class="field-tag">Optional</span>
+              </div>
+              <input
+                type="number"
+                bind:value={editingTarget.openai_max_tokens}
+                placeholder="Leave empty for server default"
+                class="full-width-input"
+              />
+            </div>
+
+            <div class="field col mt-2">
+              <div class="field-label-row">
+                <span class="field-title">Request Timeout (seconds)</span>
+                <span class="field-tag">Optional</span>
+              </div>
+              <input
+                type="number"
+                bind:value={editingTarget.openai_timeout_secs}
+                placeholder="Leave empty to use the global timeout"
+                class="full-width-input"
+              />
             </div>
           </div>
         {/if}

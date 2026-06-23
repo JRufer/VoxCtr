@@ -40,6 +40,8 @@ struct ChatCompletionRequest<'a> {
     model: &'a str,
     messages: Vec<ChatMessage<'a>>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -142,6 +144,7 @@ impl OllamaClient {
             model: &self.config.model,
             messages: vec![ChatMessage { role: "user", content: &prompt }],
             stream: false,
+            max_tokens: None,
         };
 
         let mut builder = self.http.post(&url).json(&req);
@@ -179,6 +182,50 @@ impl OllamaClient {
                 warn!("LLM request error: {e}");
                 text.to_string()
             }
+        }
+    }
+
+    /// Run a one-off chat completion with an arbitrary system/user prompt pair,
+    /// bypassing the `mode`-based rewrite templates. Used by the OpenAI API
+    /// output target, which lets each target supply its own instruction.
+    pub async fn complete(
+        &self,
+        system_prompt: Option<&str>,
+        user_text: &str,
+        model_override: Option<&str>,
+        max_tokens: Option<u32>,
+        timeout_secs: Option<u64>,
+    ) -> Result<String, String> {
+        let model = model_override.unwrap_or(&self.config.model);
+        let mut messages = Vec::new();
+        if let Some(sp) = system_prompt {
+            if !sp.is_empty() {
+                messages.push(ChatMessage { role: "system", content: sp });
+            }
+        }
+        messages.push(ChatMessage { role: "user", content: user_text });
+
+        let url = format!("{}/v1/chat/completions", self.config.endpoint);
+        let req = ChatCompletionRequest { model, messages, stream: false, max_tokens };
+
+        let mut builder = self.http.post(&url).json(&req);
+        if let Some(t) = timeout_secs {
+            builder = builder.timeout(Duration::from_secs(t));
+        }
+        if let Some(auth) = self.auth_header() {
+            builder = builder.header("Authorization", auth);
+        }
+
+        let resp = builder.send().await.map_err(|e| e.to_string())?;
+        if resp.status().is_success() {
+            let mut body: ChatCompletionResponse =
+                resp.json().await.map_err(|e| e.to_string())?;
+            body.choices
+                .pop()
+                .map(|c| c.message.content.trim().to_string())
+                .ok_or_else(|| "Empty response from LLM server".to_string())
+        } else {
+            Err(format!("HTTP error: {}", resp.status()))
         }
     }
 

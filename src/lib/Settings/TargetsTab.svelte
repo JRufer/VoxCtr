@@ -170,6 +170,9 @@
           {#if t.delivery === "speak"}
             <div class="binding-targets">Speech: Plays transcribed text via TTS</div>
           {/if}
+          {#if t.delivery === "openai_api"}
+            <div class="binding-targets">OpenAI API: {t.openai_model || "default model"}</div>
+          {/if}
           <div class="binding-actions">
             <button class="btn-action small" onclick={() => editTarget(t)}>Edit</button>
             {#if confirmDeleteTargetId === t.id}

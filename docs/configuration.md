@@ -328,6 +328,20 @@ pipe_path = "/tmp/voice.fifo"
 delivery = "speak"
 ```
 
+**`openai_api`:**
+```toml
+delivery = "openai_api"
+openai_prompt = "Summarize the following transcript in 3 bullet points."
+openai_model = "gpt-4o-mini"      # Optional: overrides ollama.model for this target
+openai_max_tokens = 500           # Optional: caps response length
+openai_timeout_secs = 30          # Optional: overrides ollama.timeout_secs for this target
+```
+
+Sends the transcribed text to the server configured in the OpenAI API settings tab
+(`config.ollama.endpoint` / `api_key`), using `openai_prompt` as the system message and the
+transcribed text as the user message. The delivered text is the model's response, not the
+original transcription.
+
 **TTS response pipe:**
 ```toml
 response_pipe = "/tmp/tts-response.fifo"  # Optional FIFO for TTS output

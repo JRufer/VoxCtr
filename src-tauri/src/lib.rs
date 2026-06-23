@@ -530,6 +530,27 @@ pub fn run() {
                 }));
             }
 
+            // Register OpenAI API target callback
+            {
+                let state = app.handle().state::<Arc<AppState>>().inner().clone();
+                voxctrl_routing::targets::set_openai_callback(std::sync::Arc::new(move |req| {
+                    let state = state.clone();
+                    Box::pin(async move {
+                        let cfg = state.config.lock().await.ollama.clone();
+                        let client = voxctrl_llm::OllamaClient::new(cfg);
+                        client
+                            .complete(
+                                req.system_prompt.as_deref(),
+                                &req.text,
+                                req.model.as_deref(),
+                                req.max_tokens,
+                                req.timeout_secs,
+                            )
+                            .await
+                    })
+                }));
+            }
+
             // ── Startup udev Diagnostics ──────────────────────────────────────
             #[cfg(target_os = "linux")]
             {

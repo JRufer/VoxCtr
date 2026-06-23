@@ -430,7 +430,7 @@ interface AtspiConfig {
 interface OutputTarget {
   id: string;
   label: string;
-  delivery: "inject" | "clipboard" | "exec" | "pipe" | "socket" | "file" | "dbus" | "http" | "webhook" | "mcp" | "speak";
+  delivery: "inject" | "clipboard" | "exec" | "pipe" | "socket" | "file" | "dbus" | "http" | "webhook" | "mcp" | "speak" | "openai_api";
 
   // exec
   command?: string;
@@ -463,6 +463,12 @@ interface OutputTarget {
   // mcp
   mcp_path?: string;
   mcp_tool?: string;
+
+  // openai_api (uses the global ollama endpoint/api_key/model unless overridden)
+  openai_prompt?: string;       // system message; transcribed text is the user message
+  openai_model?: string;        // overrides the global model for this target
+  openai_max_tokens?: number;
+  openai_timeout_secs?: number; // overrides ollama.timeout_secs for this target
 
   send_on_release: boolean;   // default: true
   append_newline: boolean;    // default: true

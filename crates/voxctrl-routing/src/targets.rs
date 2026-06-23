@@ -16,6 +16,27 @@ pub fn set_speak_callback(callback: SpeakCallback) {
     let _ = SPEAK_CALLBACK.set(callback);
 }
 
+/// Parameters for an OpenAI API output target's chat completion request.
+pub struct OpenAiCallRequest {
+    pub system_prompt: Option<String>,
+    pub text: String,
+    pub model: Option<String>,
+    pub max_tokens: Option<u32>,
+    pub timeout_secs: Option<u64>,
+}
+
+pub type OpenAiCallback = Arc<
+    dyn Fn(OpenAiCallRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
+        + Send
+        + Sync
+        + 'static,
+>;
+static OPENAI_CALLBACK: OnceLock<OpenAiCallback> = OnceLock::new();
+
+pub fn set_openai_callback(callback: OpenAiCallback) {
+    let _ = OPENAI_CALLBACK.set(callback);
+}
+
 // Shared HTTP client — built once, reused for connection pooling.
 fn http_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
@@ -50,6 +71,7 @@ pub fn build_target(config: OutputTarget) -> Box<dyn DeliveryTarget> {
         DeliveryType::Webhook   => Box::new(WebhookTarget(config)),
         DeliveryType::Mcp       => Box::new(McpTarget(config)),
         DeliveryType::Speak     => Box::new(SpeakTarget(config)),
+        DeliveryType::OpenaiApi => Box::new(OpenaiApiTarget(config)),
     }
 }
 
@@ -793,6 +815,38 @@ impl DeliveryTarget for SpeakTarget {
     }
 }
 
+
+// ── OpenaiApiTarget ───────────────────────────────────────────────────────────
+
+pub struct OpenaiApiTarget(OutputTarget);
+
+#[async_trait::async_trait]
+impl DeliveryTarget for OpenaiApiTarget {
+    async fn deliver(&self, text: &str) -> DeliveryResult {
+        let Some(callback) = OPENAI_CALLBACK.get() else {
+            return DeliveryResult::err("OpenAI API integration not initialized");
+        };
+        let req = OpenAiCallRequest {
+            system_prompt: self.0.openai_prompt.clone(),
+            text: text.to_string(),
+            model: self.0.openai_model.clone(),
+            max_tokens: self.0.openai_max_tokens,
+            timeout_secs: self.0.openai_timeout_secs,
+        };
+        match callback(req).await {
+            Ok(result) => DeliveryResult::ok(result),
+            Err(e) => DeliveryResult::err(e),
+        }
+    }
+
+    async fn test(&self) -> TestResult {
+        if OPENAI_CALLBACK.get().is_some() {
+            TestResult { reachable: true, detail: "OpenAI API integration registered".into() }
+        } else {
+            TestResult { reachable: false, detail: "OpenAI API integration not initialized".into() }
+        }
+    }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
