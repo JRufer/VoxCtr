@@ -185,6 +185,82 @@ impl OllamaClient {
         }
     }
 
+    /// Like `process`, but replays prior conversation turns before the new
+    /// templated prompt so hotkey bindings with `ollama_enabled` (e.g. Q&A
+    /// style custom prompts) can resolve follow-up questions like "what did
+    /// I just ask you". `history` holds `(role, content)` pairs in order.
+    pub async fn process_with_history(&self, text: &str, history: &[(String, String)]) -> String {
+        if !self.config.enabled {
+            return text.to_string();
+        }
+        if !self.is_available().await {
+            return text.to_string();
+        }
+
+        let prompt = if self.config.mode == OllamaMode::Custom {
+            if let Some(tmpl) = &self.config.custom_prompt {
+                if tmpl.contains("{text}") {
+                    tmpl.replace("{text}", text)
+                } else {
+                    format!("{tmpl}\n\n{text}")
+                }
+            } else {
+                return text.to_string();
+            }
+        } else {
+            mode_prompt(&self.config.mode, text)
+        };
+
+        let url = format!("{}/v1/chat/completions", self.config.endpoint);
+        let mut messages: Vec<ChatMessage> = Vec::new();
+        for (role, content) in history {
+            messages.push(ChatMessage { role, content });
+        }
+        messages.push(ChatMessage { role: "user", content: &prompt });
+
+        let req = ChatCompletionRequest {
+            model: &self.config.model,
+            messages,
+            stream: false,
+            max_tokens: None,
+        };
+
+        let mut builder = self.http.post(&url).json(&req);
+        if let Some(auth) = self.auth_header() {
+            builder = builder.header("Authorization", auth);
+        }
+
+        match builder.send().await {
+            Ok(resp) if resp.status().is_success() => match resp.json::<ChatCompletionResponse>().await {
+                Ok(mut body) => {
+                    let result = body
+                        .choices
+                        .pop()
+                        .map(|c| c.message.content.trim().to_string())
+                        .unwrap_or_else(|| text.to_string());
+                    debug!(
+                        input_len = text.len(),
+                        output_len = result.len(),
+                        "LLM processed (with history)"
+                    );
+                    result
+                }
+                Err(e) => {
+                    warn!("LLM response parse error: {e}");
+                    text.to_string()
+                }
+            },
+            Ok(resp) => {
+                warn!("LLM HTTP {}", resp.status());
+                text.to_string()
+            }
+            Err(e) => {
+                warn!("LLM request error: {e}");
+                text.to_string()
+            }
+        }
+    }
+
     /// Run a chat completion with an arbitrary system prompt, prior
     /// conversation history, and a new user message, bypassing the
     /// `mode`-based rewrite templates. Used by the OpenAI API output

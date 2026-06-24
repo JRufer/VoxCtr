@@ -261,6 +261,8 @@ quiet_mode = false
 
 > [!NOTE]
 > Ollama post-processing parameters (`ollama_enabled`, `ollama_model`, `ollama_mode`, `ollama_prompt`) are defined per-hotkey binding in `bindings.toml` (or via the Hotkeys UI tab) instead of per-target. This allows you to apply different LLM rewriting styles (e.g. formal, bullet-points) using different hotkeys targeting the same destination.
+>
+> When `ollama_enabled` is used with a Q&A-style custom prompt (e.g. "answer questions concisely"), each binding keeps its own running conversation (up to the last 10 exchanges) so follow-ups like "what did I just ask you" resolve correctly. This history lives only in the running inference worker — it resets on app restart and is keyed by binding id, so different bindings never share context.
 
 ---
 
