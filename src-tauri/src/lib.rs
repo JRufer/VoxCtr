@@ -538,9 +538,15 @@ pub fn run() {
                     Box::pin(async move {
                         let cfg = state.config.lock().await.data.ollama.clone();
                         let client = voxctrl_llm::OllamaClient::new(cfg);
+                        let history: Vec<(String, String)> = req
+                            .history
+                            .into_iter()
+                            .map(|t| (t.role, t.content))
+                            .collect();
                         client
                             .complete(
                                 req.system_prompt.as_deref(),
+                                &history,
                                 &req.text,
                                 req.model.as_deref(),
                                 req.max_tokens,

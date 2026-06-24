@@ -234,6 +234,8 @@ openai_timeout_secs = 30          # Optional: overrides the global request timeo
 | `openai_max_tokens` | integer | null (server default) | Caps the response length |
 | `openai_timeout_secs` | integer | null (inherit) | Overrides `ollama.timeout_secs` for this target |
 
+Each `openai_api` target keeps its own running conversation (up to the last 20 messages, i.e. 10 user/assistant exchanges) in memory and replays it with every request, so follow-up dictations like "what did I just ask you?" resolve correctly. This history lives only in the running app process — it is not persisted to disk, and resets whenever targets are hot-reloaded (e.g. after editing targets in Settings) or the app restarts.
+
 ---
 
 ### Per-Target Processing

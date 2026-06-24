@@ -16,14 +16,27 @@ pub fn set_speak_callback(callback: SpeakCallback) {
     let _ = SPEAK_CALLBACK.set(callback);
 }
 
+/// One prior turn of a target's running conversation, sent back to the
+/// server so multi-turn context (e.g. "what did I just ask you") works.
+#[derive(Clone)]
+pub struct ChatTurn {
+    pub role: String,
+    pub content: String,
+}
+
 /// Parameters for an OpenAI API output target's chat completion request.
 pub struct OpenAiCallRequest {
     pub system_prompt: Option<String>,
+    pub history: Vec<ChatTurn>,
     pub text: String,
     pub model: Option<String>,
     pub max_tokens: Option<u32>,
     pub timeout_secs: Option<u64>,
 }
+
+/// Number of messages (user + assistant turns combined) kept per target
+/// before older ones are dropped from the running conversation.
+const MAX_HISTORY_MESSAGES: usize = 20;
 
 pub type OpenAiCallback = Arc<
     dyn Fn(OpenAiCallRequest) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, String>> + Send>>
@@ -71,7 +84,10 @@ pub fn build_target(config: OutputTarget) -> Box<dyn DeliveryTarget> {
         DeliveryType::Webhook   => Box::new(WebhookTarget(config)),
         DeliveryType::Mcp       => Box::new(McpTarget(config)),
         DeliveryType::Speak     => Box::new(SpeakTarget(config)),
-        DeliveryType::OpenaiApi => Box::new(OpenaiApiTarget(config)),
+        DeliveryType::OpenaiApi => Box::new(OpenaiApiTarget {
+            config,
+            history: tokio::sync::Mutex::new(Vec::new()),
+        }),
     }
 }
 
@@ -818,7 +834,12 @@ impl DeliveryTarget for SpeakTarget {
 
 // ── OpenaiApiTarget ───────────────────────────────────────────────────────────
 
-pub struct OpenaiApiTarget(OutputTarget);
+pub struct OpenaiApiTarget {
+    config: OutputTarget,
+    /// Running conversation for this target, kept in-memory for the
+    /// lifetime of the built target (until targets are hot-reloaded).
+    history: tokio::sync::Mutex<Vec<ChatTurn>>,
+}
 
 #[async_trait::async_trait]
 impl DeliveryTarget for OpenaiApiTarget {
@@ -826,15 +847,26 @@ impl DeliveryTarget for OpenaiApiTarget {
         let Some(callback) = OPENAI_CALLBACK.get() else {
             return DeliveryResult::err("OpenAI API integration not initialized");
         };
+        let history = self.history.lock().await.clone();
         let req = OpenAiCallRequest {
-            system_prompt: self.0.openai_prompt.clone(),
+            system_prompt: self.config.openai_prompt.clone(),
+            history,
             text: text.to_string(),
-            model: self.0.openai_model.clone(),
-            max_tokens: self.0.openai_max_tokens,
-            timeout_secs: self.0.openai_timeout_secs,
+            model: self.config.openai_model.clone(),
+            max_tokens: self.config.openai_max_tokens,
+            timeout_secs: self.config.openai_timeout_secs,
         };
         match callback(req).await {
-            Ok(result) => DeliveryResult::ok(result),
+            Ok(result) => {
+                let mut hist = self.history.lock().await;
+                hist.push(ChatTurn { role: "user".into(), content: text.to_string() });
+                hist.push(ChatTurn { role: "assistant".into(), content: result.clone() });
+                if hist.len() > MAX_HISTORY_MESSAGES {
+                    let excess = hist.len() - MAX_HISTORY_MESSAGES;
+                    hist.drain(0..excess);
+                }
+                DeliveryResult::ok(result)
+            }
             Err(e) => DeliveryResult::err(e),
         }
     }

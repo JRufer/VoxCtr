@@ -473,7 +473,7 @@
         {#if editingTarget.delivery === "openai_api"}
           <div class="morph-section mcp-container">
             <h5>OpenAI API Call Settings</h5>
-            <p class="hint">Uses the server URL, API key, and default model configured in the OpenAI API settings tab unless overridden below.</p>
+            <p class="hint">Uses the server URL, API key, and default model configured in the OpenAI API settings tab unless overridden below. This target remembers the last 10 exchanges so follow-up questions like "what did I just ask you?" work.</p>
 
             <div class="field col">
               <div class="field-label-row">

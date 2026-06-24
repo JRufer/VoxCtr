@@ -185,12 +185,15 @@ impl OllamaClient {
         }
     }
 
-    /// Run a one-off chat completion with an arbitrary system/user prompt pair,
-    /// bypassing the `mode`-based rewrite templates. Used by the OpenAI API
-    /// output target, which lets each target supply its own instruction.
+    /// Run a chat completion with an arbitrary system prompt, prior
+    /// conversation history, and a new user message, bypassing the
+    /// `mode`-based rewrite templates. Used by the OpenAI API output
+    /// target, which lets each target supply its own instruction and
+    /// maintain its own running conversation.
     pub async fn complete(
         &self,
         system_prompt: Option<&str>,
+        history: &[(String, String)],
         user_text: &str,
         model_override: Option<&str>,
         max_tokens: Option<u32>,
@@ -202,6 +205,9 @@ impl OllamaClient {
             if !sp.is_empty() {
                 messages.push(ChatMessage { role: "system", content: sp });
             }
+        }
+        for (role, content) in history {
+            messages.push(ChatMessage { role, content });
         }
         messages.push(ChatMessage { role: "user", content: user_text });
 
