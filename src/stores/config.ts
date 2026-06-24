@@ -67,6 +67,7 @@ export interface OllamaConfig {
   mode: "clean" | "formal" | "casual" | "bullet" | "concise" | "custom";
   custom_prompt: string | null;
   endpoint: string;
+  api_key: string | null;
   timeout_secs: number;
 }
 
@@ -146,6 +147,7 @@ const defaultConfig: AppConfig = {
     mode: "clean",
     custom_prompt: null,
     endpoint: "http://localhost:11434",
+    api_key: null,
     timeout_secs: 8,
   },
   tts: {

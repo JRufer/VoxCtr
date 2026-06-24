@@ -211,6 +211,33 @@ delivery = "speak"
 
 ---
 
+#### `openai_api` — OpenAI API Call
+Sends the transcribed text to an OpenAI-API-compatible chat completions endpoint and delivers
+the model's response (not the original transcription). Uses the server URL, API key, and
+default model configured in the OpenAI API settings tab (`config.ollama`) unless overridden.
+
+```toml
+[[target]]
+id = "summarize"
+label = "Summarize via LLM"
+delivery = "openai_api"
+openai_prompt = "Summarize the following transcript in 3 bullet points."
+openai_model = "gpt-4o-mini"      # Optional: overrides the global model for this target
+openai_max_tokens = 500           # Optional: caps response length
+openai_timeout_secs = 30          # Optional: overrides the global request timeout
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `openai_prompt` | string | null | System message instructing the model; transcribed text is sent as the user message |
+| `openai_model` | string | null (inherit) | Overrides `ollama.model` for this target |
+| `openai_max_tokens` | integer | null (server default) | Caps the response length |
+| `openai_timeout_secs` | integer | null (inherit) | Overrides `ollama.timeout_secs` for this target |
+
+Each `openai_api` target keeps its own running conversation (up to the last 20 messages, i.e. 10 user/assistant exchanges) in memory and replays it with every request, so follow-up dictations like "what did I just ask you?" resolve correctly. This history lives only in the running app process — it is not persisted to disk, and resets whenever targets are hot-reloaded (e.g. after editing targets in Settings) or the app restarts.
+
+---
+
 ### Per-Target Processing
 
 Each target can override global post-processing settings. All fields are optional (`null` = inherit global config):
@@ -234,6 +261,8 @@ quiet_mode = false
 
 > [!NOTE]
 > Ollama post-processing parameters (`ollama_enabled`, `ollama_model`, `ollama_mode`, `ollama_prompt`) are defined per-hotkey binding in `bindings.toml` (or via the Hotkeys UI tab) instead of per-target. This allows you to apply different LLM rewriting styles (e.g. formal, bullet-points) using different hotkeys targeting the same destination.
+>
+> When `ollama_enabled` is used with a Q&A-style custom prompt (e.g. "answer questions concisely"), each binding keeps its own running conversation (up to the last 10 exchanges) so follow-ups like "what did I just ask you" resolve correctly. This history lives only in the running inference worker — it resets on app restart and is keyed by binding id, so different bindings never share context.
 
 ---
 

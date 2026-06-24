@@ -73,6 +73,10 @@ struct RawTarget {
     mcp_path: Option<String>,
     mcp_tool: Option<String>,
     mcp_args: Option<toml::Value>,
+    openai_prompt: Option<String>,
+    openai_model: Option<String>,
+    openai_max_tokens: Option<u32>,
+    openai_timeout_secs: Option<u64>,
     #[serde(default = "bool_true")]
     send_on_release: bool,
     #[serde(default = "bool_true")]
@@ -156,6 +160,7 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         "webhook" => DeliveryType::Webhook,
         "mcp" => DeliveryType::Mcp,
         "speak" => DeliveryType::Speak,
+        "openai_api" => DeliveryType::OpenaiApi,
         _ => DeliveryType::Inject,
     };
 
@@ -219,6 +224,10 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         mcp_path: r.mcp_path,
         mcp_tool: r.mcp_tool,
         mcp_args,
+        openai_prompt: r.openai_prompt,
+        openai_model: r.openai_model,
+        openai_max_tokens: r.openai_max_tokens,
+        openai_timeout_secs: r.openai_timeout_secs,
         send_on_release: r.send_on_release,
         append_newline: r.append_newline,
         strip_newlines: r.strip_newlines,
@@ -262,12 +271,19 @@ fn migrate_legacy_pp(pp: &str) -> TargetProcessingConfig {
     }
 }
 
+fn delivery_to_str(d: &DeliveryType) -> String {
+    match d {
+        DeliveryType::OpenaiApi => "openai_api".into(),
+        other => format!("{other:?}").to_lowercase(),
+    }
+}
+
 fn target_to_raw(t: &OutputTarget) -> RawTarget {
     let p = &t.processing;
     RawTarget {
         id: t.id.clone(),
         label: t.label.clone(),
-        delivery: format!("{:?}", t.delivery).to_lowercase(),
+        delivery: delivery_to_str(&t.delivery),
         command: t.command.clone(),
         pipe_path: t.pipe_path.clone(),
         socket_host: t.socket_host.clone(),
@@ -297,6 +313,10 @@ fn target_to_raw(t: &OutputTarget) -> RawTarget {
             .mcp_args
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        openai_prompt: t.openai_prompt.clone(),
+        openai_model: t.openai_model.clone(),
+        openai_max_tokens: t.openai_max_tokens,
+        openai_timeout_secs: t.openai_timeout_secs,
         send_on_release: t.send_on_release,
         append_newline: t.append_newline,
         strip_newlines: t.strip_newlines,

@@ -33,6 +33,10 @@ export interface OutputTarget {
   mcp_path?: string;
   mcp_tool?: string;
   mcp_args?: Record<string, any>;
+  openai_prompt?: string;
+  openai_model?: string;
+  openai_max_tokens?: number;
+  openai_timeout_secs?: number;
   send_on_release: boolean;
   append_newline: boolean;
   strip_newlines: boolean;

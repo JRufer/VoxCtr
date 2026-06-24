@@ -81,6 +81,7 @@ pub enum DeliveryType {
     Webhook,
     Mcp,
     Speak,
+    OpenaiApi,
 }
 
 // ── Per-target processing overrides ──────────────────────────────────────────
@@ -159,6 +160,12 @@ pub struct OutputTarget {
     pub mcp_tool: Option<String>,
     pub mcp_args: Option<serde_json::Value>,
 
+    // OpenAI API call (uses the global `ollama` connection settings unless overridden)
+    pub openai_prompt: Option<String>,
+    pub openai_model: Option<String>,
+    pub openai_max_tokens: Option<u32>,
+    pub openai_timeout_secs: Option<u64>,
+
     #[serde(default = "bool_true")]
     pub send_on_release: bool,
     #[serde(default = "bool_true")]
@@ -210,6 +217,10 @@ impl OutputTarget {
             mcp_path: None,
             mcp_tool: None,
             mcp_args: None,
+            openai_prompt: None,
+            openai_model: None,
+            openai_max_tokens: None,
+            openai_timeout_secs: None,
             send_on_release: true,
             append_newline: false,
             strip_newlines: false,

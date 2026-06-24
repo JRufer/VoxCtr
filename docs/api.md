@@ -243,15 +243,16 @@ interface AudioDeviceInfo {
 
 ---
 
-### Ollama
+### OpenAI API
 
-#### `test_ollama(endpoint: string, timeoutSecs: number) → OllamaTestResult`
-Pings an Ollama endpoint and lists available models.
+#### `test_ollama(endpoint: string, timeoutSecs: number, apiKey?: string) → OllamaTestResult`
+Pings an OpenAI-API-compatible server (Ollama, LM Studio, OpenAI, etc.) and lists available models.
 
 ```typescript
 const result = await invoke<OllamaTestResult>('test_ollama', {
   endpoint: 'http://localhost:11434',
-  timeoutSecs: 5
+  timeoutSecs: 5,
+  apiKey: null
 });
 ```
 
@@ -390,6 +391,7 @@ interface OllamaConfig {
   mode: "clean" | "formal" | "casual" | "bullet" | "concise" | "custom";
   custom_prompt: string | null;
   endpoint: string;
+  api_key: string | null;
   timeout_secs: number;
 }
 
@@ -428,7 +430,7 @@ interface AtspiConfig {
 interface OutputTarget {
   id: string;
   label: string;
-  delivery: "inject" | "clipboard" | "exec" | "pipe" | "socket" | "file" | "dbus" | "http" | "webhook" | "mcp" | "speak";
+  delivery: "inject" | "clipboard" | "exec" | "pipe" | "socket" | "file" | "dbus" | "http" | "webhook" | "mcp" | "speak" | "openai_api";
 
   // exec
   command?: string;
@@ -461,6 +463,12 @@ interface OutputTarget {
   // mcp
   mcp_path?: string;
   mcp_tool?: string;
+
+  // openai_api (uses the global ollama endpoint/api_key/model unless overridden)
+  openai_prompt?: string;       // system message; transcribed text is the user message
+  openai_model?: string;        // overrides the global model for this target
+  openai_max_tokens?: number;
+  openai_timeout_secs?: number; // overrides ollama.timeout_secs for this target
 
   send_on_release: boolean;   // default: true
   append_newline: boolean;    // default: true

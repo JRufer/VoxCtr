@@ -43,15 +43,25 @@ pub struct InferenceOutput {
 
 // ── Engine ────────────────────────────────────────────────────────────────────
 
+/// Cap on stored (role, content) pairs per binding — 10 user/assistant exchanges.
+const MAX_OLLAMA_HISTORY_MESSAGES: usize = 20;
+
 pub struct InferenceEngine {
     config: Arc<AppConfig>,
     backend: Box<dyn TranscriptionBackend>,
+    /// Running conversation per hotkey binding, for bindings with
+    /// `ollama_enabled` and a Q&A-style custom prompt. Keyed by binding id.
+    ollama_history: std::cell::RefCell<std::collections::HashMap<String, Vec<(String, String)>>>,
 }
 
 impl InferenceEngine {
     pub fn new(config: Arc<AppConfig>) -> Self {
         let backend = build_backend(&config);
-        Self { config, backend }
+        Self {
+            config,
+            backend,
+            ollama_history: std::cell::RefCell::new(std::collections::HashMap::new()),
+        }
     }
 
     /// Load the selected backend model. Blocks until ready.
@@ -211,22 +221,43 @@ impl InferenceEngine {
             }
 
             let client = voxctrl_llm::OllamaClient::new(ollama_cfg);
+            let history_key = req.binding_id.clone().unwrap_or_default();
+            let history = self
+                .ollama_history
+                .borrow()
+                .get(&history_key)
+                .cloned()
+                .unwrap_or_default();
+            let input_text = processed.clone();
             let processed_res = match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
                     let c = client.clone();
-                    let text = processed.clone();
+                    let text = input_text.clone();
+                    let hist = history.clone();
                     std::thread::spawn(move || {
-                        handle.block_on(async { c.process(&text).await })
+                        handle.block_on(async { c.process_with_history(&text, &hist).await })
                     }).join().unwrap_or(processed)
                 }
                 Err(_) => {
                     if let Ok(rt) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                        rt.block_on(async { client.process(&processed).await })
+                        rt.block_on(async { client.process_with_history(&processed, &history).await })
                     } else {
                         processed
                     }
                 }
             };
+
+            if !history_key.is_empty() {
+                let mut map = self.ollama_history.borrow_mut();
+                let entries = map.entry(history_key).or_default();
+                entries.push(("user".to_string(), input_text));
+                entries.push(("assistant".to_string(), processed_res.clone()));
+                let len = entries.len();
+                if len > MAX_OLLAMA_HISTORY_MESSAGES {
+                    entries.drain(0..len - MAX_OLLAMA_HISTORY_MESSAGES);
+                }
+            }
+
             processed = processed_res;
         }
 

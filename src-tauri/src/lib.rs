@@ -530,6 +530,33 @@ pub fn run() {
                 }));
             }
 
+            // Register OpenAI API target callback
+            {
+                let state = app.handle().state::<Arc<AppState>>().inner().clone();
+                voxctrl_routing::targets::set_openai_callback(std::sync::Arc::new(move |req| {
+                    let state = state.clone();
+                    Box::pin(async move {
+                        let cfg = state.config.lock().await.data.ollama.clone();
+                        let client = voxctrl_llm::OllamaClient::new(cfg);
+                        let history: Vec<(String, String)> = req
+                            .history
+                            .into_iter()
+                            .map(|t| (t.role, t.content))
+                            .collect();
+                        client
+                            .complete(
+                                req.system_prompt.as_deref(),
+                                &history,
+                                &req.text,
+                                req.model.as_deref(),
+                                req.max_tokens,
+                                req.timeout_secs,
+                            )
+                            .await
+                    })
+                }));
+            }
+
             // ── Startup udev Diagnostics ──────────────────────────────────────
             #[cfg(target_os = "linux")]
             {
@@ -1300,6 +1327,10 @@ mod tests {
             mcp_path: None,
             mcp_tool: None,
             mcp_args: None,
+            openai_prompt: None,
+            openai_model: None,
+            openai_max_tokens: None,
+            openai_timeout_secs: None,
             send_on_release: true,
             append_newline: false,
             initial_prompt: None,
@@ -1332,6 +1363,10 @@ mod tests {
             mcp_path: None,
             mcp_tool: None,
             mcp_args: None,
+            openai_prompt: None,
+            openai_model: None,
+            openai_max_tokens: None,
+            openai_timeout_secs: None,
             send_on_release: true,
             append_newline: false,
             initial_prompt: None,
