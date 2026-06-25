@@ -217,6 +217,7 @@ mod tests {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         };
 
         let state = BindingState::new(binding);
@@ -241,6 +242,7 @@ mod tests {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         };
 
         let cancel = CancellationToken::new();
@@ -287,6 +289,7 @@ mod tests {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         };
 
         let mut state = BindingState::new(binding);

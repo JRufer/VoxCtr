@@ -218,8 +218,11 @@ Each request sends two chat messages:
 
 ### Presets
 
-The `mode` field is a GUI convenience: selecting a preset fills the system prompt
-with one of the following. Generation always uses `system_prompt`/`user_prompt`.
+The `mode` field selects a preset. The built-in presets are **read-only**:
+selecting one fills the system prompt with a fixed value (below) and sets the
+user prompt to the plain `{text}` passthrough. To edit the system and user
+prompts yourself, choose the `custom` preset. Generation always uses
+`system_prompt`/`user_prompt`.
 
 | Preset | System prompt |
 |---|---|
@@ -229,6 +232,20 @@ with one of the following. Generation always uses `system_prompt`/`user_prompt`.
 | `bullet` | "Convert the user's text to a bullet-point list. Return only the list." |
 | `concise` | "Summarize the user's text concisely in 1-2 sentences. Return only the summary." |
 | `custom` | No preset — edit the system/user prompts freely |
+
+### Per-Hotkey Overrides
+
+A hotkey binding with `openai_enabled = true` can override the global defaults
+for that hotkey only:
+
+- `openai_system_prompt` — overrides the global system prompt (leave empty to
+  inherit it).
+- `openai_prompt` — overrides the global user prompt template (must contain
+  `{text}`; leave empty to inherit it).
+- `openai_model` — overrides the model (leave empty to inherit it).
+
+This lets different hotkeys apply different rewriting styles while sharing the
+same connection settings.
 
 ### Availability Caching
 

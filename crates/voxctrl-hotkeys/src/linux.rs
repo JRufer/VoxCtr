@@ -459,6 +459,7 @@ mod tests {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         })
     }
 
@@ -483,6 +484,7 @@ mod tests {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         })
     }
 
@@ -508,6 +510,7 @@ mod tests {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         })];
         let mut pressed = std::collections::HashSet::new();
 
@@ -553,6 +556,7 @@ mod tests {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         })];
         let mut pressed = std::collections::HashSet::new();
 

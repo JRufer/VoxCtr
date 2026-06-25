@@ -208,6 +208,13 @@ impl InferenceEngine {
                             voxctrl_llm::preset_system_prompt(&mode).to_string();
                     }
                 }
+                // An explicit per-hotkey system prompt overrides the global default
+                // (and any preset selected above).
+                if let Some(ref system_prompt) = b.openai_system_prompt {
+                    if !system_prompt.is_empty() {
+                        openai_cfg.system_prompt = system_prompt.clone();
+                    }
+                }
                 if let Some(ref prompt) = b.openai_prompt {
                     if !prompt.is_empty() {
                         // The per-hotkey prompt template overrides the user prompt

@@ -179,6 +179,7 @@ fn test_hotkey_binding_multi_target_roundtrip() {
         openai_model: None,
         openai_mode: None,
         openai_prompt: None,
+        openai_system_prompt: None,
     };
 
     assert_eq!(binding.resolved_target_ids(), vec!["target1", "target2"]);

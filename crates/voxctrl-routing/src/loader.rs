@@ -124,6 +124,8 @@ struct RawBinding {
     openai_mode: Option<String>,
     #[serde(default, alias = "ollama_prompt")]
     openai_prompt: Option<String>,
+    #[serde(default, alias = "ollama_system_prompt")]
+    openai_system_prompt: Option<String>,
 }
 
 fn bool_true() -> bool {
@@ -348,6 +350,7 @@ fn raw_to_binding(r: RawBinding) -> HotkeyBinding {
         openai_model: r.openai_model,
         openai_mode: r.openai_mode,
         openai_prompt: r.openai_prompt,
+        openai_system_prompt: r.openai_system_prompt,
     }
 }
 
@@ -375,6 +378,7 @@ fn binding_to_raw(b: &HotkeyBinding) -> RawBinding {
         openai_model: b.openai_model.clone(),
         openai_mode: b.openai_mode.clone(),
         openai_prompt: b.openai_prompt.clone(),
+        openai_system_prompt: b.openai_system_prompt.clone(),
     }
 }
 
@@ -401,6 +405,7 @@ pub fn default_bindings() -> Vec<HotkeyBinding> {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         },
         HotkeyBinding {
             id: "default_toggle".into(),
@@ -421,6 +426,7 @@ pub fn default_bindings() -> Vec<HotkeyBinding> {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         },
     ]
 }

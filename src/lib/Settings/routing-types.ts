@@ -56,4 +56,5 @@ export interface HotkeyBinding {
   openai_model?: string;
   openai_mode?: string;
   openai_prompt?: string;
+  openai_system_prompt?: string;
 }

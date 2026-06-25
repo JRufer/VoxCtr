@@ -152,6 +152,7 @@ pub async fn save_config(
                 openai_model: None,
                 openai_mode: None,
                 openai_prompt: None,
+                openai_system_prompt: None,
             });
         }
         let reloader_guard = state.hotkey_reloader.lock().await;
@@ -274,6 +275,7 @@ pub async fn save_bindings(
                 openai_model: None,
                 openai_mode: None,
                 openai_prompt: None,
+                openai_system_prompt: None,
             });
         }
     }

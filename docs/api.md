@@ -503,10 +503,11 @@ interface HotkeyBinding {
   hold_threshold_ms: number;// default: 200
   subkey?: string;          // Optional subkey trigger for chord gesture
   disabled: boolean;
-  openai_enabled?: boolean;     // legacy alias: ollama_enabled
-  openai_model?: string;        // legacy alias: ollama_model
-  openai_mode?: string;         // legacy alias: ollama_mode
-  openai_prompt?: string;       // user prompt template (must contain "{text}"); legacy alias: ollama_prompt
+  openai_enabled?: boolean;       // legacy alias: ollama_enabled
+  openai_model?: string;          // legacy alias: ollama_model
+  openai_mode?: string;           // legacy alias: ollama_mode
+  openai_prompt?: string;         // user prompt template override (must contain "{text}"); legacy alias: ollama_prompt
+  openai_system_prompt?: string;  // system prompt override (empty = inherit global default); legacy alias: ollama_system_prompt
 }
 
 interface AppStatus {

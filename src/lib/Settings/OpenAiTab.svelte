@@ -31,10 +31,12 @@
     { value: "formal", label: "Formal" },
     { value: "casual", label: "Casual" },
     { value: "bullet", label: "Bullet points" },
-    { value: "concise", label: "Concise (summarize)" }
+    { value: "concise", label: "Concise (summarize)" },
+    { value: "custom", label: "Custom (editable)" }
   ];
 
-  // Preset system prompts — selecting a preset fills the System Prompt field below.
+  // Preset system prompts — selecting a built-in preset fills (and locks) the
+  // System/User Prompt fields below. The "custom" preset leaves them editable.
   const presetSystemPrompts: Record<string, string> = {
     clean: "Fix grammar and punctuation only. Return only the corrected text, no commentary.",
     formal: "Rewrite the user's text in formal professional language. Return only the result.",
@@ -43,10 +45,17 @@
     concise: "Summarize the user's text concisely in 1-2 sentences. Return only the summary.",
   };
 
+  // Built-in presets are read-only; only the "custom" preset lets the user edit
+  // the system and user prompts.
+  let isCustom = $derived(cfg.openai.mode === "custom");
+
   function applyPreset() {
     const preset = presetSystemPrompts[cfg.openai.mode];
     if (preset !== undefined) {
+      // Switching to a built-in preset overwrites the prompts with its fixed
+      // values; the user prompt is always the plain "{text}" passthrough.
       cfg.openai.system_prompt = preset;
+      cfg.openai.user_prompt = "{text}";
     }
     markDirty();
   }
@@ -134,6 +143,8 @@
       The system prompt tells the model how to transform your speech. The user
       prompt is the message sent to the model — it must contain
       <code>{"{text}"}</code>, which is replaced with whatever you dictate.
+      Built-in presets are read-only; choose <strong>Custom</strong> to edit the
+      prompts yourself.
     </p>
 
     <label class="field">
@@ -147,6 +158,8 @@
         rows="3"
         bind:value={cfg.openai.system_prompt}
         onchange={markDirty}
+        readonly={!isCustom}
+        class={isCustom ? "" : "locked"}
         placeholder="Leave empty to send no system message"
       ></textarea>
     </div>
@@ -157,10 +170,13 @@
         rows="2"
         bind:value={cfg.openai.user_prompt}
         onchange={markDirty}
-        class={userPromptValid ? "" : "invalid"}
+        readonly={!isCustom}
+        class={isCustom ? (userPromptValid ? "" : "invalid") : "locked"}
         placeholder="{'{text}'}"
       ></textarea>
-      {#if !userPromptValid}
+      {#if !isCustom}
+        <span class="field-hint">Select the <strong>Custom</strong> preset to edit the system and user prompts.</span>
+      {:else if !userPromptValid}
         <span class="validation-error">⚠️ The user prompt must contain the <code>{"{text}"}</code> placeholder.</span>
       {:else}
         <span class="field-hint">Use <code>{"{text}"}</code> where your dictated speech should be inserted.</span>
@@ -183,6 +199,9 @@
   }
   textarea.invalid {
     @apply border-red-500 ring-2 ring-red-500/20;
+  }
+  textarea.locked {
+    @apply opacity-60 cursor-not-allowed bg-black/20;
   }
   .validation-error {
     @apply text-xs font-semibold text-red-400;

@@ -292,6 +292,7 @@ pub fn run() {
             openai_model: None,
             openai_mode: None,
             openai_prompt: None,
+            openai_system_prompt: None,
         });
     }
 

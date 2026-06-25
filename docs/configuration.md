@@ -197,7 +197,7 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 | `endpoint` | string | `"http://localhost:11434"` | OpenAI-compatible API base URL. A `/v1` suffix is optional — it is added automatically when missing (e.g. requests go to `{endpoint}/v1/chat/completions`). |
 | `api_key` | string or null | `null` | API key sent as a `Bearer` token. Required by most remote providers; usually unnecessary for a local server. |
 | `model` | string | `"llama3.2:1b"` | Model name |
-| `mode` | string | `"clean"` | Preset that fills the system prompt in the GUI: `clean`/`formal`/`casual`/`bullet`/`concise`/`custom`. Generation itself is driven by `system_prompt`/`user_prompt`. |
+| `mode` | string | `"clean"` | Preset that fills the system prompt in the GUI: `clean`/`formal`/`casual`/`bullet`/`concise`/`custom`. Built-in presets are read-only in the GUI; choose `custom` to edit `system_prompt`/`user_prompt`. Generation itself is driven by `system_prompt`/`user_prompt`. |
 | `system_prompt` | string | `"Fix grammar and punctuation only…"` | System message describing the transformation. Empty = no system message. |
 | `user_prompt` | string | `"{text}"` | User message template. Must contain `{text}`, replaced with the dictated speech. |
 | `timeout_secs` | integer | `8` | HTTP request timeout in seconds |
@@ -414,6 +414,7 @@ target_ids = ["default"]
 | `openai_model` | string | No | `null` | LLM model override specifically for this hotkey |
 | `openai_mode` | string | No | `null` | LLM mode override specifically for this hotkey (`clean`/`formal`/`casual`/`bullet`/`concise`/`custom`) |
 | `openai_prompt` | string | No | `null` | User prompt template override for this hotkey (must contain `{text}`) |
+| `openai_system_prompt` | string | No | `null` | System prompt override for this hotkey (empty inherits the global default) |
 
 > The per-hotkey field names were renamed from `ollama_*` to `openai_*`; the
 > legacy `ollama_*` names are still accepted via serde aliases.

@@ -26,6 +26,7 @@
   let editOpenaiModel = $state("");
   let editOpenaiMode = $state("custom");
   let editOpenaiPrompt = $state("");
+  let editOpenaiSystemPrompt = $state("");
 
   // Helper to construct a canonical signature for a binding's key combination and gesture type
   function getBindingSignature(keys: string[], gesture: string, subkey?: string): string {
@@ -144,6 +145,7 @@
     editOpenaiModel = "";
     editOpenaiMode = "custom";
     editOpenaiPrompt = "";
+    editOpenaiSystemPrompt = "";
     editingBinding = {
       id: "binding_" + Math.random().toString(36).substring(2, 6),
       label: "New Binding",
@@ -159,6 +161,7 @@
       openai_model: "",
       openai_mode: "custom",
       openai_prompt: "",
+      openai_system_prompt: "",
     };
   }
 
@@ -172,6 +175,7 @@
     editOpenaiModel = clone.openai_model || "";
     editOpenaiMode = clone.openai_mode || "custom";
     editOpenaiPrompt = clone.openai_prompt || "";
+    editOpenaiSystemPrompt = clone.openai_system_prompt || "";
     editingBinding = clone;
   }
 
@@ -223,6 +227,7 @@
     editingBinding.openai_model = editOpenaiModel;
     editingBinding.openai_mode = editOpenaiMode;
     editingBinding.openai_prompt = editOpenaiPrompt;
+    editingBinding.openai_system_prompt = editOpenaiSystemPrompt;
 
     if (editingBinding.target_ids && editingBinding.target_ids.length > 0) {
       editingBinding.target_ids = editingBinding.target_ids.filter(id => id.trim() !== "");
@@ -716,6 +721,20 @@
 
               <div class="field col mt-2">
                 <div class="field-label-row">
+                  <span class="field-title">System Prompt Override</span>
+                  <span class="field-tag">LLM Prompt</span>
+                </div>
+                <textarea
+                  rows="3"
+                  bind:value={editOpenaiSystemPrompt}
+                  placeholder="Leave empty to use the default system prompt from Settings → OpenAI API"
+                  use:autoResize
+                ></textarea>
+                <p class="hint">Overrides the default system prompt configured in Settings → OpenAI API. Leave empty to inherit it.</p>
+              </div>
+
+              <div class="field col mt-2">
+                <div class="field-label-row">
                   <span class="field-title">User Prompt Template</span>
                   <span class="field-tag">LLM Prompt</span>
                 </div>
@@ -731,7 +750,7 @@
                     ⚠️ Validation Error: Prompt template MUST contain the <code>{"{text}"}</code> placeholder.
                   </span>
                 {:else}
-                  <p class="hint">Prompt template MUST contain the <code>{"{text}"}</code> placeholder.</p>
+                  <p class="hint">Prompt template MUST contain the <code>{"{text}"}</code> placeholder. Leave empty to inherit the default user prompt.</p>
                 {/if}
               </div>
             </div>
