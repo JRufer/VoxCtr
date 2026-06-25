@@ -116,14 +116,14 @@ struct RawBinding {
     subkey: Option<String>,
     #[serde(default)]
     disabled: bool,
-    #[serde(default)]
-    ollama_enabled: Option<bool>,
-    #[serde(default)]
-    ollama_model: Option<String>,
-    #[serde(default)]
-    ollama_mode: Option<String>,
-    #[serde(default)]
-    ollama_prompt: Option<String>,
+    #[serde(default, alias = "ollama_enabled")]
+    openai_enabled: Option<bool>,
+    #[serde(default, alias = "ollama_model")]
+    openai_model: Option<String>,
+    #[serde(default, alias = "ollama_mode")]
+    openai_mode: Option<String>,
+    #[serde(default, alias = "ollama_prompt")]
+    openai_prompt: Option<String>,
 }
 
 fn bool_true() -> bool {
@@ -251,7 +251,7 @@ fn migrate_legacy_pp(pp: &str) -> TargetProcessingConfig {
             apply_snippets: Some(true),
             ..Default::default()
         },
-        "ollama_only" => TargetProcessingConfig {
+        "openai_only" | "ollama_only" => TargetProcessingConfig {
             remove_fillers: Some(false),
             spoken_punctuation: Some(false),
             auto_format_lists: Some(false),
@@ -344,10 +344,10 @@ fn raw_to_binding(r: RawBinding) -> HotkeyBinding {
         hold_threshold_ms: r.hold_threshold_ms,
         subkey: r.subkey,
         disabled: r.disabled,
-        ollama_enabled: r.ollama_enabled,
-        ollama_model: r.ollama_model,
-        ollama_mode: r.ollama_mode,
-        ollama_prompt: r.ollama_prompt,
+        openai_enabled: r.openai_enabled,
+        openai_model: r.openai_model,
+        openai_mode: r.openai_mode,
+        openai_prompt: r.openai_prompt,
     }
 }
 
@@ -371,10 +371,10 @@ fn binding_to_raw(b: &HotkeyBinding) -> RawBinding {
         hold_threshold_ms: b.hold_threshold_ms,
         subkey: b.subkey.clone(),
         disabled: b.disabled,
-        ollama_enabled: b.ollama_enabled,
-        ollama_model: b.ollama_model.clone(),
-        ollama_mode: b.ollama_mode.clone(),
-        ollama_prompt: b.ollama_prompt.clone(),
+        openai_enabled: b.openai_enabled,
+        openai_model: b.openai_model.clone(),
+        openai_mode: b.openai_mode.clone(),
+        openai_prompt: b.openai_prompt.clone(),
     }
 }
 
@@ -397,10 +397,10 @@ pub fn default_bindings() -> Vec<HotkeyBinding> {
             hold_threshold_ms: 1000,
             subkey: None,
             disabled: false,
-            ollama_enabled: Some(false),
-            ollama_model: None,
-            ollama_mode: None,
-            ollama_prompt: None,
+            openai_enabled: Some(false),
+            openai_model: None,
+            openai_mode: None,
+            openai_prompt: None,
         },
         HotkeyBinding {
             id: "default_toggle".into(),
@@ -417,10 +417,10 @@ pub fn default_bindings() -> Vec<HotkeyBinding> {
             hold_threshold_ms: 1000,
             subkey: None,
             disabled: false,
-            ollama_enabled: Some(false),
-            ollama_model: None,
-            ollama_mode: None,
-            ollama_prompt: None,
+            openai_enabled: Some(false),
+            openai_model: None,
+            openai_mode: None,
+            openai_prompt: None,
         },
     ]
 }

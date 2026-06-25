@@ -74,7 +74,7 @@ describe("Settings.svelte Startup Redirect", () => {
         quiet_mode: false,
         snippets: {},
       },
-      ollama: {
+      openai: {
         enabled: false,
         model: "llama3.2:1b",
         mode: "clean",

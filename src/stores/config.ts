@@ -7,7 +7,7 @@ export interface AppConfig {
   audio: AudioConfig;
   ui: UiConfig;
   features: FeaturesConfig;
-  ollama: OllamaConfig;
+  openai: OpenAiConfig;
   tts: TtsConfig;
   mcp: McpConfig;
   atspi: AtspiConfig;
@@ -61,11 +61,13 @@ export interface FeaturesConfig {
   snippets: Record<string, string>;
 }
 
-export interface OllamaConfig {
+export interface OpenAiConfig {
   enabled: boolean;
   model: string;
   mode: "clean" | "formal" | "casual" | "bullet" | "concise" | "custom";
   custom_prompt: string | null;
+  system_prompt: string;
+  user_prompt: string;
   endpoint: string;
   api_key: string | null;
   timeout_secs: number;
@@ -141,11 +143,13 @@ const defaultConfig: AppConfig = {
     quiet_mode: false,
     snippets: {},
   },
-  ollama: {
+  openai: {
     enabled: false,
     model: "llama3.2:1b",
     mode: "clean",
     custom_prompt: null,
+    system_prompt: "Fix grammar and punctuation only. Return only the corrected text, no commentary.",
+    user_prompt: "{text}",
     endpoint: "http://localhost:11434",
     api_key: null,
     timeout_secs: 8,

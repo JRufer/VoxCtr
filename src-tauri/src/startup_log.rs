@@ -60,7 +60,7 @@ impl<S: Subscriber> Layer<S> for StartupErrorLayer {
             || lower_msg.contains("transcription")
             || lower_msg.contains("speaking")
             || lower_msg.contains("speak")
-            || lower_msg.contains("ollama")
+            || lower_msg.contains("openai")
             || lower_msg.contains("payload")
             || lower_msg.contains("status-tick")
         {

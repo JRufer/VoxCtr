@@ -24,7 +24,7 @@ delivery = "inject"
 append_newline = false
 send_on_release = true
 file_timestamp = true
-processing = {remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = false, ollama_enabled = false, atspi_context = false}
+processing = {remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = false, openai_enabled = false, atspi_context = false}
 
 # ── 3. Code mode — forces code-dictation mode regardless of focused app ────────
 [[target]]
@@ -35,9 +35,9 @@ append_newline = false
 send_on_release = true
 file_timestamp = true
 initial_prompt = "Python code. Variables use snake_case. Functions defined with def."
-processing = {code_mode = true, remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = true, ollama_enabled = false, atspi_context = false}
+processing = {code_mode = true, remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = true, openai_enabled = false, atspi_context = false}
 
-# ── 4. Clipboard with Ollama grammar fix ──────────────────────────────────────
+# ── 4. Clipboard with LLM grammar fix ──────────────────────────────────────
 [[target]]
 id = "clipboard_clean"
 label = "Clipboard (AI Cleaned)"
@@ -45,9 +45,9 @@ delivery = "clipboard"
 append_newline = false
 send_on_release = true
 file_timestamp = true
-processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_mode = "clean"}
+processing = {remove_fillers = true, spoken_punctuation = true, openai_enabled = true, openai_mode = "clean"}
 
-# ── 5. Formal email — Ollama rewrites in professional tone ────────────────────
+# ── 5. Formal email — LLM rewrites in professional tone ────────────────────
 [[target]]
 id = "formal_email"
 label = "Formal Email"
@@ -55,7 +55,7 @@ delivery = "clipboard"
 append_newline = false
 send_on_release = true
 file_timestamp = true
-processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = false, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_mode = "formal"}
+processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = false, openai_enabled = true, openai_model = "llama3.2:1b", openai_mode = "formal"}
 
 # ── 6. Bullet-point meeting notes ─────────────────────────────────────────────
 [[target]]
@@ -65,9 +65,9 @@ delivery = "clipboard"
 append_newline = true
 send_on_release = true
 file_timestamp = true
-processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = true, ollama_enabled = true, ollama_mode = "bullet"}
+processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = true, openai_enabled = true, openai_mode = "bullet"}
 
-# ── 7. Custom Ollama prompt — domain-specific rewrites ───────────────────────
+# ── 7. Custom LLM prompt — domain-specific rewrites ───────────────────────
 [[target]]
 id = "medical_notes"
 label = "Medical Notes"
@@ -77,7 +77,7 @@ file_prefix = "- "
 file_timestamp = true
 append_newline = true
 send_on_release = true
-processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = true, ollama_model = "llama3.2:1b", ollama_prompt = "Rewrite the following as concise clinical notes using standard medical abbreviations. Output ONLY the rewritten text:\n\n{text}"}
+processing = {remove_fillers = true, spoken_punctuation = true, openai_enabled = true, openai_model = "llama3.2:1b", openai_prompt = "Rewrite the following as concise clinical notes using standard medical abbreviations. Output ONLY the rewritten text:\n\n{text}"}
 
 # ── 8. FIFO pipe to an AI agent (e.g. Hermes or Claude Code) ─────────────────
 [[target]]
@@ -89,8 +89,8 @@ append_newline = true
 send_on_release = true
 file_timestamp = false
 # Quiet mode: extra gain for soft speech in a noisy environment
-# Noise suppression enabled if globally on; no Ollama (agent handles it)
-processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, ollama_enabled = false, quiet_mode = true}
+# Noise suppression enabled if globally on; no LLM post-processing (agent handles it)
+processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, openai_enabled = false, quiet_mode = true}
 
 # ── 9. TCP socket to remote service ──────────────────────────────────────────
 [[target]]
@@ -102,7 +102,7 @@ socket_port = 9000
 append_newline = true
 send_on_release = true
 file_timestamp = false
-processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = false}
+processing = {remove_fillers = true, spoken_punctuation = true, openai_enabled = false}
 
 # ── 10. Daily journal — file append with timestamps ───────────────────────────
 [[target]]
@@ -115,7 +115,7 @@ file_timestamp = true
 append_newline = true
 send_on_release = true
 # Make concise before writing
-processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = true, ollama_enabled = true, ollama_mode = "concise"}
+processing = {remove_fillers = true, spoken_punctuation = true, auto_format_lists = true, openai_enabled = true, openai_mode = "concise"}
 
 # ── 11. Run external command — e.g. send to clipboard manager ─────────────────
 [[target]]

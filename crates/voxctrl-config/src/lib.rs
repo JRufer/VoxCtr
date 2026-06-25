@@ -204,11 +204,11 @@ impl Default for FeaturesConfig {
     }
 }
 
-// ── Ollama ────────────────────────────────────────────────────────────────────
+// ── OpenAI API ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum OllamaMode {
+pub enum OpenAiMode {
     Clean,
     Formal,
     Casual,
@@ -217,21 +217,40 @@ pub enum OllamaMode {
     Custom,
 }
 
-impl Default for OllamaMode {
+impl Default for OpenAiMode {
     fn default() -> Self {
         Self::Clean
     }
 }
 
+fn default_system_prompt() -> String {
+    "Fix grammar and punctuation only. Return only the corrected text, no commentary.".into()
+}
+
+fn default_user_prompt() -> String {
+    "{text}".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OllamaConfig {
+pub struct OpenAiConfig {
     pub enabled: bool,
     pub model: String,
-    pub mode: OllamaMode,
-    /// Used when mode == Custom. "{text}" is substituted.
+    /// Preset that last populated the system prompt. Kept for UI convenience and
+    /// backward compatibility; generation is driven by `system_prompt`/`user_prompt`.
+    #[serde(default)]
+    pub mode: OpenAiMode,
+    /// Legacy single-prompt template (mode == Custom). Migrated into `user_prompt`.
+    #[serde(default)]
     pub custom_prompt: Option<String>,
-    /// Base URL of the OpenAI-compatible API server (e.g. a local Ollama
-    /// instance or a remote provider). May optionally include a `/v1` suffix.
+    /// System message sent to the model. Empty = no system message.
+    #[serde(default = "default_system_prompt")]
+    pub system_prompt: String,
+    /// User message template. Must contain "{text}", which is replaced with the
+    /// dictated text before being sent to the model.
+    #[serde(default = "default_user_prompt")]
+    pub user_prompt: String,
+    /// Base URL of the OpenAI-compatible API server (a local server or a remote
+    /// provider). May optionally include a `/v1` suffix.
     pub endpoint: String,
     /// Optional API key sent as a `Bearer` token. Required by most remote
     /// providers; usually unnecessary for a local server.
@@ -240,13 +259,15 @@ pub struct OllamaConfig {
     pub timeout_secs: u64,
 }
 
-impl Default for OllamaConfig {
+impl Default for OpenAiConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             model: "llama3.2:1b".into(),
-            mode: OllamaMode::Clean,
+            mode: OpenAiMode::Clean,
             custom_prompt: None,
+            system_prompt: default_system_prompt(),
+            user_prompt: default_user_prompt(),
             endpoint: "http://localhost:11434".into(),
             api_key: None,
             timeout_secs: 30,
@@ -408,7 +429,9 @@ pub struct AppConfig {
     pub audio: AudioConfig,
     pub ui: UiConfig,
     pub features: FeaturesConfig,
-    pub ollama: OllamaConfig,
+    /// `alias = "ollama"` keeps configs written before the OpenAI-API rename loading.
+    #[serde(alias = "ollama")]
+    pub openai: OpenAiConfig,
     pub tts: TtsConfig,
     pub mcp: McpConfig,
     pub atspi: AtspiConfig,
@@ -471,12 +494,27 @@ impl Config {
             }
         }
 
-        // Migrate legacy default Ollama timeout (8s) to the new default (30s) to prevent timeouts
-        if data.ollama.timeout_secs == 8 {
-            data.ollama.timeout_secs = 30;
+        // Migrate legacy default OpenAI timeout (8s) to the new default (30s) to prevent timeouts
+        if data.openai.timeout_secs == 8 {
+            data.openai.timeout_secs = 30;
             let clean_config = Self { data: data.clone(), path: path.clone() };
             if let Err(e) = clean_config.save() {
-                tracing::error!("Failed to save migrated Ollama timeout: {e}");
+                tracing::error!("Failed to save migrated OpenAI timeout: {e}");
+            }
+        }
+
+        // Migrate the legacy single `custom_prompt` (used when mode == Custom) into the
+        // new `user_prompt` field, then clear it so this runs only once.
+        if let Some(legacy_prompt) = data.openai.custom_prompt.take() {
+            if !legacy_prompt.trim().is_empty() {
+                data.openai.user_prompt = legacy_prompt;
+                // The legacy custom prompt carried the full instruction, so drop the
+                // default grammar-fix system prompt to preserve the old behavior.
+                data.openai.system_prompt = String::new();
+            }
+            let clean_config = Self { data: data.clone(), path: path.clone() };
+            if let Err(e) = clean_config.save() {
+                tracing::error!("Failed to save migrated OpenAI custom prompt: {e}");
             }
         }
 
@@ -626,7 +664,7 @@ mod tests {
                 "show_notification": true,
                 "snippets": {}
             },
-            "ollama": {
+            "openai": {
                 "enabled": false,
                 "model": "llama3.2:1b",
                 "mode": "clean",
@@ -711,14 +749,33 @@ mod tests {
     }
 
     #[test]
-    fn test_ollama_timeout_migration() {
+    fn test_openai_prompt_defaults_for_legacy_config() {
+        // Legacy config without system_prompt / user_prompt keys must deserialize
+        // with the new prompt defaults applied via serde defaults.
+        let legacy_openai = r#"{
+            "enabled": true,
+            "model": "llama3.2:1b",
+            "mode": "clean",
+            "custom_prompt": null,
+            "endpoint": "http://localhost:11434",
+            "timeout_secs": 30
+        }"#;
+
+        let parsed: OpenAiConfig = serde_json::from_str(legacy_openai).unwrap();
+        assert_eq!(parsed.user_prompt, "{text}");
+        assert!(parsed.system_prompt.contains("Fix grammar"));
+        assert_eq!(parsed.api_key, None);
+    }
+
+    #[test]
+    fn test_openai_timeout_migration() {
         let mut default_cfg = AppConfig::default();
-        default_cfg.ollama.timeout_secs = 8;
+        default_cfg.openai.timeout_secs = 8;
 
         let legacy_json = serde_json::to_string(&default_cfg).unwrap();
 
         let parsed: AppConfig = serde_json::from_str(&legacy_json).unwrap();
-        assert_eq!(parsed.ollama.timeout_secs, 8);
+        assert_eq!(parsed.openai.timeout_secs, 8);
 
         let temp_dir = tempfile::tempdir().unwrap();
         let config_file_path = temp_dir.path().join("config.json");
@@ -729,12 +786,12 @@ mod tests {
             path: config_file_path.clone(),
         };
 
-        if config.data.ollama.timeout_secs == 8 {
-            config.data.ollama.timeout_secs = 30;
+        if config.data.openai.timeout_secs == 8 {
+            config.data.openai.timeout_secs = 30;
             config.save().unwrap();
         }
 
-        assert_eq!(config.data.ollama.timeout_secs, 30);
+        assert_eq!(config.data.openai.timeout_secs, 30);
 
         let re_read_content = std::fs::read_to_string(&config_file_path).unwrap();
         assert!(re_read_content.contains(r#""timeout_secs": 30"#));

@@ -173,30 +173,31 @@ The DBus service is a stub on non-Linux platforms (compiles but does nothing).
 
 After Whisper transcribes speech, text can optionally be rewritten by an LLM
 served over the **OpenAI API**. This works with any compatible server — a local
-[Ollama](https://ollama.ai/) or LM Studio instance, or a hosted provider.
-Enabled per-hotkey binding via `ollama_enabled = true` in `bindings.toml` (or via
-the Hotkeys tab in the GUI settings).
+server or a hosted provider. Enabled per-hotkey binding via
+`openai_enabled = true` in `bindings.toml` (or via the Hotkeys tab in the GUI
+settings).
 
 The client calls `POST {endpoint}/v1/chat/completions` for generation and
 `GET {endpoint}/v1/models` to list models. The `/v1` suffix is appended
 automatically if the configured endpoint doesn't already include it, so the
-default `http://localhost:11434` targets a local Ollama instance's
-OpenAI-compatible endpoint. When `api_key` is set it is sent as an
-`Authorization: Bearer <key>` header.
+default `http://localhost:11434` targets a local server's OpenAI-compatible
+endpoint. When `api_key` is set it is sent as an `Authorization: Bearer <key>`
+header.
 
-> The config key, Rust types (`OllamaConfig`/`OllamaClient`), and IPC command
-> (`test_ollama`) retain the `ollama` name for backwards compatibility.
+> Configs written before the rename used the key `ollama` (and `ollama_*` binding
+> fields); those names are still accepted via serde aliases and load transparently.
 
 ### Configuration
 
 ```json
-"ollama": {
+"openai": {
   "enabled": false,
   "endpoint": "http://localhost:11434",
   "api_key": null,
   "model": "llama3.2:1b",
   "mode": "clean",
-  "custom_prompt": null,
+  "system_prompt": "Fix grammar and punctuation only. Return only the corrected text, no commentary.",
+  "user_prompt": "{text}",
   "timeout_secs": 8
 }
 ```
@@ -205,26 +206,33 @@ For a hosted provider, set `endpoint` to its base URL (e.g.
 `https://api.openai.com/v1`), set `api_key`, and choose a `model` the provider
 offers.
 
-### Modes
+### System & User Prompts
 
-| Mode | Prompt sent to LLM |
+Each request sends two chat messages:
+
+- **System prompt** (`system_prompt`) — describes how to transform the text. Leave
+  empty to send no system message.
+- **User prompt** (`user_prompt`) — the message itself. It must contain `{text}`,
+  which is replaced with the transcribed speech. If the placeholder is missing,
+  the transcribed text is appended on a new line as a fallback.
+
+### Presets
+
+The `mode` field is a GUI convenience: selecting a preset fills the system prompt
+with one of the following. Generation always uses `system_prompt`/`user_prompt`.
+
+| Preset | System prompt |
 |---|---|
 | `clean` | "Fix grammar and punctuation only. Return only the corrected text, no commentary." |
-| `formal` | "Rewrite in formal professional language. Return only the result." |
-| `casual` | "Rewrite in casual conversational language. Return only the result." |
-| `bullet` | "Convert to a bullet-point list. Return only the list." |
-| `concise` | "Summarize concisely in 1-2 sentences. Return only the summary." |
-| `custom` | Uses `custom_prompt` field |
-
-### Custom Prompt
-
-With `mode = "custom"`, the `custom_prompt` field is used as the LLM instruction:
-- If `custom_prompt` contains `{text}`, that placeholder is replaced with the transcribed text
-- Otherwise, the transcribed text is appended after the prompt on a new line
+| `formal` | "Rewrite the user's text in formal professional language. Return only the result." |
+| `casual` | "Rewrite the user's text in casual conversational language. Return only the result." |
+| `bullet` | "Convert the user's text to a bullet-point list. Return only the list." |
+| `concise` | "Summarize the user's text concisely in 1-2 sentences. Return only the summary." |
+| `custom` | No preset — edit the system/user prompts freely |
 
 ### Availability Caching
 
-`OllamaClient.is_available()` probes `GET {endpoint}/v1/models` on first call and **caches the result**. If the server was unreachable at startup, it will appear unreachable until the availability cache is reset (e.g. by changing the endpoint in settings).
+`OpenAiClient.is_available()` probes `GET {endpoint}/v1/models` on first call and **caches the result**. If the server was unreachable at startup, it will appear unreachable until the availability cache is reset (e.g. by changing the endpoint in settings).
 
 ### Graceful Fallback
 
@@ -234,7 +242,7 @@ If the server is unreachable, the HTTP request times out, or the response cannot
 
 Via the Settings → OpenAI API tab → "Test Connection" button, or via IPC:
 ```typescript
-const result = await invoke('test_ollama', {
+const result = await invoke('test_openai', {
   endpoint: 'http://localhost:11434',
   apiKey: null,
   timeoutSecs: 5

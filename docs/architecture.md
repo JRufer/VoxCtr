@@ -152,7 +152,7 @@ App.svelte  (route switcher)
   │     ├── AudioTab
   │     ├── TtsTab
   │     ├── FeaturesTab
-  │     ├── OllamaTab  (labeled "OpenAI API")
+  │     ├── OpenAiTab  (labeled "OpenAI API")
   │     └── AboutTab
   │
   ├── /overlay   → Overlay component (web overlay layer; the on-screen HUD

@@ -13,11 +13,11 @@
   import HotkeysTab from "./HotkeysTab.svelte";
   import TargetsTab from "./TargetsTab.svelte";
   import TtsTab from "./TtsTab.svelte";
-  import OllamaTab from "./OllamaTab.svelte";
+  import OpenAiTab from "./OpenAiTab.svelte";
   import FeaturesTab from "./FeaturesTab.svelte";
   import AboutTab from "./AboutTab.svelte";
 
-  type Tab = "general" | "engine" | "hotkeys" | "targets" | "visual" | "audio" | "tts" | "features" | "ollama" | "about";
+  type Tab = "general" | "engine" | "hotkeys" | "targets" | "visual" | "audio" | "tts" | "features" | "openai" | "about";
   let activeTab = $state<Tab>("general");
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
@@ -29,7 +29,7 @@
     { id: "audio",    label: "Audio",    icon: "🔊" },
     { id: "tts",      label: "TTS",      icon: "🗣️" },
     { id: "features", label: "Features", icon: "✨" },
-    { id: "ollama",   label: "OpenAI API", icon: "🤖" },
+    { id: "openai",   label: "OpenAI API", icon: "🤖" },
     { id: "about",    label: "About",    icon: "ℹ️" },
   ];
 
@@ -175,8 +175,8 @@
         <TtsTab bind:cfg={$config} />
       {:else if activeTab === "features"}
         <FeaturesTab bind:cfg={$config} />
-      {:else if activeTab === "ollama"}
-        <OllamaTab bind:cfg={$config} />
+      {:else if activeTab === "openai"}
+        <OpenAiTab bind:cfg={$config} />
       {:else if activeTab === "about"}
         <AboutTab />
       {/if}

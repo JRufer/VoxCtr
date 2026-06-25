@@ -21,11 +21,11 @@
   let targetIndexTriggeredNew = $state<number | null>(null);
   let activeDropdownIdx = $state<number | null>(null);
 
-  // Ollama flat edit states
-  let editOllamaEnabled = $state(false);
-  let editOllamaModel = $state("");
-  let editOllamaMode = $state("custom");
-  let editOllamaPrompt = $state("");
+  // OpenAI LLM flat edit states
+  let editOpenaiEnabled = $state(false);
+  let editOpenaiModel = $state("");
+  let editOpenaiMode = $state("custom");
+  let editOpenaiPrompt = $state("");
 
   // Helper to construct a canonical signature for a binding's key combination and gesture type
   function getBindingSignature(keys: string[], gesture: string, subkey?: string): string {
@@ -140,10 +140,10 @@
       return;
     }
     isEditingBindingNew = true;
-    editOllamaEnabled = false;
-    editOllamaModel = "";
-    editOllamaMode = "custom";
-    editOllamaPrompt = "";
+    editOpenaiEnabled = false;
+    editOpenaiModel = "";
+    editOpenaiMode = "custom";
+    editOpenaiPrompt = "";
     editingBinding = {
       id: "binding_" + Math.random().toString(36).substring(2, 6),
       label: "New Binding",
@@ -155,10 +155,10 @@
       hold_threshold_ms: 1000,
       subkey: "",
       disabled: false,
-      ollama_enabled: false,
-      ollama_model: "",
-      ollama_mode: "custom",
-      ollama_prompt: "",
+      openai_enabled: false,
+      openai_model: "",
+      openai_mode: "custom",
+      openai_prompt: "",
     };
   }
 
@@ -168,10 +168,10 @@
     if (!clone.target_ids) {
       clone.target_ids = clone.target_id ? [clone.target_id] : [];
     }
-    editOllamaEnabled = clone.ollama_enabled === true;
-    editOllamaModel = clone.ollama_model || "";
-    editOllamaMode = clone.ollama_mode || "custom";
-    editOllamaPrompt = clone.ollama_prompt || "";
+    editOpenaiEnabled = clone.openai_enabled === true;
+    editOpenaiModel = clone.openai_model || "";
+    editOpenaiMode = clone.openai_mode || "custom";
+    editOpenaiPrompt = clone.openai_prompt || "";
     editingBinding = clone;
   }
 
@@ -210,19 +210,19 @@
       return;
     }
 
-    if (editOllamaEnabled) {
-      if (editOllamaMode === "custom") {
-        if (!editOllamaPrompt.includes("{text}")) {
+    if (editOpenaiEnabled) {
+      if (editOpenaiMode === "custom") {
+        if (!editOpenaiPrompt.includes("{text}")) {
           alert("LLM Configuration Error:\nYour custom prompt template MUST contain the '{text}' placeholder so the model knows where to insert the transcribed text.\n\nExample:\nwrite a haiku about {text}");
           return;
         }
       }
     }
 
-    editingBinding.ollama_enabled = editOllamaEnabled;
-    editingBinding.ollama_model = editOllamaModel;
-    editingBinding.ollama_mode = editOllamaMode;
-    editingBinding.ollama_prompt = editOllamaPrompt;
+    editingBinding.openai_enabled = editOpenaiEnabled;
+    editingBinding.openai_model = editOpenaiModel;
+    editingBinding.openai_mode = editOpenaiMode;
+    editingBinding.openai_prompt = editOpenaiPrompt;
 
     if (editingBinding.target_ids && editingBinding.target_ids.length > 0) {
       editingBinding.target_ids = editingBinding.target_ids.filter(id => id.trim() !== "");
@@ -426,8 +426,8 @@
             >
               {b.label || b.id}
             </div>
-            {#if b.ollama_enabled}
-              <span class="badge ollama">LLM</span>
+            {#if b.openai_enabled}
+              <span class="badge openai">LLM</span>
             {/if}
           </div>
           <div class="binding-row2">
@@ -699,34 +699,34 @@
         <div class="processing-toggles border-t border-white/5 pt-[14px] mt-4">
           <h5>OpenAI API LLM Post-Processing</h5>
           <label class="checkbox-field">
-            <input type="checkbox" bind:checked={editOllamaEnabled} />
+            <input type="checkbox" bind:checked={editOpenaiEnabled} />
             <span>Enable LLM post-processing for this hotkey</span>
           </label>
 
-          {#if editOllamaEnabled}
-            <div class="ollama-target-settings pl-4 mt-2 ml-4">
+          {#if editOpenaiEnabled}
+            <div class="openai-target-settings pl-4 mt-2 ml-4">
               <label class="field">
                 <span>Model Override (leave empty for global default)</span>
                 <input
                   type="text"
-                  bind:value={editOllamaModel}
+                  bind:value={editOpenaiModel}
                   placeholder="e.g. llama3.2:1b"
                 />
               </label>
 
               <div class="field col mt-2">
                 <div class="field-label-row">
-                  <span class="field-title">Custom Prompt Template</span>
+                  <span class="field-title">User Prompt Template</span>
                   <span class="field-tag">LLM Prompt</span>
                 </div>
                 <textarea
                   rows="3"
-                  bind:value={editOllamaPrompt}
-                  class={editOllamaPrompt && !editOllamaPrompt.includes("{text}") ? 'border-red-500! ring-2! ring-red-500/20! focus:border-red-500! focus:ring-red-500/20!' : ''}
+                  bind:value={editOpenaiPrompt}
+                  class={editOpenaiPrompt && !editOpenaiPrompt.includes("{text}") ? 'border-red-500! ring-2! ring-red-500/20! focus:border-red-500! focus:ring-red-500/20!' : ''}
                   placeholder="e.g. write a haiku about {'{text}'}"
                   use:autoResize
                 ></textarea>
-                {#if editOllamaPrompt && !editOllamaPrompt.includes("{text}")}
+                {#if editOpenaiPrompt && !editOpenaiPrompt.includes("{text}")}
                   <span class="validation-error-msg">
                     ⚠️ Validation Error: Prompt template MUST contain the <code>{"{text}"}</code> placeholder.
                   </span>
@@ -874,7 +874,7 @@
     @apply bg-[var(--accent2)]/15 text-[var(--accent2)] border border-[var(--accent2)]/30;
   }
 
-  .badge.ollama {
+  .badge.openai {
     @apply bg-emerald-500/15 text-emerald-200 border border-emerald-500/30;
   }
 
@@ -960,7 +960,7 @@
     @apply min-w-[255px]!;
   }
 
-  .ollama-target-settings {
+  .openai-target-settings {
     @apply border-l-2 border-[var(--accent)] pl-3.5 ml-2.5 mt-2.5 mb-3.5 flex flex-col gap-2;
   }
 

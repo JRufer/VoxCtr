@@ -2,28 +2,30 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
-use voxctrl_config::{OllamaConfig, OllamaMode};
+use voxctrl_config::{OpenAiConfig, OpenAiMode};
 
-// ── Prompts per mode ──────────────────────────────────────────────────────────
+// ── Preset system prompts ───────────────────────────────────────────────────
 
-fn mode_prompt(mode: &OllamaMode, text: &str) -> String {
+/// System-prompt text for each built-in preset. `Custom` has no preset and
+/// returns an empty string (the user prompt carries the full instruction).
+pub fn preset_system_prompt(mode: &OpenAiMode) -> &'static str {
     match mode {
-        OllamaMode::Clean => format!(
-            "Fix grammar and punctuation only. Return only the corrected text, no commentary.\n\nText: {text}"
-        ),
-        OllamaMode::Formal => format!(
-            "Rewrite in formal professional language. Return only the result.\n\nText: {text}"
-        ),
-        OllamaMode::Casual => format!(
-            "Rewrite in casual conversational language. Return only the result.\n\nText: {text}"
-        ),
-        OllamaMode::Bullet => format!(
-            "Convert to a bullet-point list. Return only the list.\n\nText: {text}"
-        ),
-        OllamaMode::Concise => format!(
-            "Summarize concisely in 1-2 sentences. Return only the summary.\n\nText: {text}"
-        ),
-        OllamaMode::Custom => text.to_string(), // handled separately
+        OpenAiMode::Clean => {
+            "Fix grammar and punctuation only. Return only the corrected text, no commentary."
+        }
+        OpenAiMode::Formal => {
+            "Rewrite the user's text in formal professional language. Return only the result."
+        }
+        OpenAiMode::Casual => {
+            "Rewrite the user's text in casual conversational language. Return only the result."
+        }
+        OpenAiMode::Bullet => {
+            "Convert the user's text to a bullet-point list. Return only the list."
+        }
+        OpenAiMode::Concise => {
+            "Summarize the user's text concisely in 1-2 sentences. Return only the summary."
+        }
+        OpenAiMode::Custom => "",
     }
 }
 
@@ -71,14 +73,14 @@ fn api_base(endpoint: &str) -> String {
 // ── Client ────────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct OllamaClient {
-    config: OllamaConfig,
+pub struct OpenAiClient {
+    config: OpenAiConfig,
     http: reqwest::Client,
     available: std::sync::Arc<std::sync::Mutex<Option<bool>>>,
 }
 
-impl OllamaClient {
-    pub fn new(config: OllamaConfig) -> Self {
+impl OpenAiClient {
+    pub fn new(config: OpenAiConfig) -> Self {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
             .build()
@@ -123,7 +125,7 @@ impl OllamaClient {
         ok
     }
 
-    /// Post-process text through Ollama. Returns original text on any failure.
+    /// Post-process text through the OpenAI API. Returns original text on any failure.
     pub async fn process(&self, text: &str) -> String {
         if !self.config.enabled {
             return text.to_string();
@@ -132,27 +134,37 @@ impl OllamaClient {
             return text.to_string();
         }
 
-        let prompt = if self.config.mode == OllamaMode::Custom {
-            if let Some(tmpl) = &self.config.custom_prompt {
-                if tmpl.contains("{text}") {
-                    tmpl.replace("{text}", text)
-                } else {
-                    format!("{tmpl}\n\n{text}")
-                }
-            } else {
-                return text.to_string();
-            }
+        // Build the user message from the configured template, substituting the
+        // dictated text into the "{text}" placeholder.
+        let template = if self.config.user_prompt.trim().is_empty() {
+            "{text}"
         } else {
-            mode_prompt(&self.config.mode, text)
+            self.config.user_prompt.as_str()
         };
+        let user_content = if template.contains("{text}") {
+            template.replace("{text}", text)
+        } else {
+            // Be forgiving if the user dropped the placeholder: append the text.
+            format!("{template}\n\n{text}")
+        };
+
+        let system_content = self.config.system_prompt.trim();
+        let mut messages = Vec::with_capacity(2);
+        if !system_content.is_empty() {
+            messages.push(ChatMessage {
+                role: "system",
+                content: system_content,
+            });
+        }
+        messages.push(ChatMessage {
+            role: "user",
+            content: &user_content,
+        });
 
         let url = format!("{}/chat/completions", api_base(&self.config.endpoint));
         let req = ChatRequest {
             model: &self.config.model,
-            messages: vec![ChatMessage {
-                role: "user",
-                content: &prompt,
-            }],
+            messages,
             stream: false,
         };
 
@@ -222,7 +234,8 @@ impl OllamaClient {
 
 #[cfg(test)]
 mod tests {
-    use super::api_base;
+    use super::{api_base, preset_system_prompt};
+    use voxctrl_config::OpenAiMode;
 
     #[test]
     fn api_base_appends_v1() {
@@ -234,5 +247,12 @@ mod tests {
     fn api_base_preserves_existing_v1() {
         assert_eq!(api_base("https://api.openai.com/v1"), "https://api.openai.com/v1");
         assert_eq!(api_base("https://api.openai.com/v1/"), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn preset_custom_has_no_system_prompt() {
+        assert_eq!(preset_system_prompt(&OpenAiMode::Custom), "");
+        assert!(!preset_system_prompt(&OpenAiMode::Clean).is_empty());
+        assert!(preset_system_prompt(&OpenAiMode::Formal).contains("formal"));
     }
 }

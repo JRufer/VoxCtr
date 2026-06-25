@@ -12,7 +12,7 @@ pub struct AppState {
 
     /// True while a hotkey hold/toggle is active (recording)
     pub recording: Arc<AtomicBool>,
-    /// True while speech transcription/Ollama post-processing is running
+    /// True while speech transcription/OpenAI post-processing is running
     pub processing: Arc<AtomicBool>,
     /// True while TTS is playing back
     pub speaking: Arc<AtomicBool>,
