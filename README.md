@@ -28,7 +28,7 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 * **Linux evdev Global Hotkeys**: Low-level event loop listener bypassing desktop environments to bind global hold-to-talk, toggle-to-talk, double-tap, double-tap & hold, or chord combo gestures directly to any keyboard.
 * **DBus Dictation Service**: Exposes `ai.voxctrl.Dictation` on the local Linux session bus, letting you script recording states securely without network exposure.
 * **Neural Text-to-Speech (TTS)**: Built-in local neural voice feedback powered by Piper, with automatic local package installation and a voice downloader interface.
-* **Intelligent Post-Processing & Ollama**: Real-time automatic filler-word cleanup (e.g. stripping "um", "uh", "hmm") to sanitize dictation, combined with optional **local Ollama integration** (supporting Llama 3.2, Phi-3, or Mistral) for real-time grammar correction, tone rewriting, or custom formatting.
+* **Intelligent Post-Processing & LLM Rewriting**: Real-time automatic filler-word cleanup (e.g. stripping "um", "uh", "hmm") to sanitize dictation, combined with optional post-processing through any **OpenAI-compatible API server** (a local [Ollama](https://ollama.ai/) or LM Studio instance, or a hosted provider) for real-time grammar correction, tone rewriting, or custom formatting. Point it at any URL and supply an API key when the server requires one.
 
 ---
 
@@ -83,7 +83,7 @@ Below are the 10 target types supported by VoxCtrl and what they are used for:
                           ▼       ▼        ▼
                   ┌──────────────────────────────┐
                   │  Optional AI Post-processing │
-                  │  (Filler Removal / Ollama)   │
+                  │  (Filler Removal / LLM API)  │
                   └───────┬───────┬────────┬─────┘
                           │       │        │
             ┌─────────────┘       │        └─────────────┐

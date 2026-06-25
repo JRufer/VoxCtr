@@ -61,6 +61,7 @@ Full schema with defaults:
   "ollama": {
     "enabled": false,
     "endpoint": "http://localhost:11434",
+    "api_key": null,
     "model": "llama3.2:1b",
     "mode": "clean",
     "custom_prompt": null,
@@ -179,10 +180,16 @@ Example with snippets:
 
 ### `ollama` section
 
+LLM post-processing through any OpenAI-compatible API server. The JSON key is
+named `ollama` for backwards compatibility, but the client speaks the OpenAI API
+and works with a local Ollama/LM Studio instance or a hosted provider. Exposed
+in the GUI under **Settings → OpenAI API**.
+
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Enable Ollama post-processing |
-| `endpoint` | string | `"http://localhost:11434"` | Ollama API base URL |
+| `enabled` | bool | `false` | Enable LLM post-processing |
+| `endpoint` | string | `"http://localhost:11434"` | OpenAI-compatible API base URL. A `/v1` suffix is optional — it is added automatically when missing (e.g. requests go to `{endpoint}/v1/chat/completions`). |
+| `api_key` | string or null | `null` | API key sent as a `Bearer` token. Required by most remote providers; usually unnecessary for a local server. |
 | `model` | string | `"llama3.2:1b"` | Model name |
 | `mode` | string | `"clean"` | Rewrite style: `clean`/`formal`/`casual`/`bullet`/`concise`/`custom` |
 | `custom_prompt` | string or null | `null` | Instruction when mode is `custom`; use `{text}` as placeholder, or text is appended after the prompt |
@@ -343,7 +350,7 @@ gesture = "hold"
 target_ids = ["default"]
 hold_threshold_ms = 200        # Default: 200ms min hold to register
 disabled = false
-ollama_enabled = true          # Enable Ollama rewrite specifically for this hotkey
+ollama_enabled = true          # Enable LLM rewrite specifically for this hotkey
 ollama_mode = "formal"         # Rewrite output in formal style for this hotkey
 
 [[binding]]
@@ -393,9 +400,9 @@ target_ids = ["default"]
 | `hold_threshold_ms` | integer | No | `200` | Min hold duration in ms for hold / double-tap-hold gesture |
 | `tap_ms` | integer | No | `250` | Double-tap inter-press window in ms |
 | `disabled` | bool | No | `false` | Disable without deleting |
-| `ollama_enabled` | bool | No | `null` | Enable/disable Ollama post-processing specifically for this hotkey (null = inherit global config) |
-| `ollama_model` | string | No | `null` | Ollama model override specifically for this hotkey |
-| `ollama_mode` | string | No | `null` | Ollama mode override specifically for this hotkey (`clean`/`formal`/`casual`/`bullet`/`concise`/`custom`) |
+| `ollama_enabled` | bool | No | `null` | Enable/disable LLM post-processing specifically for this hotkey (null = inherit global config) |
+| `ollama_model` | string | No | `null` | LLM model override specifically for this hotkey |
+| `ollama_mode` | string | No | `null` | LLM mode override specifically for this hotkey (`clean`/`formal`/`casual`/`bullet`/`concise`/`custom`) |
 | `ollama_prompt` | string | No | `null` | Custom prompt override specifically for this hotkey |
 
 ---

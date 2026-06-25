@@ -27,18 +27,45 @@ fn mode_prompt(mode: &OllamaMode, text: &str) -> String {
     }
 }
 
-// ── Ollama API types ──────────────────────────────────────────────────────────
+// ── OpenAI-compatible API types ─────────────────────────────────────────────
 
 #[derive(Serialize)]
-struct GenerateRequest<'a> {
+struct ChatMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(Serialize)]
+struct ChatRequest<'a> {
     model: &'a str,
-    prompt: &'a str,
+    messages: Vec<ChatMessage<'a>>,
     stream: bool,
 }
 
 #[derive(Deserialize)]
-struct GenerateResponse {
-    response: String,
+struct ChatResponseMessage {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ChatChoice {
+    message: ChatResponseMessage,
+}
+
+#[derive(Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+}
+
+/// Normalize a user-supplied endpoint into an OpenAI-style base URL ending in
+/// `/v1`. Accepts values with or without a trailing slash or existing `/v1`.
+fn api_base(endpoint: &str) -> String {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
+    }
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
@@ -63,7 +90,15 @@ impl OllamaClient {
         }
     }
 
-    /// Lazily probe if Ollama is reachable. Cached after first check.
+    /// Attach the configured API key as a Bearer token, if one is set.
+    fn with_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.config.api_key.as_deref() {
+            Some(key) if !key.trim().is_empty() => req.bearer_auth(key.trim()),
+            _ => req,
+        }
+    }
+
+    /// Lazily probe if the API server is reachable. Cached after first check.
     pub async fn is_available(&self) -> bool {
         {
             let guard = self.available.lock().unwrap();
@@ -71,10 +106,9 @@ impl OllamaClient {
                 return v;
             }
         }
-        let url = format!("{}/api/tags", self.config.endpoint);
+        let url = format!("{}/models", api_base(&self.config.endpoint));
         let ok = self
-            .http
-            .get(&url)
+            .with_auth(self.http.get(&url))
             .timeout(Duration::from_secs(2))
             .send()
             .await
@@ -82,9 +116,9 @@ impl OllamaClient {
             .unwrap_or(false);
         *self.available.lock().unwrap() = Some(ok);
         if ok {
-            info!("Ollama reachable at {}", self.config.endpoint);
+            info!("OpenAI API reachable at {}", self.config.endpoint);
         } else {
-            warn!("Ollama not reachable at {}", self.config.endpoint);
+            warn!("OpenAI API not reachable at {}", self.config.endpoint);
         }
         ok
     }
@@ -112,37 +146,49 @@ impl OllamaClient {
             mode_prompt(&self.config.mode, text)
         };
 
-        let url = format!("{}/api/generate", self.config.endpoint);
-        let req = GenerateRequest {
+        let url = format!("{}/chat/completions", api_base(&self.config.endpoint));
+        let req = ChatRequest {
             model: &self.config.model,
-            prompt: &prompt,
+            messages: vec![ChatMessage {
+                role: "user",
+                content: &prompt,
+            }],
             stream: false,
         };
 
-        match self.http.post(&url).json(&req).send().await {
+        match self.with_auth(self.http.post(&url).json(&req)).send().await {
             Ok(resp) if resp.status().is_success() => {
-                match resp.json::<GenerateResponse>().await {
+                match resp.json::<ChatResponse>().await {
                     Ok(body) => {
-                        let result = body.response.trim().to_string();
+                        let result = body
+                            .choices
+                            .into_iter()
+                            .next()
+                            .map(|c| c.message.content.trim().to_string())
+                            .unwrap_or_default();
+                        if result.is_empty() {
+                            warn!("OpenAI API returned no content");
+                            return text.to_string();
+                        }
                         debug!(
                             input_len = text.len(),
                             output_len = result.len(),
-                            "Ollama processed"
+                            "OpenAI API processed"
                         );
                         result
                     }
                     Err(e) => {
-                        warn!("Ollama response parse error: {e}");
+                        warn!("OpenAI API response parse error: {e}");
                         text.to_string()
                     }
                 }
             }
             Ok(resp) => {
-                warn!("Ollama HTTP {}", resp.status());
+                warn!("OpenAI API HTTP {}", resp.status());
                 text.to_string()
             }
             Err(e) => {
-                warn!("Ollama request error: {e}");
+                warn!("OpenAI API request error: {e}");
                 text.to_string()
             }
         }
@@ -153,19 +199,40 @@ impl OllamaClient {
         *self.available.lock().unwrap() = None;
     }
 
-    /// Retrieve the list of available local models from the Ollama instance.
+    /// Retrieve the list of available models from the OpenAI-compatible server.
     pub async fn list_models(&self) -> Result<Vec<String>, String> {
-        let url = format!("{}/api/tags", self.config.endpoint);
-        let resp = self.http.get(&url).send().await.map_err(|e| e.to_string())?;
+        let url = format!("{}/models", api_base(&self.config.endpoint));
+        let resp = self
+            .with_auth(self.http.get(&url))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         if resp.status().is_success() {
             #[derive(serde::Deserialize)]
-            struct ModelItem { name: String }
+            struct ModelItem { id: String }
             #[derive(serde::Deserialize)]
-            struct TagsResponse { models: Vec<ModelItem> }
-            let tags = resp.json::<TagsResponse>().await.map_err(|e| e.to_string())?;
-            Ok(tags.models.into_iter().map(|m| m.name).collect())
+            struct ModelsResponse { data: Vec<ModelItem> }
+            let body = resp.json::<ModelsResponse>().await.map_err(|e| e.to_string())?;
+            Ok(body.data.into_iter().map(|m| m.id).collect())
         } else {
             Err(format!("HTTP error: {}", resp.status()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::api_base;
+
+    #[test]
+    fn api_base_appends_v1() {
+        assert_eq!(api_base("http://localhost:11434"), "http://localhost:11434/v1");
+        assert_eq!(api_base("http://localhost:11434/"), "http://localhost:11434/v1");
+    }
+
+    #[test]
+    fn api_base_preserves_existing_v1() {
+        assert_eq!(api_base("https://api.openai.com/v1"), "https://api.openai.com/v1");
+        assert_eq!(api_base("https://api.openai.com/v1/"), "https://api.openai.com/v1");
     }
 }

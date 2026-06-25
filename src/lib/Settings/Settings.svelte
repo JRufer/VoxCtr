@@ -29,7 +29,7 @@
     { id: "audio",    label: "Audio",    icon: "🔊" },
     { id: "tts",      label: "TTS",      icon: "🗣️" },
     { id: "features", label: "Features", icon: "✨" },
-    { id: "ollama",   label: "Ollama",   icon: "🦙" },
+    { id: "ollama",   label: "OpenAI API", icon: "🤖" },
     { id: "about",    label: "About",    icon: "ℹ️" },
   ];
 

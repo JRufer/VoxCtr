@@ -55,7 +55,7 @@ Voice models are downloaded from inside the app. Go to **Settings → TTS**, sel
 
 ### Via Settings UI
 
-1. Open **Settings → Ollama**
+1. Open **Settings → General**
 2. Scroll to the **MCP Server** section
 3. Toggle **"Enable MCP Server"**
 4. The server will bind to the standard socket/pipe path shown in the settings window.
@@ -179,7 +179,7 @@ Opens the microphone and returns a transcript when speech ends.
 
 * While recording, the active waveform or recording overlay is shown — the user always has a visual indicator that the mic is live.
 * The microphone is released automatically once VAD detects silence or `timeout_seconds` elapses.
-* VoxCtrl's full post-processing pipeline (including Ollama formatting/cleaning if enabled) is applied before the transcript is returned.
+* VoxCtrl's full post-processing pipeline (including OpenAI API LLM formatting/cleaning if enabled) is applied before the transcript is returned.
 
 ---
 
@@ -387,7 +387,7 @@ append_newline = true
 
 ## TTS Configuration
 
-All TTS settings live in `~/.config/voxctrl/config.json` under the `tts` key (**Settings → TTS**). MCP settings live under the `mcp` key (**Settings → Ollama**).
+All TTS settings live in `~/.config/voxctrl/config.json` under the `tts` key (**Settings → TTS**). MCP settings live under the `mcp` key (**Settings → General**).
 
 | Key | Type | Default | Description |
 |---|---|---|---|
@@ -450,7 +450,7 @@ Download voices in **Settings → TTS → Voice Picker → ⬇ Download**.
 
 **Socket does not exist**
 
-VoxCtrl is not running, or the MCP server is disabled. Enable it in **Settings → Ollama** or set `"mcp": { "server_enabled": true }` in `config.json` and restart.
+VoxCtrl is not running, or the MCP server is disabled. Enable it in **Settings → General** or set `"mcp": { "server_enabled": true }` in `config.json` and restart.
 
 **`socat` connection refused**
 
@@ -473,4 +473,4 @@ The socket exists but the server is not listening yet. Wait a moment after VoxCt
 * Restart Claude Desktop after editing `claude_desktop_config.json`.
 * Confirm `socat` is installed and `socat STDIO UNIX-CONNECT:/tmp/voxctrl-mcp.sock` connects successfully from a terminal.
 * Check that `voxctrl-mcp.sock` exists (`ls -la /tmp/*.sock`).
-* Ensure VoxCtrl is running and the MCP server is enabled in **Settings → Ollama**.
+* Ensure VoxCtrl is running and the MCP server is enabled in **Settings → General**.

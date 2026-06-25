@@ -243,14 +243,21 @@ interface AudioDeviceInfo {
 
 ---
 
-### Ollama
+### OpenAI API (LLM post-processing)
 
-#### `test_ollama(endpoint: string, timeoutSecs: number) → OllamaTestResult`
-Pings an Ollama endpoint and lists available models.
+#### `test_ollama(endpoint: string, apiKey: string | null, timeoutSecs: number) → OllamaTestResult`
+Pings an OpenAI-compatible API server (`GET {endpoint}/v1/models`) and lists
+available models. `apiKey` is sent as a `Bearer` token when present; pass `null`
+for servers that don't require authentication (e.g. a local Ollama instance).
+
+> The command and its result type retain the `ollama` name for backwards
+> compatibility, but the underlying client speaks the OpenAI API and works with
+> any compatible server.
 
 ```typescript
 const result = await invoke<OllamaTestResult>('test_ollama', {
   endpoint: 'http://localhost:11434',
+  apiKey: null,
   timeoutSecs: 5
 });
 ```
@@ -389,7 +396,8 @@ interface OllamaConfig {
   model: string;
   mode: "clean" | "formal" | "casual" | "bullet" | "concise" | "custom";
   custom_prompt: string | null;
-  endpoint: string;
+  endpoint: string;        // OpenAI-compatible API base URL (a `/v1` suffix is optional)
+  api_key: string | null;  // sent as a Bearer token when set
   timeout_secs: number;
 }
 

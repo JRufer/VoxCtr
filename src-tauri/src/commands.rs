@@ -547,12 +547,14 @@ pub struct OllamaTestResult {
 #[tauri::command]
 pub async fn test_ollama(
     endpoint: String,
+    api_key: Option<String>,
     timeout_secs: u64,
 ) -> Result<OllamaTestResult, String> {
     use voxctrl_config::{OllamaConfig, OllamaMode};
     let cfg = OllamaConfig {
         enabled: true,
         endpoint: endpoint.clone(),
+        api_key,
         model: String::new(),
         mode: OllamaMode::Clean,
         custom_prompt: None,
@@ -564,7 +566,7 @@ pub async fn test_ollama(
             Ok(models) => {
                 Ok(OllamaTestResult {
                     success: true,
-                    message: "Successfully connected to Ollama!".to_string(),
+                    message: "Successfully connected to the OpenAI API server!".to_string(),
                     models,
                 })
             }
@@ -579,7 +581,7 @@ pub async fn test_ollama(
     } else {
         Ok(OllamaTestResult {
             success: false,
-            message: format!("Failed to connect to Ollama at '{}'. Make sure Ollama is running.", endpoint),
+            message: format!("Failed to connect to the OpenAI API server at '{}'. Check the URL and API key.", endpoint),
             models: Vec::new(),
         })
     }

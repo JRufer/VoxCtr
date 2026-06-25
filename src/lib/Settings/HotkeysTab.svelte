@@ -213,7 +213,7 @@
     if (editOllamaEnabled) {
       if (editOllamaMode === "custom") {
         if (!editOllamaPrompt.includes("{text}")) {
-          alert("Ollama Configuration Error:\nYour custom prompt template MUST contain the '{text}' placeholder so Ollama knows where to insert the transcribed text.\n\nExample:\nwrite a haiku about {text}");
+          alert("LLM Configuration Error:\nYour custom prompt template MUST contain the '{text}' placeholder so the model knows where to insert the transcribed text.\n\nExample:\nwrite a haiku about {text}");
           return;
         }
       }
@@ -427,7 +427,7 @@
               {b.label || b.id}
             </div>
             {#if b.ollama_enabled}
-              <span class="badge ollama">Ollama LLM</span>
+              <span class="badge ollama">LLM</span>
             {/if}
           </div>
           <div class="binding-row2">
@@ -695,12 +695,12 @@
           {/if}
         </div>
 
-        <!-- Ollama Post-Processing Settings -->
+        <!-- LLM Post-Processing Settings -->
         <div class="processing-toggles border-t border-white/5 pt-[14px] mt-4">
-          <h5>Ollama LLM Post-Processing</h5>
+          <h5>OpenAI API LLM Post-Processing</h5>
           <label class="checkbox-field">
             <input type="checkbox" bind:checked={editOllamaEnabled} />
-            <span>Enable Ollama LLM post-processing for this hotkey</span>
+            <span>Enable LLM post-processing for this hotkey</span>
           </label>
 
           {#if editOllamaEnabled}

@@ -40,6 +40,7 @@
     try {
       const res = await invoke<TestResult>("test_ollama", {
         endpoint: cfg.ollama.endpoint,
+        apiKey: cfg.ollama.api_key,
         timeoutSecs: cfg.ollama.timeout_secs,
       });
       testStatus = { success: res.success, message: res.message };
@@ -65,13 +66,23 @@
 </script>
 
 <section>
-  <h2>Ollama LLM Post-Processing</h2>
+  <h2>OpenAI API LLM Post-Processing</h2>
+
+  <p class="hint">
+    Connect to any OpenAI-compatible API server — a local Ollama instance, LM
+    Studio, or a hosted provider. The URL defaults to a local server; point it
+    anywhere you like and supply an API key when the server requires one.
+  </p>
 
   <div class="field-group">
     <h3>Connection</h3>
     <label class="field">
-      <span>Endpoint</span>
-      <input type="text" bind:value={cfg.ollama.endpoint} onchange={markDirty} />
+      <span>API URL</span>
+      <input type="text" bind:value={cfg.ollama.endpoint} onchange={markDirty} placeholder="http://localhost:11434" />
+    </label>
+    <label class="field">
+      <span>API Key</span>
+      <input type="password" bind:value={cfg.ollama.api_key} onchange={markDirty} placeholder="Required for remote servers (optional for localhost)" autocomplete="off" />
     </label>
     <label class="field">
       <span>Model (Default)</span>
@@ -110,6 +121,9 @@
 <style>
   @reference "tailwindcss";
 
+  .hint {
+    @apply text-xs text-[var(--color-obsidian-300)] leading-relaxed mb-4 max-w-[520px];
+  }
   .field.col {
     @apply flex-col items-start gap-1.5;
   }

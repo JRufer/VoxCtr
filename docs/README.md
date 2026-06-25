@@ -15,7 +15,7 @@ VoxCtrl is a high-performance, privacy-first voice-to-text dictation application
 | [Routing](./routing.md) | Output targets, hotkey bindings, delivery types |
 | [Hotkeys](./hotkeys.md) | Global hotkey listener, gestures, platform support |
 | [Text-to-Speech](./tts.md) | TTS engines, voice packs, playback |
-| [Integrations](./integrations.md) | MCP server, DBus service, Ollama, webhooks |
+| [Integrations](./integrations.md) | MCP server, DBus service, OpenAI-compatible LLM API, webhooks |
 | [UI & Windows](./ui.md) | Svelte frontend, overlay, history viewer, settings |
 | [API Reference](./api.md) | Tauri IPC commands and frontend events |
 | [Configuration](./configuration.md) | All config files, schemas, and options |

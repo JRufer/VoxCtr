@@ -53,7 +53,7 @@ Applied after transcription before delivery:
 - Snippet expansion (custom shorthand → full text)
 - Custom vocabulary fuzzy correction (Levenshtein matching for proper nouns/domain terms)
 - Code mode (camelCase conversion, spoken operators)
-- Optional Ollama LLM rewrite (clean, formal, casual, bullet, concise, or custom prompt)
+- Optional LLM rewrite via any OpenAI-compatible API server (clean, formal, casual, bullet, concise, or custom prompt)
 
 ### Text-to-Speech
 - Neural TTS via Piper (ONNX, ~11 English voices)

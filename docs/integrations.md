@@ -165,13 +165,27 @@ The DBus service is a stub on non-Linux platforms (compiles but does nothing).
 
 ---
 
-## Ollama Integration
+## OpenAI-compatible LLM Integration
 
 **Crate:** `crates/voxctrl-llm/`
 
 ### Purpose
 
-After Whisper transcribes speech, text can optionally be rewritten by a local LLM running in [Ollama](https://ollama.ai/). Enabled per-hotkey binding via `ollama_enabled = true` in `bindings.toml` (or via the Hotkeys tab in the GUI settings).
+After Whisper transcribes speech, text can optionally be rewritten by an LLM
+served over the **OpenAI API**. This works with any compatible server — a local
+[Ollama](https://ollama.ai/) or LM Studio instance, or a hosted provider.
+Enabled per-hotkey binding via `ollama_enabled = true` in `bindings.toml` (or via
+the Hotkeys tab in the GUI settings).
+
+The client calls `POST {endpoint}/v1/chat/completions` for generation and
+`GET {endpoint}/v1/models` to list models. The `/v1` suffix is appended
+automatically if the configured endpoint doesn't already include it, so the
+default `http://localhost:11434` targets a local Ollama instance's
+OpenAI-compatible endpoint. When `api_key` is set it is sent as an
+`Authorization: Bearer <key>` header.
+
+> The config key, Rust types (`OllamaConfig`/`OllamaClient`), and IPC command
+> (`test_ollama`) retain the `ollama` name for backwards compatibility.
 
 ### Configuration
 
@@ -179,12 +193,17 @@ After Whisper transcribes speech, text can optionally be rewritten by a local LL
 "ollama": {
   "enabled": false,
   "endpoint": "http://localhost:11434",
+  "api_key": null,
   "model": "llama3.2:1b",
   "mode": "clean",
   "custom_prompt": null,
   "timeout_secs": 8
 }
 ```
+
+For a hosted provider, set `endpoint` to its base URL (e.g.
+`https://api.openai.com/v1`), set `api_key`, and choose a `model` the provider
+offers.
 
 ### Modes
 
@@ -205,18 +224,19 @@ With `mode = "custom"`, the `custom_prompt` field is used as the LLM instruction
 
 ### Availability Caching
 
-`OllamaClient.is_available()` probes `GET /api/tags` on first call and **caches the result**. If Ollama was unreachable at startup, it will appear unreachable until the availability cache is reset (e.g. by changing the endpoint in settings).
+`OllamaClient.is_available()` probes `GET {endpoint}/v1/models` on first call and **caches the result**. If the server was unreachable at startup, it will appear unreachable until the availability cache is reset (e.g. by changing the endpoint in settings).
 
 ### Graceful Fallback
 
-If Ollama is unreachable, the HTTP request times out, or the response cannot be parsed, VoxCtrl logs the failure and delivers the **original** Whisper transcription unchanged. Text is never dropped.
+If the server is unreachable, the HTTP request times out, or the response cannot be parsed, VoxCtrl logs the failure and delivers the **original** Whisper transcription unchanged. Text is never dropped.
 
 ### Testing the Connection
 
-Via the Settings → Ollama tab → "Test Connection" button, or via IPC:
+Via the Settings → OpenAI API tab → "Test Connection" button, or via IPC:
 ```typescript
 const result = await invoke('test_ollama', {
   endpoint: 'http://localhost:11434',
+  apiKey: null,
   timeoutSecs: 5
 });
 // result: { success: boolean, message: string, models: string[] }
