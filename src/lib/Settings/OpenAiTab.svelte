@@ -62,6 +62,15 @@
 
   let userPromptValid = $derived(cfg.openai.user_prompt.includes("{text}"));
 
+  // Warn if the chosen default model isn't among the models the server reported.
+  // Calling a model the server doesn't have (e.g. an un-pulled Ollama model)
+  // makes chat completions fail with a 404 during dictation.
+  let modelMissing = $derived(
+    availableModels.length > 0 &&
+    !!cfg.openai.model &&
+    !availableModels.includes(cfg.openai.model)
+  );
+
   async function performTest() {
     testing = true;
     testStatus = null;
@@ -120,6 +129,11 @@
         <input type="text" bind:value={cfg.openai.model} onchange={markDirty} placeholder="e.g. llama3.2:1b" />
       {/if}
     </label>
+    {#if modelMissing}
+      <span class="validation-error">
+        ⚠️ The model <code>{cfg.openai.model}</code> isn't available on this server. Post-processing will fail with a 404 — pick a model from the list above or pull it on the server.
+      </span>
+    {/if}
     <label class="field">
       <span>Timeout (seconds)</span>
       <input type="number" min="1" max="60" bind:value={cfg.openai.timeout_secs} onchange={markDirty} />

@@ -196,7 +196,18 @@ impl OpenAiClient {
                 }
             }
             Ok(resp) => {
-                warn!("OpenAI API HTTP {}", resp.status());
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if status.as_u16() == 404 {
+                    warn!(
+                        "OpenAI API HTTP 404 for model '{}': {body}. \
+                         The server (e.g. Ollama) likely doesn't have this model — \
+                         pull it or pick an available model in Settings.",
+                        self.config.model
+                    );
+                } else {
+                    warn!("OpenAI API HTTP {status}: {body}");
+                }
                 text.to_string()
             }
             Err(e) => {
@@ -227,7 +238,9 @@ impl OpenAiClient {
             let body = resp.json::<ModelsResponse>().await.map_err(|e| e.to_string())?;
             Ok(body.data.into_iter().map(|m| m.id).collect())
         } else {
-            Err(format!("HTTP error: {}", resp.status()))
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(format!("HTTP {status}: {body}"))
         }
     }
 }
