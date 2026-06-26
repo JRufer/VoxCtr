@@ -318,7 +318,13 @@ pub fn run() {
             // channel (that would kill the thread and break all future TTS).
             if event.binding_id == "__tts_stop__" {
                 if event.kind == GestureKind::Start {
-                    voxctrl_tts::stop_current_playback();
+                    // Use the handle's stop() (not the raw stop_current_playback())
+                    // so the generation counter is bumped too — otherwise a
+                    // streaming engine like Pocket-TTS keeps appending the
+                    // frames it already had in flight and audio resumes.
+                    if let Some(tts) = state_for_gesture.tts_handle.lock().await.as_ref() {
+                        tts.stop();
+                    }
                 }
                 continue;
             }
