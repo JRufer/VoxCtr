@@ -139,11 +139,16 @@ npm run tauri build -- --features cuda
 Once running a CUDA build, set `engine.whisper_cpp.device = "auto"` (or `"cuda"`) and VoxCtrl will use the GPU automatically. The "CUDA (NVIDIA)" option in Settings → Engine is only shown when the binary was compiled with CUDA support.
 
 
-### Ollama Post-Processing
-If you want LLM grammar correction:
+### LLM Post-Processing (OpenAI-compatible API)
+If you want LLM grammar correction, point VoxCtrl at any OpenAI-compatible API
+server. For a fully local setup using [Ollama](https://ollama.ai/):
 1. Install [Ollama](https://ollama.ai/)
 2. Pull a model: `ollama pull llama3.2`
-3. Enable in Settings → Ollama
+3. Enable in Settings → OpenAI API (the default URL `http://localhost:11434`
+   already points at a local Ollama instance)
+
+To use a remote provider instead, set the **API URL** to its base URL and
+provide an **API Key**.
 
 ### Kokoro TTS
 

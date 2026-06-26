@@ -76,9 +76,12 @@ The main configuration interface. Organized into a sidebar with nine tabs:
 - Custom vocabulary list editor
 - Snippet key-value editor
 
-### Ollama Tab
+### OpenAI API Tab
+Configures post-processing through any OpenAI-compatible API server (a local
+Ollama or LM Studio instance, or a hosted provider).
 - Enable/disable toggle
-- Endpoint URL
+- API URL (defaults to a local server, e.g. `http://localhost:11434`; may include a `/v1` suffix)
+- API Key (sent as a `Bearer` token; required by most remote servers, optional for localhost)
 - Model name
 - Mode selector
 - Custom prompt text area

@@ -159,7 +159,7 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     expect(activeConflictItems.length).toBe(0);
   });
 
-  test("shows Ollama LLM badge when ollama_enabled is true", async () => {
+  test("shows LLM badge when openai_enabled is true", async () => {
     mockBindings = [
       {
         id: "bind1",
@@ -171,17 +171,17 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
         hold_threshold_ms: 1000,
         label: "Binding 1",
         disabled: false,
-        ollama_enabled: true,
+        openai_enabled: true,
       },
     ];
 
     render(HotkeysTab);
 
-    const badge = await screen.findByText(/Ollama LLM/i);
+    const badge = await screen.findByText(/^LLM$/);
     expect(badge).not.toBeNull();
   });
 
-  test("does not show Ollama LLM badge when ollama_enabled is false", async () => {
+  test("does not show LLM badge when openai_enabled is false", async () => {
     mockBindings = [
       {
         id: "bind1",
@@ -193,13 +193,13 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
         hold_threshold_ms: 1000,
         label: "Binding 1",
         disabled: false,
-        ollama_enabled: false,
+        openai_enabled: false,
       },
     ];
 
     render(HotkeysTab);
 
-    const badge = screen.queryByText(/Ollama LLM/i);
+    const badge = screen.queryByText(/^LLM$/);
     expect(badge).toBeNull();
   });
 

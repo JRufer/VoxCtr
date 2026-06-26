@@ -2,56 +2,85 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
-use voxctrl_config::{OllamaConfig, OllamaMode};
+use voxctrl_config::{OpenAiConfig, OpenAiMode};
 
-// ── Prompts per mode ──────────────────────────────────────────────────────────
+// ── Preset system prompts ───────────────────────────────────────────────────
 
-fn mode_prompt(mode: &OllamaMode, text: &str) -> String {
+/// System-prompt text for each built-in preset. `Custom` has no preset and
+/// returns an empty string (the user prompt carries the full instruction).
+pub fn preset_system_prompt(mode: &OpenAiMode) -> &'static str {
     match mode {
-        OllamaMode::Clean => format!(
-            "Fix grammar and punctuation only. Return only the corrected text, no commentary.\n\nText: {text}"
-        ),
-        OllamaMode::Formal => format!(
-            "Rewrite in formal professional language. Return only the result.\n\nText: {text}"
-        ),
-        OllamaMode::Casual => format!(
-            "Rewrite in casual conversational language. Return only the result.\n\nText: {text}"
-        ),
-        OllamaMode::Bullet => format!(
-            "Convert to a bullet-point list. Return only the list.\n\nText: {text}"
-        ),
-        OllamaMode::Concise => format!(
-            "Summarize concisely in 1-2 sentences. Return only the summary.\n\nText: {text}"
-        ),
-        OllamaMode::Custom => text.to_string(), // handled separately
+        OpenAiMode::Clean => {
+            "Fix grammar and punctuation only. Return only the corrected text, no commentary."
+        }
+        OpenAiMode::Formal => {
+            "Rewrite the user's text in formal professional language. Return only the result."
+        }
+        OpenAiMode::Casual => {
+            "Rewrite the user's text in casual conversational language. Return only the result."
+        }
+        OpenAiMode::Bullet => {
+            "Convert the user's text to a bullet-point list. Return only the list."
+        }
+        OpenAiMode::Concise => {
+            "Summarize the user's text concisely in 1-2 sentences. Return only the summary."
+        }
+        OpenAiMode::Custom => "",
     }
 }
 
-// ── Ollama API types ──────────────────────────────────────────────────────────
+// ── OpenAI-compatible API types ─────────────────────────────────────────────
 
 #[derive(Serialize)]
-struct GenerateRequest<'a> {
+struct ChatMessage<'a> {
+    role: &'a str,
+    content: &'a str,
+}
+
+#[derive(Serialize)]
+struct ChatRequest<'a> {
     model: &'a str,
-    prompt: &'a str,
+    messages: Vec<ChatMessage<'a>>,
     stream: bool,
 }
 
 #[derive(Deserialize)]
-struct GenerateResponse {
-    response: String,
+struct ChatResponseMessage {
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ChatChoice {
+    message: ChatResponseMessage,
+}
+
+#[derive(Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+}
+
+/// Normalize a user-supplied endpoint into an OpenAI-style base URL ending in
+/// `/v1`. Accepts values with or without a trailing slash or existing `/v1`.
+fn api_base(endpoint: &str) -> String {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
+    }
 }
 
 // ── Client ────────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
-pub struct OllamaClient {
-    config: OllamaConfig,
+pub struct OpenAiClient {
+    config: OpenAiConfig,
     http: reqwest::Client,
     available: std::sync::Arc<std::sync::Mutex<Option<bool>>>,
 }
 
-impl OllamaClient {
-    pub fn new(config: OllamaConfig) -> Self {
+impl OpenAiClient {
+    pub fn new(config: OpenAiConfig) -> Self {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs))
             .build()
@@ -63,7 +92,15 @@ impl OllamaClient {
         }
     }
 
-    /// Lazily probe if Ollama is reachable. Cached after first check.
+    /// Attach the configured API key as a Bearer token, if one is set.
+    fn with_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.config.api_key.as_deref() {
+            Some(key) if !key.trim().is_empty() => req.bearer_auth(key.trim()),
+            _ => req,
+        }
+    }
+
+    /// Lazily probe if the API server is reachable. Cached after first check.
     pub async fn is_available(&self) -> bool {
         {
             let guard = self.available.lock().unwrap();
@@ -71,10 +108,9 @@ impl OllamaClient {
                 return v;
             }
         }
-        let url = format!("{}/api/tags", self.config.endpoint);
+        let url = format!("{}/models", api_base(&self.config.endpoint));
         let ok = self
-            .http
-            .get(&url)
+            .with_auth(self.http.get(&url))
             .timeout(Duration::from_secs(2))
             .send()
             .await
@@ -82,14 +118,14 @@ impl OllamaClient {
             .unwrap_or(false);
         *self.available.lock().unwrap() = Some(ok);
         if ok {
-            info!("Ollama reachable at {}", self.config.endpoint);
+            info!("OpenAI API reachable at {}", self.config.endpoint);
         } else {
-            warn!("Ollama not reachable at {}", self.config.endpoint);
+            warn!("OpenAI API not reachable at {}", self.config.endpoint);
         }
         ok
     }
 
-    /// Post-process text through Ollama. Returns original text on any failure.
+    /// Post-process text through the OpenAI API. Returns original text on any failure.
     pub async fn process(&self, text: &str) -> String {
         if !self.config.enabled {
             return text.to_string();
@@ -98,51 +134,84 @@ impl OllamaClient {
             return text.to_string();
         }
 
-        let prompt = if self.config.mode == OllamaMode::Custom {
-            if let Some(tmpl) = &self.config.custom_prompt {
-                if tmpl.contains("{text}") {
-                    tmpl.replace("{text}", text)
-                } else {
-                    format!("{tmpl}\n\n{text}")
-                }
-            } else {
-                return text.to_string();
-            }
+        // Build the user message from the configured template, substituting the
+        // dictated text into the "{text}" placeholder.
+        let template = if self.config.user_prompt.trim().is_empty() {
+            "{text}"
         } else {
-            mode_prompt(&self.config.mode, text)
+            self.config.user_prompt.as_str()
+        };
+        let user_content = if template.contains("{text}") {
+            template.replace("{text}", text)
+        } else {
+            // Be forgiving if the user dropped the placeholder: append the text.
+            format!("{template}\n\n{text}")
         };
 
-        let url = format!("{}/api/generate", self.config.endpoint);
-        let req = GenerateRequest {
+        let system_content = self.config.system_prompt.trim();
+        let mut messages = Vec::with_capacity(2);
+        if !system_content.is_empty() {
+            messages.push(ChatMessage {
+                role: "system",
+                content: system_content,
+            });
+        }
+        messages.push(ChatMessage {
+            role: "user",
+            content: &user_content,
+        });
+
+        let url = format!("{}/chat/completions", api_base(&self.config.endpoint));
+        let req = ChatRequest {
             model: &self.config.model,
-            prompt: &prompt,
+            messages,
             stream: false,
         };
 
-        match self.http.post(&url).json(&req).send().await {
+        match self.with_auth(self.http.post(&url).json(&req)).send().await {
             Ok(resp) if resp.status().is_success() => {
-                match resp.json::<GenerateResponse>().await {
+                match resp.json::<ChatResponse>().await {
                     Ok(body) => {
-                        let result = body.response.trim().to_string();
+                        let result = body
+                            .choices
+                            .into_iter()
+                            .next()
+                            .map(|c| c.message.content.trim().to_string())
+                            .unwrap_or_default();
+                        if result.is_empty() {
+                            warn!("OpenAI API returned no content");
+                            return text.to_string();
+                        }
                         debug!(
                             input_len = text.len(),
                             output_len = result.len(),
-                            "Ollama processed"
+                            "OpenAI API processed"
                         );
                         result
                     }
                     Err(e) => {
-                        warn!("Ollama response parse error: {e}");
+                        warn!("OpenAI API response parse error: {e}");
                         text.to_string()
                     }
                 }
             }
             Ok(resp) => {
-                warn!("Ollama HTTP {}", resp.status());
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if status.as_u16() == 404 {
+                    warn!(
+                        "OpenAI API HTTP 404 for model '{}': {body}. \
+                         The server (e.g. Ollama) likely doesn't have this model — \
+                         pull it or pick an available model in Settings.",
+                        self.config.model
+                    );
+                } else {
+                    warn!("OpenAI API HTTP {status}: {body}");
+                }
                 text.to_string()
             }
             Err(e) => {
-                warn!("Ollama request error: {e}");
+                warn!("OpenAI API request error: {e}");
                 text.to_string()
             }
         }
@@ -153,19 +222,50 @@ impl OllamaClient {
         *self.available.lock().unwrap() = None;
     }
 
-    /// Retrieve the list of available local models from the Ollama instance.
+    /// Retrieve the list of available models from the OpenAI-compatible server.
     pub async fn list_models(&self) -> Result<Vec<String>, String> {
-        let url = format!("{}/api/tags", self.config.endpoint);
-        let resp = self.http.get(&url).send().await.map_err(|e| e.to_string())?;
+        let url = format!("{}/models", api_base(&self.config.endpoint));
+        let resp = self
+            .with_auth(self.http.get(&url))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         if resp.status().is_success() {
             #[derive(serde::Deserialize)]
-            struct ModelItem { name: String }
+            struct ModelItem { id: String }
             #[derive(serde::Deserialize)]
-            struct TagsResponse { models: Vec<ModelItem> }
-            let tags = resp.json::<TagsResponse>().await.map_err(|e| e.to_string())?;
-            Ok(tags.models.into_iter().map(|m| m.name).collect())
+            struct ModelsResponse { data: Vec<ModelItem> }
+            let body = resp.json::<ModelsResponse>().await.map_err(|e| e.to_string())?;
+            Ok(body.data.into_iter().map(|m| m.id).collect())
         } else {
-            Err(format!("HTTP error: {}", resp.status()))
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            Err(format!("HTTP {status}: {body}"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{api_base, preset_system_prompt};
+    use voxctrl_config::OpenAiMode;
+
+    #[test]
+    fn api_base_appends_v1() {
+        assert_eq!(api_base("http://localhost:11434"), "http://localhost:11434/v1");
+        assert_eq!(api_base("http://localhost:11434/"), "http://localhost:11434/v1");
+    }
+
+    #[test]
+    fn api_base_preserves_existing_v1() {
+        assert_eq!(api_base("https://api.openai.com/v1"), "https://api.openai.com/v1");
+        assert_eq!(api_base("https://api.openai.com/v1/"), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn preset_custom_has_no_system_prompt() {
+        assert_eq!(preset_system_prompt(&OpenAiMode::Custom), "");
+        assert!(!preset_system_prompt(&OpenAiMode::Clean).is_empty());
+        assert!(preset_system_prompt(&OpenAiMode::Formal).contains("formal"));
     }
 }

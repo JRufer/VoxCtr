@@ -30,7 +30,7 @@ response_pipe = "/tmp/hermes.out"
 append_newline = true
 send_on_release = true
 file_timestamp = false
-processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, ollama_enabled = false}
+processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, openai_enabled = false}
 
 # ── Claude Code via pipe ──────────────────────────────────────────────────────
 [[target]]
@@ -43,7 +43,7 @@ append_newline = true
 send_on_release = true
 file_timestamp = false
 # Code-style dictation: no punctuation expansion, no filler removal
-processing = {code_mode = false, remove_fillers = true, spoken_punctuation = false, apply_snippets = true, ollama_enabled = false}
+processing = {code_mode = false, remove_fillers = true, spoken_punctuation = false, apply_snippets = true, openai_enabled = false}
 
 # ── Remote agent via TCP socket ───────────────────────────────────────────────
 [[target]]
@@ -56,7 +56,7 @@ response_pipe = "/tmp/remote_agent.out"
 append_newline = true
 send_on_release = true
 file_timestamp = false
-processing = {remove_fillers = true, spoken_punctuation = true, ollama_enabled = false}
+processing = {remove_fillers = true, spoken_punctuation = true, openai_enabled = false}
 
 # ── Local Ollama chat — send prompt, speak response ──────────────────────────
 # Use an external ollama-chat bridge script that writes responses to the FIFO.
@@ -71,4 +71,4 @@ append_newline = false
 send_on_release = true
 file_timestamp = false
 # Don't double-process with local Ollama; the bridge handles that
-processing = {remove_fillers = true, spoken_punctuation = false, ollama_enabled = false}
+processing = {remove_fillers = true, spoken_punctuation = false, openai_enabled = false}

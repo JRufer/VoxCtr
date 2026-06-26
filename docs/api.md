@@ -243,20 +243,26 @@ interface AudioDeviceInfo {
 
 ---
 
-### Ollama
+### OpenAI API (LLM post-processing)
 
-#### `test_ollama(endpoint: string, timeoutSecs: number) → OllamaTestResult`
-Pings an Ollama endpoint and lists available models.
+#### `test_openai(endpoint: string, apiKey: string | null, timeoutSecs: number) → OpenAiTestResult`
+Pings an OpenAI-compatible API server (`GET {endpoint}/v1/models`) and lists
+available models. `apiKey` is sent as a `Bearer` token when present; pass `null`
+for servers that don't require authentication (e.g. a local server).
+
+> This command was previously named `test_ollama`; the client speaks the OpenAI
+> API and works with any compatible server.
 
 ```typescript
-const result = await invoke<OllamaTestResult>('test_ollama', {
+const result = await invoke<OpenAiTestResult>('test_openai', {
   endpoint: 'http://localhost:11434',
+  apiKey: null,
   timeoutSecs: 5
 });
 ```
 
 ```typescript
-interface OllamaTestResult {
+interface OpenAiTestResult {
   success: boolean;
   message: string;
   models: string[];
@@ -330,7 +336,7 @@ interface AppConfig {
   audio: AudioConfig;
   ui: UiConfig;
   features: FeaturesConfig;
-  ollama: OllamaConfig;
+  openai: OpenAiConfig;
   tts: TtsConfig;
   mcp: McpConfig;
   atspi: AtspiConfig;
@@ -384,12 +390,15 @@ interface FeaturesConfig {
   snippets: Record<string, string>;
 }
 
-interface OllamaConfig {
+interface OpenAiConfig {
   enabled: boolean;
   model: string;
-  mode: "clean" | "formal" | "casual" | "bullet" | "concise" | "custom";
-  custom_prompt: string | null;
-  endpoint: string;
+  mode: "clean" | "formal" | "casual" | "bullet" | "concise" | "custom"; // GUI preset that fills system_prompt
+  custom_prompt: string | null; // legacy; migrated into user_prompt on load
+  system_prompt: string;   // system message (empty = none)
+  user_prompt: string;     // user message template; must contain "{text}"
+  endpoint: string;        // OpenAI-compatible API base URL (a `/v1` suffix is optional)
+  api_key: string | null;  // sent as a Bearer token when set
   timeout_secs: number;
 }
 
@@ -494,10 +503,11 @@ interface HotkeyBinding {
   hold_threshold_ms: number;// default: 200
   subkey?: string;          // Optional subkey trigger for chord gesture
   disabled: boolean;
-  ollama_enabled?: boolean;
-  ollama_model?: string;
-  ollama_mode?: string;
-  ollama_prompt?: string;
+  openai_enabled?: boolean;       // legacy alias: ollama_enabled
+  openai_model?: string;          // legacy alias: ollama_model
+  openai_mode?: string;           // legacy alias: ollama_mode
+  openai_prompt?: string;         // user prompt template override (must contain "{text}"); legacy alias: ollama_prompt
+  openai_system_prompt?: string;  // system prompt override (empty = inherit global default); legacy alias: ollama_system_prompt
 }
 
 interface AppStatus {

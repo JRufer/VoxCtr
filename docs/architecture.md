@@ -16,7 +16,7 @@ VoxCtrl is a **Tauri 2** application: a compiled Rust backend that spawns a WebV
          │                              │
    Settings/History              Audio devices,
    windows                       Filesystem, DBus,
-                                 Network (Ollama/HTTP)
+                                 Network (OpenAI API/HTTP)
 ```
 
 In addition, the backend spawns a **native overlay helper process** (`voxctrl-overlay`, built with Slint from `src-tauri/src/overlay.rs`) that renders the always-on-top, click-through recording HUD. The backend streams newline-delimited JSON (`status` / `position` / `shutdown`) to the helper's stdin; the helper runs its own 16 ms animation loop, drives spring-based load/unload animations, and builds the per-style visualizer geometry (oscilloscope trace, radar sweep, ocean waves, VU LED matrix) each tick.
@@ -46,7 +46,7 @@ VoxCtrl/
     ├── voxctrl-tts/        # Piper/Espeak TTS engine
     ├── voxctrl-mcp/        # MCP JSON-RPC server (Unix socket / named pipe)
     ├── voxctrl-dbus/       # DBus service (Linux session bus)
-    └── voxctrl-llm/        # Ollama HTTP client
+    └── voxctrl-llm/        # OpenAI-compatible LLM HTTP client
 ```
 
 ---
@@ -86,7 +86,7 @@ voxctrl-hotkeys ──gesture_tx──► lib.rs coordinator
                     │  Custom vocab fuzzy correction
                     │  Code mode
                     │  Silence hallucination filter
-                    │  Ollama rewrite (optional, per-target)
+                    │  LLM rewrite via OpenAI API (optional, per-target)
                          │
                     text_tx (InferenceOutput)
                          │
@@ -152,7 +152,7 @@ App.svelte  (route switcher)
   │     ├── AudioTab
   │     ├── TtsTab
   │     ├── FeaturesTab
-  │     ├── OllamaTab
+  │     ├── OpenAiTab  (labeled "OpenAI API")
   │     └── AboutTab
   │
   ├── /overlay   → Overlay component (web overlay layer; the on-screen HUD

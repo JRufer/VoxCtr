@@ -92,7 +92,7 @@ The worker runs:
 6. Silence hallucination filter
    └─ rms < 0.003 AND text is a known Whisper hallucination → return ""
 
-7. Optional Ollama post-processing (if target.processing.ollama_enabled)
+7. Optional LLM post-processing via the OpenAI API (if target.processing.openai_enabled)
 
 8. Return InferenceOutput {
        text: String,            // Final processed text

@@ -165,58 +165,103 @@ The DBus service is a stub on non-Linux platforms (compiles but does nothing).
 
 ---
 
-## Ollama Integration
+## OpenAI-compatible LLM Integration
 
 **Crate:** `crates/voxctrl-llm/`
 
 ### Purpose
 
-After Whisper transcribes speech, text can optionally be rewritten by a local LLM running in [Ollama](https://ollama.ai/). Enabled per-hotkey binding via `ollama_enabled = true` in `bindings.toml` (or via the Hotkeys tab in the GUI settings).
+After Whisper transcribes speech, text can optionally be rewritten by an LLM
+served over the **OpenAI API**. This works with any compatible server — a local
+server or a hosted provider. Enabled per-hotkey binding via
+`openai_enabled = true` in `bindings.toml` (or via the Hotkeys tab in the GUI
+settings).
+
+The client calls `POST {endpoint}/v1/chat/completions` for generation and
+`GET {endpoint}/v1/models` to list models. The `/v1` suffix is appended
+automatically if the configured endpoint doesn't already include it, so the
+default `http://localhost:11434` targets a local server's OpenAI-compatible
+endpoint. When `api_key` is set it is sent as an `Authorization: Bearer <key>`
+header.
+
+> Configs written before the rename used the key `ollama` (and `ollama_*` binding
+> fields); those names are still accepted via serde aliases and load transparently.
 
 ### Configuration
 
 ```json
-"ollama": {
+"openai": {
   "enabled": false,
   "endpoint": "http://localhost:11434",
+  "api_key": null,
   "model": "llama3.2:1b",
   "mode": "clean",
-  "custom_prompt": null,
+  "system_prompt": "Fix grammar and punctuation only. Return only the corrected text, no commentary.",
+  "user_prompt": "{text}",
   "timeout_secs": 8
 }
 ```
 
-### Modes
+For a hosted provider, set `endpoint` to its base URL (e.g.
+`https://api.openai.com/v1`), set `api_key`, and choose a `model` the provider
+offers.
 
-| Mode | Prompt sent to LLM |
+### System & User Prompts
+
+Each request sends two chat messages:
+
+- **System prompt** (`system_prompt`) — describes how to transform the text. Leave
+  empty to send no system message.
+- **User prompt** (`user_prompt`) — the message itself. It must contain `{text}`,
+  which is replaced with the transcribed speech. If the placeholder is missing,
+  the transcribed text is appended on a new line as a fallback.
+
+### Presets
+
+The `mode` field selects a preset. The built-in presets are **read-only**:
+selecting one fills the system prompt with a fixed value (below) and sets the
+user prompt to the plain `{text}` passthrough. To edit the system and user
+prompts yourself, choose the `custom` preset. Generation always uses
+`system_prompt`/`user_prompt`.
+
+| Preset | System prompt |
 |---|---|
 | `clean` | "Fix grammar and punctuation only. Return only the corrected text, no commentary." |
-| `formal` | "Rewrite in formal professional language. Return only the result." |
-| `casual` | "Rewrite in casual conversational language. Return only the result." |
-| `bullet` | "Convert to a bullet-point list. Return only the list." |
-| `concise` | "Summarize concisely in 1-2 sentences. Return only the summary." |
-| `custom` | Uses `custom_prompt` field |
+| `formal` | "Rewrite the user's text in formal professional language. Return only the result." |
+| `casual` | "Rewrite the user's text in casual conversational language. Return only the result." |
+| `bullet` | "Convert the user's text to a bullet-point list. Return only the list." |
+| `concise` | "Summarize the user's text concisely in 1-2 sentences. Return only the summary." |
+| `custom` | No preset — edit the system/user prompts freely |
 
-### Custom Prompt
+### Per-Hotkey Overrides
 
-With `mode = "custom"`, the `custom_prompt` field is used as the LLM instruction:
-- If `custom_prompt` contains `{text}`, that placeholder is replaced with the transcribed text
-- Otherwise, the transcribed text is appended after the prompt on a new line
+A hotkey binding with `openai_enabled = true` can override the global defaults
+for that hotkey only:
+
+- `openai_system_prompt` — overrides the global system prompt (leave empty to
+  inherit it).
+- `openai_prompt` — overrides the global user prompt template (must contain
+  `{text}`; leave empty to inherit it).
+- `openai_model` — overrides the model (leave empty to inherit it).
+
+This lets different hotkeys apply different rewriting styles while sharing the
+same connection settings.
 
 ### Availability Caching
 
-`OllamaClient.is_available()` probes `GET /api/tags` on first call and **caches the result**. If Ollama was unreachable at startup, it will appear unreachable until the availability cache is reset (e.g. by changing the endpoint in settings).
+`OpenAiClient.is_available()` probes `GET {endpoint}/v1/models` on first call and **caches the result**. If the server was unreachable at startup, it will appear unreachable until the availability cache is reset (e.g. by changing the endpoint in settings).
 
 ### Graceful Fallback
 
-If Ollama is unreachable, the HTTP request times out, or the response cannot be parsed, VoxCtrl logs the failure and delivers the **original** Whisper transcription unchanged. Text is never dropped.
+If the server is unreachable, the HTTP request times out, or the response cannot be parsed, VoxCtrl logs the failure and delivers the **original** Whisper transcription unchanged. Text is never dropped.
 
 ### Testing the Connection
 
-Via the Settings → Ollama tab → "Test Connection" button, or via IPC:
+Via the Settings → OpenAI API tab → "Test Connection" button, or via IPC:
 ```typescript
-const result = await invoke('test_ollama', {
+const result = await invoke('test_openai', {
   endpoint: 'http://localhost:11434',
+  apiKey: null,
   timeoutSecs: 5
 });
 // result: { success: boolean, message: string, models: string[] }

@@ -34,14 +34,16 @@ pub struct HotkeyBinding {
     pub subkey: Option<String>,
     #[serde(default)]
     pub disabled: bool,
-    #[serde(default)]
-    pub ollama_enabled: Option<bool>,
-    #[serde(default)]
-    pub ollama_model: Option<String>,
-    #[serde(default)]
-    pub ollama_mode: Option<String>,
-    #[serde(default)]
-    pub ollama_prompt: Option<String>,
+    #[serde(default, alias = "ollama_enabled")]
+    pub openai_enabled: Option<bool>,
+    #[serde(default, alias = "ollama_model")]
+    pub openai_model: Option<String>,
+    #[serde(default, alias = "ollama_mode")]
+    pub openai_mode: Option<String>,
+    #[serde(default, alias = "ollama_prompt")]
+    pub openai_prompt: Option<String>,
+    #[serde(default, alias = "ollama_system_prompt")]
+    pub openai_system_prompt: Option<String>,
 }
 
 impl HotkeyBinding {

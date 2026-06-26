@@ -455,10 +455,11 @@ mod tests {
             hold_threshold_ms: 100, // short threshold for testing
             subkey: None,
             disabled: false,
-            ollama_enabled: Some(false),
-            ollama_model: None,
-            ollama_mode: None,
-            ollama_prompt: None,
+            openai_enabled: Some(false),
+            openai_model: None,
+            openai_mode: None,
+            openai_prompt: None,
+            openai_system_prompt: None,
         })
     }
 
@@ -479,10 +480,11 @@ mod tests {
             hold_threshold_ms: 100,
             subkey: subkey.map(String::from),
             disabled: false,
-            ollama_enabled: Some(false),
-            ollama_model: None,
-            ollama_mode: None,
-            ollama_prompt: None,
+            openai_enabled: Some(false),
+            openai_model: None,
+            openai_mode: None,
+            openai_prompt: None,
+            openai_system_prompt: None,
         })
     }
 
@@ -504,10 +506,11 @@ mod tests {
             hold_threshold_ms: 0, // the value that previously broke DoubleTap
             subkey: None,
             disabled: false,
-            ollama_enabled: Some(false),
-            ollama_model: None,
-            ollama_mode: None,
-            ollama_prompt: None,
+            openai_enabled: Some(false),
+            openai_model: None,
+            openai_mode: None,
+            openai_prompt: None,
+            openai_system_prompt: None,
         })];
         let mut pressed = std::collections::HashSet::new();
 
@@ -549,10 +552,11 @@ mod tests {
             hold_threshold_ms: 1000, // default value from models.rs
             subkey: None,
             disabled: false,
-            ollama_enabled: Some(false),
-            ollama_model: None,
-            ollama_mode: None,
-            ollama_prompt: None,
+            openai_enabled: Some(false),
+            openai_model: None,
+            openai_mode: None,
+            openai_prompt: None,
+            openai_system_prompt: None,
         })];
         let mut pressed = std::collections::HashSet::new();
 

@@ -175,10 +175,11 @@ fn test_hotkey_binding_multi_target_roundtrip() {
         hold_threshold_ms: 500,
         subkey: None,
         disabled: false,
-        ollama_enabled: Some(false),
-        ollama_model: None,
-        ollama_mode: None,
-        ollama_prompt: None,
+        openai_enabled: Some(false),
+        openai_model: None,
+        openai_mode: None,
+        openai_prompt: None,
+        openai_system_prompt: None,
     };
 
     assert_eq!(binding.resolved_target_ids(), vec!["target1", "target2"]);
@@ -1155,7 +1156,7 @@ fn test_example_configurations_load() {
     let targets_files = vec![
         "targets-basic.toml",
         "targets-multi.toml",
-        "targets-ollama-workflows.toml",
+        "targets-openai-workflows.toml",
         "targets-tts-agent.toml",
     ];
 

@@ -148,10 +148,11 @@ pub async fn save_config(
                 hold_threshold_ms: 0,
                 subkey: None,
                 disabled: false,
-                ollama_enabled: Some(false),
-                ollama_model: None,
-                ollama_mode: None,
-                ollama_prompt: None,
+                openai_enabled: Some(false),
+                openai_model: None,
+                openai_mode: None,
+                openai_prompt: None,
+                openai_system_prompt: None,
             });
         }
         let reloader_guard = state.hotkey_reloader.lock().await;
@@ -270,10 +271,11 @@ pub async fn save_bindings(
                 hold_threshold_ms: 0,
                 subkey: None,
                 disabled: false,
-                ollama_enabled: Some(false),
-                ollama_model: None,
-                ollama_mode: None,
-                ollama_prompt: None,
+                openai_enabled: Some(false),
+                openai_model: None,
+                openai_mode: None,
+                openai_prompt: None,
+                openai_system_prompt: None,
             });
         }
     }
@@ -538,38 +540,39 @@ pub struct AudioDeviceInfo {
 }
 
 #[derive(serde::Serialize)]
-pub struct OllamaTestResult {
+pub struct OpenAiTestResult {
     pub success: bool,
     pub message: String,
     pub models: Vec<String>,
 }
 
 #[tauri::command]
-pub async fn test_ollama(
+pub async fn test_openai(
     endpoint: String,
+    api_key: Option<String>,
     timeout_secs: u64,
-) -> Result<OllamaTestResult, String> {
-    use voxctrl_config::{OllamaConfig, OllamaMode};
-    let cfg = OllamaConfig {
+) -> Result<OpenAiTestResult, String> {
+    use voxctrl_config::OpenAiConfig;
+    let cfg = OpenAiConfig {
         enabled: true,
         endpoint: endpoint.clone(),
+        api_key,
         model: String::new(),
-        mode: OllamaMode::Clean,
-        custom_prompt: None,
         timeout_secs,
+        ..Default::default()
     };
-    let client = voxctrl_llm::OllamaClient::new(cfg);
+    let client = voxctrl_llm::OpenAiClient::new(cfg);
     if client.is_available().await {
         match client.list_models().await {
             Ok(models) => {
-                Ok(OllamaTestResult {
+                Ok(OpenAiTestResult {
                     success: true,
-                    message: "Successfully connected to Ollama!".to_string(),
+                    message: "Successfully connected to the OpenAI API server!".to_string(),
                     models,
                 })
             }
             Err(e) => {
-                Ok(OllamaTestResult {
+                Ok(OpenAiTestResult {
                     success: true,
                     message: format!("Successfully connected, but failed to fetch model list: {}", e),
                     models: Vec::new(),
@@ -577,9 +580,9 @@ pub async fn test_ollama(
             }
         }
     } else {
-        Ok(OllamaTestResult {
+        Ok(OpenAiTestResult {
             success: false,
-            message: format!("Failed to connect to Ollama at '{}'. Make sure Ollama is running.", endpoint),
+            message: format!("Failed to connect to the OpenAI API server at '{}'. Check the URL and API key.", endpoint),
             models: Vec::new(),
         })
     }

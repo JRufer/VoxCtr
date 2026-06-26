@@ -233,7 +233,7 @@ quiet_mode = false
 ```
 
 > [!NOTE]
-> Ollama post-processing parameters (`ollama_enabled`, `ollama_model`, `ollama_mode`, `ollama_prompt`) are defined per-hotkey binding in `bindings.toml` (or via the Hotkeys UI tab) instead of per-target. This allows you to apply different LLM rewriting styles (e.g. formal, bullet-points) using different hotkeys targeting the same destination.
+> LLM post-processing parameters (`openai_enabled`, `openai_model`, `openai_mode`, `openai_prompt`, `openai_system_prompt`) are defined per-hotkey binding in `bindings.toml` (or via the Hotkeys UI tab) instead of per-target. This allows you to apply different LLM rewriting styles (e.g. formal, bullet-points) using different hotkeys targeting the same destination. The model is served over the OpenAI API (configured under Settings → OpenAI API). The field names use the `openai_` prefix; the legacy `ollama_` names are still accepted for backwards compatibility.
 
 ---
 

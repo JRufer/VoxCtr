@@ -495,11 +495,11 @@
           {/if}
 
           <label class="field mt-2">
-            <span>System Prompt / Context (Optional)</span>
+            <span>Whisper Context Hint (Optional)</span>
             <input
               type="text"
               bind:value={editingTarget.initial_prompt}
-              placeholder="e.g. Format code variables in camelCase"
+              placeholder="e.g. domain terms or names to bias transcription"
             />
           </label>
         </div>

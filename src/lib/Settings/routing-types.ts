@@ -52,8 +52,9 @@ export interface HotkeyBinding {
   label: string;
   subkey?: string;
   disabled: boolean;
-  ollama_enabled?: boolean;
-  ollama_model?: string;
-  ollama_mode?: string;
-  ollama_prompt?: string;
+  openai_enabled?: boolean;
+  openai_model?: string;
+  openai_mode?: string;
+  openai_prompt?: string;
+  openai_system_prompt?: string;
 }

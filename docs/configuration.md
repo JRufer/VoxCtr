@@ -58,12 +58,14 @@ Full schema with defaults:
     "quiet_mode": false,
     "snippets": {}
   },
-  "ollama": {
+  "openai": {
     "enabled": false,
     "endpoint": "http://localhost:11434",
+    "api_key": null,
     "model": "llama3.2:1b",
     "mode": "clean",
-    "custom_prompt": null,
+    "system_prompt": "Fix grammar and punctuation only. Return only the corrected text, no commentary.",
+    "user_prompt": "{text}",
     "timeout_secs": 8
   },
   "tts": {
@@ -177,16 +179,31 @@ Example with snippets:
 }
 ```
 
-### `ollama` section
+### `openai` section
+
+LLM post-processing through any OpenAI-compatible API server — a local server or
+a hosted provider. Exposed in the GUI under **Settings → OpenAI API**.
+
+> Configs written before this section was renamed used the key `ollama`; that key
+> is still accepted (via a serde alias) and loads transparently into `openai`.
+
+Each request sends two chat messages: the **system prompt** (how to transform the
+text) and the **user prompt** (the message itself). The user prompt must contain
+`{text}`, which is replaced with the dictated speech.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `enabled` | bool | `false` | Enable Ollama post-processing |
-| `endpoint` | string | `"http://localhost:11434"` | Ollama API base URL |
+| `enabled` | bool | `false` | Enable LLM post-processing |
+| `endpoint` | string | `"http://localhost:11434"` | OpenAI-compatible API base URL. A `/v1` suffix is optional — it is added automatically when missing (e.g. requests go to `{endpoint}/v1/chat/completions`). |
+| `api_key` | string or null | `null` | API key sent as a `Bearer` token. Required by most remote providers; usually unnecessary for a local server. |
 | `model` | string | `"llama3.2:1b"` | Model name |
-| `mode` | string | `"clean"` | Rewrite style: `clean`/`formal`/`casual`/`bullet`/`concise`/`custom` |
-| `custom_prompt` | string or null | `null` | Instruction when mode is `custom`; use `{text}` as placeholder, or text is appended after the prompt |
+| `mode` | string | `"clean"` | Preset that fills the system prompt in the GUI: `clean`/`formal`/`casual`/`bullet`/`concise`/`custom`. Built-in presets are read-only in the GUI; choose `custom` to edit `system_prompt`/`user_prompt`. Generation itself is driven by `system_prompt`/`user_prompt`. |
+| `system_prompt` | string | `"Fix grammar and punctuation only…"` | System message describing the transformation. Empty = no system message. |
+| `user_prompt` | string | `"{text}"` | User message template. Must contain `{text}`, replaced with the dictated speech. |
 | `timeout_secs` | integer | `8` | HTTP request timeout in seconds |
+
+> The legacy `custom_prompt` field (used when `mode` was `custom`) is migrated
+> into `user_prompt` automatically the first time an old config is loaded.
 
 ### `tts` section
 
@@ -343,8 +360,8 @@ gesture = "hold"
 target_ids = ["default"]
 hold_threshold_ms = 200        # Default: 200ms min hold to register
 disabled = false
-ollama_enabled = true          # Enable Ollama rewrite specifically for this hotkey
-ollama_mode = "formal"         # Rewrite output in formal style for this hotkey
+openai_enabled = true          # Enable LLM rewrite specifically for this hotkey
+openai_mode = "formal"         # Rewrite output in formal style for this hotkey
 
 [[binding]]
 id = "dictate_notes"
@@ -393,10 +410,14 @@ target_ids = ["default"]
 | `hold_threshold_ms` | integer | No | `200` | Min hold duration in ms for hold / double-tap-hold gesture |
 | `tap_ms` | integer | No | `250` | Double-tap inter-press window in ms |
 | `disabled` | bool | No | `false` | Disable without deleting |
-| `ollama_enabled` | bool | No | `null` | Enable/disable Ollama post-processing specifically for this hotkey (null = inherit global config) |
-| `ollama_model` | string | No | `null` | Ollama model override specifically for this hotkey |
-| `ollama_mode` | string | No | `null` | Ollama mode override specifically for this hotkey (`clean`/`formal`/`casual`/`bullet`/`concise`/`custom`) |
-| `ollama_prompt` | string | No | `null` | Custom prompt override specifically for this hotkey |
+| `openai_enabled` | bool | No | `null` | Enable/disable LLM post-processing specifically for this hotkey (null = inherit global config) |
+| `openai_model` | string | No | `null` | LLM model override specifically for this hotkey |
+| `openai_mode` | string | No | `null` | LLM mode override specifically for this hotkey (`clean`/`formal`/`casual`/`bullet`/`concise`/`custom`) |
+| `openai_prompt` | string | No | `null` | User prompt template override for this hotkey (must contain `{text}`) |
+| `openai_system_prompt` | string | No | `null` | System prompt override for this hotkey (empty inherits the global default) |
+
+> The per-hotkey field names were renamed from `ollama_*` to `openai_*`; the
+> legacy `ollama_*` names are still accepted via serde aliases.
 
 ---
 

@@ -173,44 +173,64 @@ impl InferenceEngine {
             processed = String::new();
         }
 
-        // ── Hotkey-Specific Ollama Post-Processing ────────────────────────────
+        // ── Hotkey-Specific OpenAI Post-Processing ────────────────────────────
         let bindings = voxctrl_routing::load_bindings(&dir).unwrap_or_default();
         let binding = req.binding_id.as_ref().and_then(|bid| bindings.iter().find(|b| &b.id == bid));
 
-        let binding_wants_ollama = binding
-            .and_then(|b| b.ollama_enabled)
+        let binding_wants_openai = binding
+            .and_then(|b| b.openai_enabled)
             .unwrap_or(false);
 
-        if binding_wants_ollama && !processed.is_empty() {
-            let mut ollama_cfg = app_config.ollama.clone();
-            ollama_cfg.enabled = true;
+        if binding_wants_openai && !processed.is_empty() {
+            // Re-read the OpenAI settings from disk so changes made in the
+            // Settings UI (model, endpoint, API key, prompts) take effect without
+            // restarting the app. Targets and bindings above are already hot-read
+            // from disk per request; the global AppConfig held by this worker is
+            // frozen at startup (intentional for the Whisper backend), so using
+            // its `openai` section here would ignore the user's latest settings.
+            let mut openai_cfg = voxctrl_config::Config::load().data.openai;
+            openai_cfg.enabled = true;
 
             if let Some(ref b) = binding {
-                if let Some(ref model) = b.ollama_model {
+                if let Some(ref model) = b.openai_model {
                     if !model.is_empty() {
-                        ollama_cfg.model = model.clone();
+                        openai_cfg.model = model.clone();
                     }
                 }
-                if let Some(ref mode_str) = b.ollama_mode {
-                    ollama_cfg.mode = match mode_str.as_str() {
-                        "clean" => voxctrl_config::OllamaMode::Clean,
-                        "formal" => voxctrl_config::OllamaMode::Formal,
-                        "casual" => voxctrl_config::OllamaMode::Casual,
-                        "bullet" => voxctrl_config::OllamaMode::Bullet,
-                        "concise" => voxctrl_config::OllamaMode::Concise,
-                        "custom" => voxctrl_config::OllamaMode::Custom,
-                        _ => voxctrl_config::OllamaMode::Clean,
+                if let Some(ref mode_str) = b.openai_mode {
+                    let mode = match mode_str.as_str() {
+                        "clean" => voxctrl_config::OpenAiMode::Clean,
+                        "formal" => voxctrl_config::OpenAiMode::Formal,
+                        "casual" => voxctrl_config::OpenAiMode::Casual,
+                        "bullet" => voxctrl_config::OpenAiMode::Bullet,
+                        "concise" => voxctrl_config::OpenAiMode::Concise,
+                        "custom" => voxctrl_config::OpenAiMode::Custom,
+                        _ => voxctrl_config::OpenAiMode::Clean,
                     };
+                    // A non-custom preset overrides the system prompt for this hotkey.
+                    if mode != voxctrl_config::OpenAiMode::Custom {
+                        openai_cfg.mode = mode.clone();
+                        openai_cfg.system_prompt =
+                            voxctrl_llm::preset_system_prompt(&mode).to_string();
+                    }
                 }
-                if let Some(ref prompt) = b.ollama_prompt {
+                // An explicit per-hotkey system prompt overrides the global default
+                // (and any preset selected above).
+                if let Some(ref system_prompt) = b.openai_system_prompt {
+                    if !system_prompt.is_empty() {
+                        openai_cfg.system_prompt = system_prompt.clone();
+                    }
+                }
+                if let Some(ref prompt) = b.openai_prompt {
                     if !prompt.is_empty() {
-                        ollama_cfg.custom_prompt = Some(prompt.clone());
-                        ollama_cfg.mode = voxctrl_config::OllamaMode::Custom;
+                        // The per-hotkey prompt template overrides the user prompt
+                        // (it already requires the "{text}" placeholder).
+                        openai_cfg.user_prompt = prompt.clone();
                     }
                 }
             }
 
-            let client = voxctrl_llm::OllamaClient::new(ollama_cfg);
+            let client = voxctrl_llm::OpenAiClient::new(openai_cfg);
             let processed_res = match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
                     let c = client.clone();

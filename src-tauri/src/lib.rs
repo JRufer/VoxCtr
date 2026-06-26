@@ -288,10 +288,11 @@ pub fn run() {
             hold_threshold_ms: 0,
             subkey: None,
             disabled: false,
-            ollama_enabled: Some(false),
-            ollama_model: None,
-            ollama_mode: None,
-            ollama_prompt: None,
+            openai_enabled: Some(false),
+            openai_model: None,
+            openai_mode: None,
+            openai_prompt: None,
+            openai_system_prompt: None,
         });
     }
 
@@ -917,7 +918,7 @@ pub fn run() {
             check_model_downloaded,
             download_model,
             check_directory_exists,
-            test_ollama,
+            test_openai,
             cuda_enabled,
             check_udev_status,
             install_system_integration,
@@ -1126,8 +1127,8 @@ mod tests {
             // 3. Spoken text warn (should be blocked by privacy filters)
             tracing::warn!("Failed to speak the text: Hello user");
             
-            // 4. Ollama payload error (should be blocked by privacy filters)
-            tracing::error!("Ollama request payload: test prompt");
+            // 4. OpenAI payload error (should be blocked by privacy filters)
+            tracing::error!("OpenAI request payload: test prompt");
             
             // Transition to post-startup
             crate::startup_log::STARTUP_COMPLETE.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1150,7 +1151,7 @@ mod tests {
         
         assert!(!content.contains("Hello user"));
         assert!(!content.contains("Normal runtime info log"));
-        assert!(!content.contains("Ollama"));
+        assert!(!content.contains("OpenAI"));
     }
 
     #[test]
