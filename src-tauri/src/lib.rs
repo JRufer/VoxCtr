@@ -141,10 +141,9 @@ pub fn run() {
     tracing::info!("TTS voice: {}", config.data.tts.voice);
     tracing::info!("TTS speed: {}", config.data.tts.speed);
     tracing::info!("TTS GPU: {}", config.data.tts.gpu);
-    tracing::info!("Kokoro voice: {}", config.data.tts.kokoro.voice);
-    tracing::info!("Kokoro quality: {}", config.data.tts.kokoro.quality);
-    tracing::info!("Kokoro speed: {}", config.data.tts.kokoro.speed);
-    tracing::info!("Kokoro prewarm: {}", config.data.tts.kokoro.prewarm);
+    tracing::info!("Pocket-TTS voice: {}", config.data.tts.pocket_tts.voice);
+    tracing::info!("Pocket-TTS prewarm: {}", config.data.tts.pocket_tts.prewarm);
+    tracing::info!("Pocket-TTS HF token set: {}", config.data.tts.pocket_tts.hf_token.is_some());
     tracing::info!("MCP enabled: {}", config.data.mcp.server_enabled);
     tracing::info!("MCP record timeout: {}", config.data.mcp.record_timeout);
     tracing::info!("ATSPI injection: {}", config.data.atspi.injection);
@@ -319,7 +318,13 @@ pub fn run() {
             // channel (that would kill the thread and break all future TTS).
             if event.binding_id == "__tts_stop__" {
                 if event.kind == GestureKind::Start {
-                    voxctrl_tts::stop_current_playback();
+                    // Use the handle's stop() (not the raw stop_current_playback())
+                    // so the generation counter is bumped too — otherwise a
+                    // streaming engine like Pocket-TTS keeps appending the
+                    // frames it already had in flight and audio resumes.
+                    if let Some(tts) = state_for_gesture.tts_handle.lock().await.as_ref() {
+                        tts.stop();
+                    }
                 }
                 continue;
             }
@@ -913,8 +918,9 @@ pub fn run() {
             stop_monitoring_audio,
             check_voice_downloaded,
             download_voice,
-            check_kokoro_ready,
-            download_kokoro,
+            check_pocket_tts_ready,
+            download_pocket_tts,
+            list_pocket_tts_voices,
             check_model_downloaded,
             download_model,
             check_directory_exists,

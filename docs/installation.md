@@ -8,7 +8,7 @@
 - **Audio:** PulseAudio or PipeWire (ALSA fallback supported)
 - **Required packages:** `libwebkit2gtk-4.1`, `libayatana-appindicator3` or `libappindicator3`
 - **Optional:** `wtype` (Wayland injection), `xdotool` (X11 injection)
-- **For Kokoro TTS:** `espeak-ng` (phonemisation), ONNX Runtime (inference — see [Kokoro TTS](#kokoro-tts) below)
+- **For Pocket-TTS:** a HuggingFace account with the [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) license accepted and an access token (see [Pocket-TTS](#pocket-tts) below)
 
 ### Windows
 - **OS:** Windows 10 (1903+) or Windows 11
@@ -150,39 +150,15 @@ server. For a fully local setup using [Ollama](https://ollama.ai/):
 To use a remote provider instead, set the **API URL** to its base URL and
 provide an **API Key**.
 
-### Kokoro TTS
+### Pocket-TTS
 
-The Kokoro neural TTS engine requires two system components. `install.sh` handles both automatically; for manual setup:
+Pocket-TTS is a pure-Rust voice-cloning TTS engine (no system packages required) but its model weights live in a **gated** HuggingFace repository:
 
-**1. espeak-ng** (phonemisation):
-
-```bash
-# Ubuntu/Debian
-sudo apt install espeak-ng
-
-# Arch
-sudo pacman -S espeak-ng
-
-# Fedora
-sudo dnf install espeak-ng
-
-# openSUSE
-sudo zypper install espeak-ng
-```
-
-**2. ONNX Runtime** (model inference):
-
-```bash
-# Arch (via AUR)
-yay -S onnxruntime
-
-# All other distros
-pip install onnxruntime
-```
-
-> **Note:** VoxCtrl auto-discovers the ONNX Runtime library at launch — it searches common system paths and queries `python3` for the location of any installed `onnxruntime` package (including `pip --user` installs). If auto-discovery fails, set `ORT_DYLIB_PATH=/path/to/libonnxruntime.so` in your environment before launching VoxCtrl.
-
-Once both prerequisites are installed, download the Kokoro model from **Settings → TTS → Kokoro**. The `fp16` quality preset (169 MB) is recommended for most systems.
+1. Create a free [HuggingFace](https://huggingface.co/) account if you don't have one.
+2. Visit [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) and accept the model license.
+3. Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (read access is sufficient).
+4. Paste the token into **Settings → TTS → Pocket-TTS → HuggingFace Token**, or set it via the `HF_TOKEN` environment variable before launching VoxCtrl.
+5. Pick a voice and click **Download** in Settings → TTS. The model weights, tokenizer, and the selected voice's reference clip are downloaded once and cached locally under `~/.cache/huggingface/hub/`.
 
 ### MCP Server (Claude Desktop / Cursor)
 1. Enable in Settings → Engine → MCP Server

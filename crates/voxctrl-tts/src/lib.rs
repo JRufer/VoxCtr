@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -33,472 +33,218 @@ pub static PIPER_VOICES: &[VoiceInfo] = &[
     VoiceInfo { name: "en-gb-alan-low",        quality: "low",    sample_rate: 16000, filename: "en_GB-alan-low.onnx" },
 ];
 
-// ── Kokoro voice catalogue ────────────────────────────────────────────────────
+// ── Pocket-TTS voice catalogue ────────────────────────────────────────────────
+//
+// pocket-tts clones a voice from a short reference clip rather than using a
+// trained named-voice embedding table. We curate a small set of clips from
+// the public `kyutai/tts-voices` HuggingFace dataset so VoxCtrl can still
+// offer a familiar voice-picker UX. Clips are downloaded on first use (and
+// cached by `hf-hub`) — see `pocket_tts_ready()` / `download_pocket_tts_assets()`.
 
 #[derive(Debug, Clone)]
-pub struct KokoroVoiceInfo {
+pub struct PocketTtsVoiceInfo {
     pub id: &'static str,
     pub label: &'static str,
-    pub lang: &'static str,
+    /// `hf://` reference clip path consumed by `pocket_tts::weights::download_if_necessary`.
+    pub reference_clip: &'static str,
 }
 
-pub static KOKORO_VOICES: &[KokoroVoiceInfo] = &[
-    // American Female
-    KokoroVoiceInfo { id: "af_heart",    label: "Heart (American Female)",    lang: "en-us" },
-    KokoroVoiceInfo { id: "af_bella",    label: "Bella (American Female)",    lang: "en-us" },
-    KokoroVoiceInfo { id: "af_sarah",    label: "Sarah (American Female)",    lang: "en-us" },
-    KokoroVoiceInfo { id: "af_nicole",   label: "Nicole (American Female)",   lang: "en-us" },
-    KokoroVoiceInfo { id: "af_sky",      label: "Sky (American Female)",      lang: "en-us" },
-    KokoroVoiceInfo { id: "af_alloy",    label: "Alloy (American Female)",    lang: "en-us" },
-    KokoroVoiceInfo { id: "af_aoede",    label: "Aoede (American Female)",    lang: "en-us" },
-    KokoroVoiceInfo { id: "af_jessica",  label: "Jessica (American Female)",  lang: "en-us" },
-    KokoroVoiceInfo { id: "af_kore",     label: "Kore (American Female)",     lang: "en-us" },
-    KokoroVoiceInfo { id: "af_nova",     label: "Nova (American Female)",     lang: "en-us" },
-    KokoroVoiceInfo { id: "af_river",    label: "River (American Female)",    lang: "en-us" },
-    // American Male
-    KokoroVoiceInfo { id: "am_adam",     label: "Adam (American Male)",       lang: "en-us" },
-    KokoroVoiceInfo { id: "am_michael",  label: "Michael (American Male)",    lang: "en-us" },
-    KokoroVoiceInfo { id: "am_puck",     label: "Puck (American Male)",       lang: "en-us" },
-    KokoroVoiceInfo { id: "am_echo",     label: "Echo (American Male)",       lang: "en-us" },
-    KokoroVoiceInfo { id: "am_eric",     label: "Eric (American Male)",       lang: "en-us" },
-    KokoroVoiceInfo { id: "am_fenrir",   label: "Fenrir (American Male)",     lang: "en-us" },
-    KokoroVoiceInfo { id: "am_liam",     label: "Liam (American Male)",       lang: "en-us" },
-    KokoroVoiceInfo { id: "am_onyx",     label: "Onyx (American Male)",       lang: "en-us" },
-    KokoroVoiceInfo { id: "am_santa",    label: "Santa (American Male)",      lang: "en-us" },
-    // British Female
-    KokoroVoiceInfo { id: "bf_emma",     label: "Emma (British Female)",      lang: "en-gb" },
-    KokoroVoiceInfo { id: "bf_alice",    label: "Alice (British Female)",     lang: "en-gb" },
-    KokoroVoiceInfo { id: "bf_isabella", label: "Isabella (British Female)",  lang: "en-gb" },
-    KokoroVoiceInfo { id: "bf_lily",     label: "Lily (British Female)",      lang: "en-gb" },
-    // British Male
-    KokoroVoiceInfo { id: "bm_george",   label: "George (British Male)",      lang: "en-gb" },
-    KokoroVoiceInfo { id: "bm_lewis",    label: "Lewis (British Male)",       lang: "en-gb" },
-    KokoroVoiceInfo { id: "bm_daniel",   label: "Daniel (British Male)",      lang: "en-gb" },
-    KokoroVoiceInfo { id: "bm_fable",    label: "Fable (British Male)",       lang: "en-gb" },
+pub static POCKET_TTS_VOICES: &[PocketTtsVoiceInfo] = &[
+    PocketTtsVoiceInfo { id: "alba",    label: "Alba (Female)",   reference_clip: "hf://kyutai/tts-voices/alba-mackenna/casual.wav" },
+    PocketTtsVoiceInfo { id: "anna",    label: "Anna (Female)",   reference_clip: "hf://kyutai/tts-voices/vctk/p228_023_enhanced.wav" },
+    PocketTtsVoiceInfo { id: "vera",    label: "Vera (Female)",   reference_clip: "hf://kyutai/tts-voices/vctk/p229_023_enhanced.wav" },
+    PocketTtsVoiceInfo { id: "charles", label: "Charles (Male)",  reference_clip: "hf://kyutai/tts-voices/vctk/p254_023_enhanced.wav" },
+    PocketTtsVoiceInfo { id: "michael", label: "Michael (Male)",  reference_clip: "hf://kyutai/tts-voices/vctk/p360_023_enhanced.wav" },
 ];
 
-// ── Kokoro vocabulary (IPA → token ID) ───────────────────────────────────────
-
-// 114 entries extracted from kokoro-onnx config.json.
-const KOKORO_VOCAB_PAIRS: &[(char, u32)] = &[
-    (';', 1), (':', 2), (',', 3), ('.', 4), ('!', 5), ('?', 6),
-    ('\u{2014}', 9),   // em-dash —
-    ('\u{2026}', 10),  // horizontal ellipsis …
-    ('"', 11),         // U+0022 plain quotation mark
-    ('(', 12), (')', 13),
-    ('\u{201C}', 14),  // U+201C left double quotation "
-    ('\u{201D}', 15),  // U+201D right double quotation "
-    (' ', 16),
-    ('\u{0303}', 17),  // combining tilde ̃
-    ('\u{02A3}', 18),  // ʣ
-    ('\u{02A5}', 19),  // ʥ
-    ('\u{02A6}', 20),  // ʦ
-    ('\u{02A8}', 21),  // ʨ
-    ('\u{1D5D}', 22),  // ᵝ
-    ('\u{AB67}', 23),  // ꭧ
-    ('A', 24), ('I', 25),
-    ('O', 31), ('Q', 33), ('S', 35), ('T', 36), ('W', 39), ('Y', 41),
-    ('\u{1D4A}', 42),  // ᵊ
-    ('a', 43), ('b', 44), ('c', 45), ('d', 46), ('e', 47), ('f', 48),
-    ('h', 50), ('i', 51), ('j', 52), ('k', 53), ('l', 54), ('m', 55),
-    ('n', 56), ('o', 57), ('p', 58), ('q', 59), ('r', 60), ('s', 61),
-    ('t', 62), ('u', 63), ('v', 64), ('w', 65), ('x', 66), ('y', 67),
-    ('z', 68),
-    ('\u{0251}', 69),  // ɑ
-    ('\u{0250}', 70),  // ɐ
-    ('\u{0252}', 71),  // ɒ
-    ('\u{00E6}', 72),  // æ
-    ('\u{03B2}', 75),  // β
-    ('\u{0254}', 76),  // ɔ
-    ('\u{0255}', 77),  // ɕ
-    ('\u{00E7}', 78),  // ç
-    ('\u{0256}', 80),  // ɖ
-    ('\u{00F0}', 81),  // ð
-    ('\u{02A4}', 82),  // ʤ
-    ('\u{0259}', 83),  // ə
-    ('\u{025A}', 85),  // ɚ
-    ('\u{025B}', 86),  // ɛ
-    ('\u{025C}', 87),  // ɜ
-    ('\u{025F}', 90),  // ɟ
-    ('\u{0261}', 92),  // ɡ
-    ('\u{0265}', 99),  // ɥ
-    ('\u{0268}', 101), // ɨ
-    ('\u{026A}', 102), // ɪ
-    ('\u{029D}', 103), // ʝ
-    ('\u{026F}', 110), // ɯ
-    ('\u{0270}', 111), // ɰ
-    ('\u{014B}', 112), // ŋ
-    ('\u{0273}', 113), // ɳ
-    ('\u{0272}', 114), // ɲ
-    ('\u{0274}', 115), // ɴ
-    ('\u{00F8}', 116), // ø
-    ('\u{0278}', 118), // ɸ
-    ('\u{03B8}', 119), // θ
-    ('\u{0153}', 120), // œ
-    ('\u{0279}', 123), // ɹ
-    ('\u{027E}', 125), // ɾ
-    ('\u{027B}', 126), // ɻ
-    ('\u{0281}', 128), // ʁ
-    ('\u{027D}', 129), // ɽ
-    ('\u{0282}', 130), // ʂ
-    ('\u{0283}', 131), // ʃ
-    ('\u{0288}', 132), // ʈ
-    ('\u{02A7}', 133), // ʧ
-    ('\u{028A}', 135), // ʊ
-    ('\u{028B}', 136), // ʋ
-    ('\u{028C}', 138), // ʌ
-    ('\u{0263}', 139), // ɣ
-    ('\u{0264}', 140), // ɤ
-    ('\u{03C7}', 142), // χ
-    ('\u{028E}', 143), // ʎ
-    ('\u{0292}', 147), // ʒ
-    ('\u{0294}', 148), // ʔ
-    ('\u{02C8}', 156), // ˈ primary stress
-    ('\u{02CC}', 157), // ˌ secondary stress
-    ('\u{02D0}', 158), // ː long vowel
-    ('\u{02B0}', 162), // ʰ aspirated
-    ('\u{02B2}', 164), // ʲ palatalised
-    ('\u{2193}', 169), // ↓
-    ('\u{2192}', 171), // →
-    ('\u{2197}', 172), // ↗
-    ('\u{2198}', 173), // ↘
-    ('\u{1D7B}', 177), // ᵻ
-];
-
-static KOKORO_VOCAB: OnceLock<HashMap<char, u32>> = OnceLock::new();
-
-fn kokoro_vocab() -> &'static HashMap<char, u32> {
-    KOKORO_VOCAB.get_or_init(|| KOKORO_VOCAB_PAIRS.iter().map(|&(c, id)| (c, id)).collect())
+pub fn pocket_tts_voice(id: &str) -> Option<&'static PocketTtsVoiceInfo> {
+    POCKET_TTS_VOICES.iter().find(|v| v.id == id)
 }
 
-// ── Kokoro constants ──────────────────────────────────────────────────────────
-
-const KOKORO_SAMPLE_RATE: u32 = 24000;
-
-// Maximum inner-token count (excluding boundary 0s) before truncation.
-const MAX_PHONEME_LENGTH: usize = 510;
-
-// ── Kokoro tokenization ───────────────────────────────────────────────────────
-
-/// Convert IPA phoneme string to Kokoro token IDs.
-///
-/// Returns `(tokens_for_model, num_inner_tokens)`.
-/// `tokens_for_model` is `[0, ...phoneme ids..., 0]` (boundary pad tokens included).
-/// `num_inner_tokens` is the count without the boundary 0s; used to index the style row.
-pub fn kokoro_tokenize(phonemes: &str) -> (Vec<i64>, usize) {
-    let vocab = kokoro_vocab();
-    let cap = phonemes.len().min(MAX_PHONEME_LENGTH) + 2;
-    let mut tokens = Vec::with_capacity(cap);
-    tokens.push(0i64);
-    tokens.extend(
-        phonemes
-            .chars()
-            .filter_map(|ch| vocab.get(&ch).map(|&id| id as i64))
-            .take(MAX_PHONEME_LENGTH),
-    );
-    let num_inner = tokens.len() - 1;
-    tokens.push(0i64);
-    (tokens, num_inner)
+/// Default directory scanned for user-supplied Pocket-TTS voice clips.
+pub fn pocket_tts_voices_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("voxctrl")
+        .join("pocket-tts-voices")
 }
 
-// ── Kokoro phonemization ──────────────────────────────────────────────────────
-
-/// Convert text to IPA phonemes using espeak-ng.
-///
-/// `lang` is an espeak-ng voice identifier such as `"en-us"` or `"en-gb"`.
-pub fn phonemize_espeak(text: &str, lang: &str) -> Result<String> {
-    let output = std::process::Command::new("espeak-ng")
-        .args(["--ipa", "-q", "-v", lang])
-        .arg(text)
-        .output()
-        .context("espeak-ng not found; install it with: apt install espeak-ng")?;
-
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("espeak-ng failed: {}", err.trim());
-    }
-
-    let raw = String::from_utf8_lossy(&output.stdout);
-    let phonemes = raw
-        .lines()
-        .map(|l| l.trim_start_matches('_').trim())
-        .filter(|l| !l.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    Ok(phonemes)
-}
-
-// ── Kokoro voice embedding (NPZ / NPY) ───────────────────────────────────────
-
-static EMBEDDING_CACHE: OnceLock<std::sync::Mutex<HashMap<String, Vec<f32>>>> = OnceLock::new();
-
-/// Load one row from a voice's NPY array. It reads the standalone `.npy` file from the unzipped directory
-/// and caches the full array in-memory for sub-microsecond retrieval on subsequent calls.
-///
-/// Each row is 256 float32 values forming the style embedding for that sequence length.
-pub fn load_voice_embedding(voices_dir: &Path, voice: &str, row: usize) -> Result<Vec<f32>> {
-    let cache_lock = EMBEDDING_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
-    let mut cache = cache_lock.lock().unwrap();
-
-    let full_data = if let Some(cached) = cache.get(voice) {
-        cached
+fn resolve_pocket_tts_voices_dir(voice_dir: &str) -> PathBuf {
+    if voice_dir.is_empty() {
+        pocket_tts_voices_dir()
     } else {
-        let voice_file_path = voices_dir.join(format!("{voice}.npy"));
-        let mut file = std::fs::File::open(&voice_file_path)
-            .with_context(|| format!("open voice file: {}", voice_file_path.display()))?;
+        expand_tilde(voice_dir)
+    }
+}
 
-        let mut data = Vec::new();
-        use std::io::Read;
-        file.read_to_end(&mut data)?;
+/// Scans `voice_dir` for `<id>.wav` files, returning `(id, path)` pairs. A file named
+/// after a built-in voice (e.g. `alba.wav`) overrides that voice's bundled reference clip.
+fn scan_custom_pocket_tts_voices(voice_dir: &str) -> Vec<(String, PathBuf)> {
+    let dir = resolve_pocket_tts_voices_dir(voice_dir);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
 
-        if data.len() < 10 || &data[0..6] != b"\x93NUMPY" {
-            anyhow::bail!("invalid NPY format for voice '{voice}'");
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("wav")) != Some(true) {
+            continue;
         }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        found.push((stem.to_string(), path));
+    }
+    found
+}
 
-        let major = data[6];
-        let (header_len, header_offset): (usize, usize) = if major == 1 {
-            (u16::from_le_bytes([data[8], data[9]]) as usize, 10)
+fn prettify_voice_label(id: &str) -> String {
+    id.replace(['_', '-'], " ")
+        .split_whitespace()
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PocketTtsVoiceOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// Built-in voices merged with any custom clips found in `voice_dir`, for the voice picker.
+pub fn pocket_tts_voice_catalogue(voice_dir: &str) -> Vec<PocketTtsVoiceOption> {
+    let custom = scan_custom_pocket_tts_voices(voice_dir);
+    let mut options: Vec<PocketTtsVoiceOption> = POCKET_TTS_VOICES
+        .iter()
+        .map(|v| PocketTtsVoiceOption { id: v.id.to_string(), label: v.label.to_string() })
+        .collect();
+
+    for (id, _) in &custom {
+        if let Some(existing) = options.iter_mut().find(|o| &o.id == id) {
+            existing.label = format!("{} (Custom)", prettify_voice_label(id));
         } else {
-            (u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize, 12)
-        };
-        let data_start = header_offset + header_len;
-        let payload = &data[data_start..];
+            options.push(PocketTtsVoiceOption {
+                id: id.clone(),
+                label: format!("{} (Custom)", prettify_voice_label(id)),
+            });
+        }
+    }
+    options
+}
 
-        let floats: Vec<f32> = payload
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .collect();
+/// Resolves a voice id to its reference clip source: either a built-in `hf://` URI or
+/// a local path to a custom clip dropped into `voice_dir`. Custom clips take priority.
+fn resolve_pocket_tts_voice_clip(id: &str, voice_dir: &str) -> Option<String> {
+    let custom = scan_custom_pocket_tts_voices(voice_dir);
+    if let Some((_, path)) = custom.iter().find(|(custom_id, _)| custom_id == id) {
+        return Some(path.to_string_lossy().into_owned());
+    }
+    pocket_tts_voice(id).map(|v| v.reference_clip.to_string())
+}
 
-        cache.insert(voice.to_string(), floats);
-        cache.get(voice).unwrap()
+// ── Pocket-TTS model variant / sample rate ────────────────────────────────────
+
+const POCKET_TTS_VARIANT: &str = "b6369a24";
+const POCKET_TTS_SAMPLE_RATE: u32 = 24000;
+// Gated weights repo; tokenizer + non-cloning fallback live in the ungated sibling repo.
+const POCKET_TTS_WEIGHTS_REPO: &str = "kyutai/pocket-tts";
+const POCKET_TTS_WEIGHTS_REVISION: &str = "427e3d61b276ed69fdd03de0d185fa8a8d97fc5b";
+const POCKET_TTS_WEIGHTS_FILE: &str = "tts_b6369a24.safetensors";
+const POCKET_TTS_TOKENIZER_REPO: &str = "kyutai/pocket-tts-without-voice-cloning";
+const POCKET_TTS_TOKENIZER_REVISION: &str = "d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3";
+const POCKET_TTS_TOKENIZER_FILE: &str = "tokenizer.model";
+
+/// Best-effort, network-free check for whether the model weights, tokenizer, and the
+/// selected voice's reference clip are already present in the local HuggingFace cache.
+pub fn is_pocket_tts_ready(voice: &str, voice_dir: &str) -> bool {
+    let cache = hf_hub::Cache::default();
+
+    let weights_present = cache
+        .repo(hf_hub::Repo::with_revision(
+            POCKET_TTS_WEIGHTS_REPO.to_string(),
+            hf_hub::RepoType::Model,
+            POCKET_TTS_WEIGHTS_REVISION.to_string(),
+        ))
+        .get(POCKET_TTS_WEIGHTS_FILE)
+        .is_some();
+
+    let tokenizer_present = cache
+        .repo(hf_hub::Repo::with_revision(
+            POCKET_TTS_TOKENIZER_REPO.to_string(),
+            hf_hub::RepoType::Model,
+            POCKET_TTS_TOKENIZER_REVISION.to_string(),
+        ))
+        .get(POCKET_TTS_TOKENIZER_FILE)
+        .is_some();
+
+    let voice_present = match resolve_pocket_tts_voice_clip(voice, voice_dir) {
+        Some(clip) => hf_cache_file_present(&clip),
+        None => false,
     };
 
-    const COLS: usize = 256;
-    let num_rows = full_data.len() / COLS;
-    if num_rows == 0 {
-        anyhow::bail!("NPY data empty for voice '{voice}'");
+    weights_present && tokenizer_present && voice_present
+}
+
+fn hf_cache_file_present(hf_path: &str) -> bool {
+    let Some(rest) = hf_path.strip_prefix("hf://") else { return Path::new(hf_path).exists() };
+    let parts: Vec<&str> = rest.split('/').collect();
+    if parts.len() < 3 {
+        return false;
     }
-    let clamped_row = row.min(num_rows - 1);
-    let offset = clamped_row * COLS;
+    let repo_id = format!("{}/{}", parts[0], parts[1]);
+    let filename_with_revision = parts[2..].join("/");
+    let (filename, revision) = match filename_with_revision.rfind('@') {
+        Some(at) => (filename_with_revision[..at].to_string(), Some(filename_with_revision[at + 1..].to_string())),
+        None => (filename_with_revision, None),
+    };
 
-    if full_data.len() < offset + COLS {
-        anyhow::bail!("NPY data too short for voice '{voice}' row {clamped_row}");
-    }
-
-    Ok(full_data[offset..offset + COLS].to_vec())
+    let cache = hf_hub::Cache::default();
+    let repo = match revision {
+        Some(rev) => hf_hub::Repo::with_revision(repo_id, hf_hub::RepoType::Model, rev),
+        None => hf_hub::Repo::model(repo_id),
+    };
+    cache.repo(repo).get(&filename).is_some()
 }
 
-// ── ONNX Runtime initialisation ───────────────────────────────────────────────
-
-/// Initialise the ONNX Runtime shared library (idempotent).
-///
-/// With the `load-dynamic` ort feature the library is loaded via dlopen at runtime.
-/// We search standard locations, then fall back to the Python onnxruntime package.
-fn ensure_ort_init() -> Result<()> {
-    static ORT_INIT_DONE: OnceLock<Result<(), String>> = OnceLock::new();
-    let result = ORT_INIT_DONE.get_or_init(|| {
-        let try_init = || -> Result<()> {
-            // If ORT_DYLIB_PATH is already set, use init_from().
-            if let Ok(path) = std::env::var("ORT_DYLIB_PATH") {
-                ort::init_from(&path)?;
-                ort::init().commit();
-                return Ok(());
-            }
-
-            // Search common locations for libonnxruntime.so.
-            let candidates: &[&str] = &[
-                "/usr/lib/libonnxruntime.so",
-                "/usr/local/lib/libonnxruntime.so",
-                "/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
-                "/usr/local/lib/python3.11/dist-packages/onnxruntime/capi/libonnxruntime.so.1.26.0",
-                "/usr/local/lib/python3.12/dist-packages/onnxruntime/capi/libonnxruntime.so.1.26.0",
-                "/usr/local/lib/python3.10/dist-packages/onnxruntime/capi/libonnxruntime.so.1.26.0",
-            ];
-
-            for path in candidates {
-                if std::path::Path::new(path).exists() {
-                    ort::init_from(path)?;
-                    ort::init().commit();
-                    return Ok(());
-                }
-            }
-
-            // Dynamic discovery via python3 — works for any distro or pip --user install.
-            if let Ok(output) = std::process::Command::new("python3")
-                .args([
-                    "-c",
-                    "import onnxruntime as o, os; \
-                     capi=os.path.join(os.path.dirname(o.__file__),'capi'); \
-                     [print(os.path.join(capi,f)) \
-                      for f in os.listdir(capi) \
-                      if f.startswith('libonnxruntime') and '.so' in f]",
-                ])
-                .output()
-            {
-                if output.status.success() {
-                    for line in String::from_utf8_lossy(&output.stdout).lines() {
-                        let p = line.trim();
-                        if !p.is_empty() && std::path::Path::new(p).exists() {
-                            ort::init_from(p)?;
-                            ort::init().commit();
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-
-            // Last resort: let ort try standard dlopen lookup.
-            ort::init().commit();
-            Ok(())
-        };
-        try_init().map_err(|e| e.to_string())
-    });
-    result.as_ref().map(|_| ()).map_err(|e| anyhow::anyhow!("{e}"))
-}
-
-// ── Kokoro ONNX inference ─────────────────────────────────────────────────────
-
-/// Run a single Kokoro synthesis pass and return raw f32 audio samples.
-fn run_kokoro_inference(
-    session: &mut ort::session::Session,
-    tokens: &[i64],
-    style: &[f32],
-    speed: f32,
-) -> Result<Vec<f32>> {
-    use ort::value::Tensor;
-
-    let t = tokens.len();
-    let tokens_tensor = Tensor::<i64>::from_array(([1i64, t as i64], tokens.to_vec()))
-        .context("build tokens tensor")?;
-    let style_tensor = Tensor::<f32>::from_array(([1i64, 256i64], style.to_vec()))
-        .context("build style tensor")?;
-    let speed_tensor = Tensor::<f32>::from_array(([1i64], vec![speed]))
-        .context("build speed tensor")?;
-
-    let has_input_ids = session.inputs().iter().any(|i| i.name() == "input_ids");
-    let id_name: &str = if has_input_ids { "input_ids" } else { "tokens" };
-
-    // Build named input list as Vec<(String, SessionInputValue)>
-    let inputs: Vec<(String, ort::session::SessionInputValue<'_>)> = vec![
-        (id_name.to_string(), tokens_tensor.into()),
-        ("style".to_string(), style_tensor.into()),
-        ("speed".to_string(), speed_tensor.into()),
-    ];
-
-    let outputs = session.run(inputs).context("Kokoro ONNX inference")?;
-
-    let (_, audio_slice) = outputs[0]
-        .try_extract_tensor::<f32>()
-        .context("extract audio tensor from Kokoro output")?;
-
-    Ok(audio_slice.to_vec())
-}
-
-// ── Kokoro data layout ────────────────────────────────────────────────────────
-
-pub fn kokoro_data_dir(data_dir: &str) -> PathBuf {
-    if data_dir.is_empty() {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("voxctrl")
-            .join("kokoro")
-    } else {
-        expand_tilde(data_dir)
-    }
-}
-
-fn kokoro_model_filename(quality: &str) -> &'static str {
-    match quality {
-        "fp16" => "kokoro-v1.0.fp16.onnx",
-        "int8" => "kokoro-v1.0.int8.onnx",
-        _ => "kokoro-v1.0.onnx",
-    }
-}
-
-fn kokoro_model_url(quality: &str) -> String {
-    let filename = kokoro_model_filename(quality);
-    format!(
-        "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/{filename}"
-    )
-}
-
-const KOKORO_VOICES_URL: &str =
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin";
-
-/// True when both the selected model file and the voices directory with voices are present on disk.
-pub fn is_kokoro_ready(quality: &str, data_dir: &str) -> bool {
-    let dir = kokoro_data_dir(data_dir);
-    dir.join(kokoro_model_filename(quality)).exists() && dir.join("voices").join("af_heart.npy").exists()
-}
-
-// ── Kokoro download ───────────────────────────────────────────────────────────
-
-fn extract_voices_zip(zip_path: &Path, dest_dir: &Path) -> Result<()> {
-    let file = std::fs::File::open(zip_path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
-    std::fs::create_dir_all(dest_dir)?;
-
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)?;
-        let name = entry.name().to_string();
-        if name.ends_with(".npy") {
-            let out_path = dest_dir.join(name);
-            let mut out_file = std::fs::File::create(&out_path)?;
-            std::io::copy(&mut entry, &mut out_file)?;
-        }
-    }
-    Ok(())
-}
-
-pub async fn download_kokoro_assets(quality: &str, data_dir: &str) -> Result<()> {
-    let dir = kokoro_data_dir(data_dir);
-    tokio::fs::create_dir_all(&dir).await?;
-
-    let model_filename = kokoro_model_filename(quality);
-    let model_path = dir.join(model_filename);
-    if !model_path.exists() {
-        let url = kokoro_model_url(quality);
-        info!("Downloading Kokoro model ({quality}): {url}");
-        download_file(&url, &model_path).await?;
-        info!("Kokoro model saved to {}", model_path.display());
-    } else {
-        info!("Kokoro model already present: {}", model_path.display());
+/// Download the pocket-tts model weights, tokenizer, and the selected voice's reference
+/// clip into the local HuggingFace cache. Requires `HF_TOKEN` to be set (the default
+/// weights repo is gated and requires accepting the model license on huggingface.co).
+pub async fn download_pocket_tts_assets(voice: &str, voice_dir: &str, hf_token: Option<String>) -> Result<()> {
+    if let Some(token) = hf_token {
+        // SAFETY: single-threaded at startup/download time; no concurrent env access.
+        unsafe { std::env::set_var("HF_TOKEN", token) };
     }
 
-    let voices_zip_path = dir.join("voices-v1.0.bin");
-    let voices_dir = dir.join("voices");
+    let reference_clip = resolve_pocket_tts_voice_clip(voice, voice_dir)
+        .ok_or_else(|| anyhow::anyhow!("unknown pocket-tts voice: {voice}"))?;
 
-    if !voices_dir.join("af_heart.npy").exists() {
-        if !voices_zip_path.exists() {
-            info!("Downloading Kokoro voices pack: {KOKORO_VOICES_URL}");
-            download_file(KOKORO_VOICES_URL, &voices_zip_path).await?;
-            info!("Kokoro voices saved to {}", voices_zip_path.display());
-        }
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        info!("Downloading pocket-tts model weights ({POCKET_TTS_VARIANT})...");
+        pocket_tts::weights::download_if_necessary(&format!(
+            "hf://{POCKET_TTS_WEIGHTS_REPO}/{POCKET_TTS_WEIGHTS_FILE}@{POCKET_TTS_WEIGHTS_REVISION}"
+        ))
+        .context("download pocket-tts model weights")?;
 
-        info!("Extracting Kokoro voices ZIP to {}...", voices_dir.display());
-        extract_voices_zip(&voices_zip_path, &voices_dir)?;
+        info!("Downloading pocket-tts tokenizer...");
+        pocket_tts::weights::download_if_necessary(&format!(
+            "hf://{POCKET_TTS_TOKENIZER_REPO}/{POCKET_TTS_TOKENIZER_FILE}@{POCKET_TTS_TOKENIZER_REVISION}"
+        ))
+        .context("download pocket-tts tokenizer")?;
 
-        if voices_zip_path.exists() {
-            let _ = std::fs::remove_file(&voices_zip_path);
-            info!("Deleted voices ZIP archive to free space.");
-        }
-    } else {
-        info!("Kokoro unzipped voices already present in {}", voices_dir.display());
-        if voices_zip_path.exists() {
-            let _ = std::fs::remove_file(&voices_zip_path);
-        }
-    }
+        info!("Downloading pocket-tts reference voice clip: {reference_clip}");
+        pocket_tts::weights::download_if_necessary(&reference_clip)
+            .context("download pocket-tts reference voice clip")?;
 
-    info!("Kokoro assets ready in {}", dir.display());
-    Ok(())
-}
+        Ok(())
+    })
+    .await
+    .context("download_pocket_tts_assets task join")??;
 
-async fn download_file(url: &str, dest: &Path) -> Result<()> {
-    let response = reqwest::get(url).await?.error_for_status()?;
-    let bytes = response.bytes().await?;
-    let tmp = tempfile::NamedTempFile::new_in(dest.parent().unwrap_or(Path::new(".")))?;
-    std::io::copy(&mut bytes.as_ref(), &mut tmp.as_file())?;
-    tmp.persist(dest)?;
+    info!("pocket-tts assets ready for voice '{voice}'");
     Ok(())
 }
 
@@ -631,7 +377,7 @@ impl TtsEngineWorker {
         let generation = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let handle = TtsEngineHandle { tx, generation: generation.clone() };
 
-        if config.engine == TtsEngine::Kokoro && config.kokoro.prewarm {
+        if config.engine == TtsEngine::PocketTts && config.pocket_tts.prewarm {
             let _ = handle.tx.send(TtsCommand::Play {
                 utterance: Utterance {
                     text: " ".into(),
@@ -653,8 +399,9 @@ impl TtsEngineWorker {
 
     fn run(self) {
         info!("TTS engine started (engine={:?})", self.config.engine);
-        // Kokoro ONNX session cached for the lifetime of this worker thread.
-        let mut kokoro_session: Option<ort::session::Session> = None;
+        // pocket-tts model + per-voice cloned voice state, cached for the lifetime of this worker thread.
+        let mut pocket_tts_model: Option<pocket_tts::TTSModel> = None;
+        let mut pocket_tts_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
 
         // Persistent Rodio Output Stream - kept alive for the lifetime of this thread!
         let mut audio_context: Option<(rodio::OutputStream, rodio::OutputStreamHandle, Arc<rodio::Sink>)> = None;
@@ -697,9 +444,16 @@ impl TtsEngineWorker {
                     let result = match self.config.engine {
                         TtsEngine::Piper => self.speak_piper(&utterance, &sink),
                         TtsEngine::Espeak => self.speak_espeak(&utterance),
-                        TtsEngine::Kokoro => {
-                            speak_kokoro(&self.config, &utterance, &mut kokoro_session, &self.on_playback_start, &sink)
-                        }
+                        TtsEngine::PocketTts => speak_pocket_tts(
+                            &self.config,
+                            &utterance,
+                            &mut pocket_tts_model,
+                            &mut pocket_tts_voice_states,
+                            &self.on_playback_start,
+                            &sink,
+                            &self.generation,
+                            generation,
+                        ),
                     };
 
                     {
@@ -804,92 +558,82 @@ impl TtsEngineWorker {
     }
 }
 
-// ── Kokoro synthesis (pure Rust / ONNX) ──────────────────────────────────────
+// ── pocket-tts synthesis (pure Rust / Candle) ─────────────────────────────────
 
-fn speak_kokoro(
+fn speak_pocket_tts(
     config: &TtsConfig,
     u: &Utterance,
-    session: &mut Option<ort::session::Session>,
+    model: &mut Option<pocket_tts::TTSModel>,
+    voice_states: &mut HashMap<String, pocket_tts::ModelState>,
     on_playback_start: &Option<PlaybackCallback>,
     sink: &rodio::Sink,
+    generation_counter: &Arc<std::sync::atomic::AtomicU32>,
+    generation: u32,
 ) -> Result<()> {
     let is_prewarm = u.source_label.as_deref() == Some("prewarm");
+    let voice = u.voice.as_deref().unwrap_or(&config.pocket_tts.voice);
 
-    let dir = kokoro_data_dir(&config.kokoro.data_dir);
-    let model_path = dir.join(kokoro_model_filename(&config.kokoro.quality));
-    let voices_dir = dir.join("voices");
+    if !is_pocket_tts_ready(voice, &config.pocket_tts.voice_dir) {
+        anyhow::bail!("pocket-tts assets for voice '{voice}' not found. Download them from TTS settings.");
+    }
 
-    if !model_path.exists() {
-        anyhow::bail!(
-            "Kokoro model not found at {}. Download it from TTS settings.",
-            model_path.display()
+    // Lazily load the model — stays alive for the worker thread lifetime.
+    if model.is_none() {
+        info!("Loading pocket-tts model (variant={POCKET_TTS_VARIANT})");
+        *model = Some(
+            pocket_tts::TTSModel::load(POCKET_TTS_VARIANT).context("load pocket-tts model")?,
         );
     }
-    if !voices_dir.join("af_heart.npy").exists() {
-        anyhow::bail!("Kokoro voices folder not found or incomplete. Download it from TTS settings.");
+    let model = model.as_ref().unwrap();
+
+    if !voice_states.contains_key(voice) {
+        let reference_clip = resolve_pocket_tts_voice_clip(voice, &config.pocket_tts.voice_dir)
+            .ok_or_else(|| anyhow::anyhow!("unknown pocket-tts voice: {voice}"))?;
+        let clip_path = pocket_tts::weights::download_if_necessary(&reference_clip)
+            .context("resolve pocket-tts reference voice clip")?;
+        let state = model
+            .get_voice_state(&clip_path)
+            .context("compute pocket-tts voice state")?;
+        voice_states.insert(voice.to_string(), state);
     }
-
-    // Lazily load the ONNX session — stays alive for the worker thread lifetime.
-    if session.is_none() {
-        ensure_ort_init().context("initialise ONNX Runtime")?;
-        info!("Loading Kokoro ONNX session: {} (gpu={})", model_path.display(), config.gpu);
-        let mut sb = ort::session::Session::builder()
-            .context("ONNX session builder")?;
-
-        if config.gpu {
-            sb = match sb.with_execution_providers([ort::execution_providers::CUDAExecutionProvider::default().build()]) {
-                Ok(builder) => {
-                    info!("Successfully registered CUDA Execution Provider for Kokoro");
-                    builder
-                }
-                Err(e) => {
-                    warn!("Failed to register CUDA Execution Provider: {e}. Falling back to CPU.");
-                    match ort::session::Session::builder() {
-                        Ok(fallback_sb) => fallback_sb,
-                        Err(fallback_err) => {
-                            warn!("Failed to create fallback ONNX session builder: {fallback_err}");
-                            return Err(anyhow::anyhow!("fallback builder failure: {fallback_err}"));
-                        }
-                    }
-                }
-            };
-        }
-
-        *session = Some(
-            sb.commit_from_file(&model_path)
-                .context("load Kokoro ONNX model")?
-        );
-    }
-    let sess = session.as_mut().unwrap();
-
-    let voice = u.voice.as_deref().unwrap_or(&config.kokoro.voice);
-    let speed = config.speed;
-    let lang = if voice.starts_with('b') { "en-gb" } else { "en-us" };
-
-    let phonemes = phonemize_espeak(&u.text, lang)?;
-    if phonemes.is_empty() {
-        return Ok(());
-    }
-
-    let (tokens, num_inner) = kokoro_tokenize(&phonemes);
-    let style = load_voice_embedding(&voices_dir, voice, num_inner)?;
-    let audio = run_kokoro_inference(sess, &tokens, &style, speed)?;
+    let voice_state = voice_states.get(voice).unwrap();
 
     if is_prewarm {
+        // Run generation once to warm the model and caches; nothing is played.
+        let _ = model.generate(&u.text, voice_state).context("pocket-tts generate")?;
         return Ok(());
     }
 
-    if let Some(ref cb) = on_playback_start {
-        cb();
+    // Stream audio frame-by-frame instead of waiting for the whole utterance to
+    // finish generating: each frame is queued onto the sink as soon as it's ready,
+    // so playback of the first frame overlaps with generation of the rest. This cuts
+    // perceived latency from "time to generate the whole sentence" down to roughly
+    // "time to generate the first frame".
+    let mut callback_fired = false;
+    for chunk in model.generate_stream(&u.text, voice_state) {
+        if generation_counter.load(std::sync::atomic::Ordering::SeqCst) != generation {
+            break; // stop() was called — abandon the rest of the generation
+        }
+        let chunk = chunk.context("pocket-tts generate (stream)")?;
+        let chunk = chunk.squeeze(0).context("squeeze pocket-tts audio chunk")?;
+        let bytes =
+            pocket_tts::audio::pcm_i16_le_bytes(&chunk).context("encode pocket-tts audio chunk")?;
+
+        if !callback_fired {
+            callback_fired = true;
+            if let Some(ref cb) = on_playback_start {
+                cb();
+            }
+        }
+
+        let samples: Vec<i16> = bytes
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        sink.append(rodio::buffer::SamplesBuffer::new(1, POCKET_TTS_SAMPLE_RATE, samples));
     }
-
-    // Convert f32 samples → i16 PCM bytes for rodio playback.
-    let bytes: Vec<u8> = audio
-        .iter()
-        .flat_map(|&s| ((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())
-        .collect();
-
-    play_raw_audio(sink, &bytes, KOKORO_SAMPLE_RATE)
+    sink.sleep_until_end();
+    Ok(())
 }
 
 // ── Audio playback ────────────────────────────────────────────────────────────
@@ -1065,39 +809,6 @@ mod tests {
     fn create_fake_voice(dir: &std::path::Path, filename: &str) {
         fs::write(dir.join(filename), b"fake onnx model").unwrap();
         fs::write(dir.join(format!("{filename}.json")), b"{}").unwrap();
-    }
-
-    // ── Helpers for NPY test data ──────────────────────────────────────
-
-    fn make_npy_data(rows: usize, cols: usize) -> Vec<u8> {
-        let header_str = format!(
-            "{{'descr': '<f4', 'fortran_order': False, 'shape': ({rows}, {cols}), }}"
-        );
-        // Pad header so that total header block (magic 6 + ver 2 + len 2 + header) is a multiple of 64.
-        let prefix_len = 10usize; // magic(6) + major(1) + minor(1) + header_len(2)
-        let raw_len = prefix_len + header_str.len() + 1; // +1 for trailing \n
-        let pad = (64 - raw_len % 64) % 64;
-        let mut header = header_str;
-        for _ in 0..pad {
-            header.push(' ');
-        }
-        header.push('\n');
-
-        let mut out = Vec::new();
-        out.extend_from_slice(b"\x93NUMPY");
-        out.push(1u8); // major
-        out.push(0u8); // minor
-        out.extend_from_slice(&(header.len() as u16).to_le_bytes());
-        out.extend_from_slice(header.as_bytes());
-        for i in 0..(rows * cols) {
-            out.extend_from_slice(&(i as f32).to_le_bytes());
-        }
-        out
-    }
-
-    fn write_npy_file(dir: &std::path::Path, voice: &str, rows: usize, cols: usize) {
-        let npy = make_npy_data(rows, cols);
-        fs::write(dir.join(format!("{voice}.npy")), npy).unwrap();
     }
 
     // ── resolve_voices_dir ────────────────────────────────────────────────────
@@ -1352,292 +1063,166 @@ mod tests {
         }
     }
 
-    // ── Kokoro voice catalogue ────────────────────────────────────────────────
+    // ── Pocket-TTS voice catalogue ──────────────────────────────────────────────
 
     #[test]
-    fn test_kokoro_voices_not_empty() {
-        assert!(!KOKORO_VOICES.is_empty());
+    fn test_pocket_tts_voices_not_empty() {
+        assert!(!POCKET_TTS_VOICES.is_empty());
     }
 
     #[test]
-    fn test_kokoro_voices_have_required_fields() {
-        for v in KOKORO_VOICES {
+    fn test_pocket_tts_voices_have_required_fields() {
+        for v in POCKET_TTS_VOICES {
             assert!(!v.id.is_empty());
             assert!(!v.label.is_empty());
-            assert!(!v.lang.is_empty());
+            assert!(v.reference_clip.starts_with("hf://"));
         }
     }
 
     #[test]
-    fn test_kokoro_voices_ids_unique() {
+    fn test_pocket_tts_voices_ids_unique() {
         let mut seen = std::collections::HashSet::new();
-        for v in KOKORO_VOICES {
+        for v in POCKET_TTS_VOICES {
             assert!(seen.insert(v.id), "duplicate voice id: {}", v.id);
         }
     }
 
     #[test]
-    fn test_kokoro_voices_cover_expected_prefixes() {
-        let ids: Vec<&str> = KOKORO_VOICES.iter().map(|v| v.id).collect();
-        assert!(ids.iter().any(|id| id.starts_with("af_")), "missing American female voices");
-        assert!(ids.iter().any(|id| id.starts_with("am_")), "missing American male voices");
-        assert!(ids.iter().any(|id| id.starts_with("bf_")), "missing British female voices");
-        assert!(ids.iter().any(|id| id.starts_with("bm_")), "missing British male voices");
+    fn test_pocket_tts_voice_lookup_known() {
+        assert!(pocket_tts_voice("alba").is_some());
+        assert!(pocket_tts_voice("michael").is_some());
     }
 
     #[test]
-    fn test_kokoro_voices_lang_matches_prefix() {
-        for v in KOKORO_VOICES {
-            if v.id.starts_with('a') {
-                assert_eq!(v.lang, "en-us", "American voice {} should have lang en-us", v.id);
-            } else if v.id.starts_with('b') {
-                assert_eq!(v.lang, "en-gb", "British voice {} should have lang en-gb", v.id);
+    fn test_pocket_tts_voice_lookup_unknown_returns_none() {
+        assert!(pocket_tts_voice("not-a-real-voice").is_none());
+    }
+
+    // ── hf_cache_file_present ────────────────────────────────────────────────
+
+    #[test]
+    fn test_hf_cache_file_present_missing_returns_false() {
+        assert!(!hf_cache_file_present("hf://kyutai/tts-voices/does-not-exist.wav"));
+    }
+
+    #[test]
+    fn test_hf_cache_file_present_non_hf_path_checks_filesystem() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("clip.wav");
+        fs::write(&file, b"fake audio").unwrap();
+        assert!(hf_cache_file_present(file.to_str().unwrap()));
+    }
+
+    // ── is_pocket_tts_ready ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_is_pocket_tts_ready_false_for_unknown_voice() {
+        assert!(!is_pocket_tts_ready("not-a-real-voice", ""));
+    }
+
+    // ── custom voice directory ───────────────────────────────────────────────
+
+    #[test]
+    fn test_scan_custom_pocket_tts_voices_finds_wav_files() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("myvoice.wav"), b"fake audio").unwrap();
+        fs::write(dir.path().join("notes.txt"), b"ignore me").unwrap();
+        let found = scan_custom_pocket_tts_voices(dir.path().to_str().unwrap());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "myvoice");
+    }
+
+    #[test]
+    fn test_pocket_tts_voice_catalogue_merges_custom_voices() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("myvoice.wav"), b"fake audio").unwrap();
+        let catalogue = pocket_tts_voice_catalogue(dir.path().to_str().unwrap());
+        assert!(catalogue.iter().any(|v| v.id == "myvoice"));
+        assert!(catalogue.iter().any(|v| v.id == "alba"));
+    }
+
+    #[test]
+    fn test_pocket_tts_voice_catalogue_custom_overrides_builtin_label() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("alba.wav"), b"fake audio").unwrap();
+        let catalogue = pocket_tts_voice_catalogue(dir.path().to_str().unwrap());
+        let alba = catalogue.iter().find(|v| v.id == "alba").unwrap();
+        assert!(alba.label.contains("Custom"));
+    }
+
+    #[test]
+    fn test_resolve_pocket_tts_voice_clip_prefers_custom() {
+        let dir = tempdir().unwrap();
+        let clip = dir.path().join("alba.wav");
+        fs::write(&clip, b"fake audio").unwrap();
+        let resolved = resolve_pocket_tts_voice_clip("alba", dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(resolved, clip.to_string_lossy());
+    }
+
+    #[test]
+    fn test_resolve_pocket_tts_voice_clip_falls_back_to_builtin() {
+        let dir = tempdir().unwrap();
+        let resolved = resolve_pocket_tts_voice_clip("alba", dir.path().to_str().unwrap()).unwrap();
+        assert!(resolved.starts_with("hf://"));
+    }
+
+    #[test]
+    fn test_resolve_pocket_tts_voice_clip_unknown_returns_none() {
+        let dir = tempdir().unwrap();
+        assert!(resolve_pocket_tts_voice_clip("not-a-real-voice", dir.path().to_str().unwrap()).is_none());
+    }
+
+    // ── stop() must bump the generation counter ──────────────────────────────
+    //
+    // Regression test for a bug where the global stop-key hotkey called the raw
+    // `stop_current_playback()` free function instead of `TtsEngineHandle::stop()`.
+    // That stopped the Rodio sink but left the generation counter unchanged, so
+    // Pocket-TTS's frame-by-frame streaming loop (which only checks the counter
+    // between frames) kept appending new audio — and `Sink::append()` resets the
+    // sink's `stopped` flag, so playback silently resumed after the "stop".
+
+    #[test]
+    fn test_handle_stop_increments_generation_counter() {
+        let (tx, _rx) = bounded(32);
+        let generation = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let handle = TtsEngineHandle { tx, generation: generation.clone() };
+
+        assert_eq!(generation.load(std::sync::atomic::Ordering::SeqCst), 0);
+        handle.stop();
+        assert_eq!(generation.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_raw_stop_current_playback_does_not_bump_generation() {
+        // Documents the exact gap that caused the regression: calling the free
+        // function alone never advances any generation counter, since it has no
+        // knowledge of one. Callers MUST go through TtsEngineHandle::stop().
+        let generation = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        stop_current_playback();
+        assert_eq!(generation.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_streaming_loop_cancellation_check_breaks_on_stale_generation() {
+        // Mirrors the per-frame check inside speak_pocket_tts: once stop() bumps
+        // the live counter past the snapshotted generation, the loop must stop
+        // appending further frames instead of running to completion.
+        let generation_counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let snapshotted_generation = 0u32;
+
+        let mut frames_processed = 0;
+        for _ in 0..5 {
+            if generation_counter.load(std::sync::atomic::Ordering::SeqCst) != snapshotted_generation {
+                break;
+            }
+            frames_processed += 1;
+            if frames_processed == 2 {
+                // Simulate stop() firing mid-stream.
+                generation_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
         }
-    }
 
-    // ── Kokoro vocabulary ─────────────────────────────────────────────────────
-
-    #[test]
-    fn test_kokoro_vocab_size() {
-        assert_eq!(kokoro_vocab().len(), 114);
-    }
-
-    #[test]
-    fn test_kokoro_vocab_contains_key_ipa_symbols() {
-        let vocab = kokoro_vocab();
-        assert_eq!(vocab.get(&'ə'), Some(&83u32));  // schwa
-        assert_eq!(vocab.get(&'\u{02C8}'), Some(&156u32)); // primary stress ˈ
-        assert_eq!(vocab.get(&'\u{02D0}'), Some(&158u32)); // long vowel ː
-        assert_eq!(vocab.get(&' '), Some(&16u32));  // space
-        assert_eq!(vocab.get(&'h'), Some(&50u32));
-        assert_eq!(vocab.get(&'l'), Some(&54u32));
-    }
-
-    #[test]
-    fn test_kokoro_vocab_no_duplicate_ids() {
-        let mut seen = std::collections::HashSet::new();
-        for &(_, id) in KOKORO_VOCAB_PAIRS {
-            assert!(seen.insert(id), "duplicate token ID {id} in KOKORO_VOCAB_PAIRS");
-        }
-    }
-
-    #[test]
-    fn test_kokoro_vocab_no_duplicate_chars() {
-        let mut seen = std::collections::HashSet::new();
-        for &(ch, _) in KOKORO_VOCAB_PAIRS {
-            assert!(seen.insert(ch), "duplicate char {:?} in KOKORO_VOCAB_PAIRS", ch);
-        }
-    }
-
-    // ── kokoro_tokenize ───────────────────────────────────────────────────────
-
-    #[test]
-    fn test_kokoro_tokenize_empty_phonemes() {
-        let (tokens, num_inner) = kokoro_tokenize("");
-        assert_eq!(tokens, vec![0i64, 0i64]);
-        assert_eq!(num_inner, 0);
-    }
-
-    #[test]
-    fn test_kokoro_tokenize_all_unknown_chars() {
-        // Characters not in vocab map to nothing; only boundary 0s remain.
-        let (tokens, num_inner) = kokoro_tokenize("\x01\x02\x03");
-        assert_eq!(tokens, vec![0i64, 0i64]);
-        assert_eq!(num_inner, 0);
-    }
-
-    #[test]
-    fn test_kokoro_tokenize_known_phonemes() {
-        // "həl" → [0, 83(ə→wait, h=50), 83, 54, 0]
-        let (tokens, num_inner) = kokoro_tokenize("həl");
-        assert_eq!(tokens, vec![0, 50, 83, 54, 0]);
-        assert_eq!(num_inner, 3);
-    }
-
-    #[test]
-    fn test_kokoro_tokenize_produces_boundary_zeros() {
-        let (tokens, _) = kokoro_tokenize("h");
-        assert_eq!(tokens[0], 0, "first token should be boundary 0");
-        assert_eq!(*tokens.last().unwrap(), 0, "last token should be boundary 0");
-    }
-
-    #[test]
-    fn test_kokoro_tokenize_truncates_at_max() {
-        // Input of MAX_PHONEME_LENGTH+10 'h' chars should be capped.
-        let long_input = "h".repeat(MAX_PHONEME_LENGTH + 10);
-        let (tokens, num_inner) = kokoro_tokenize(&long_input);
-        assert_eq!(num_inner, MAX_PHONEME_LENGTH);
-        assert_eq!(tokens.len(), MAX_PHONEME_LENGTH + 2); // inner + 2 boundary
-    }
-
-    #[test]
-    fn test_kokoro_tokenize_hello_world() {
-        // Verify the known tokenisation of "həlˈoʊ wˈɜːld"
-        let phonemes = "həl\u{02C8}o\u{028A} w\u{02C8}\u{025C}\u{02D0}ld";
-        let (tokens, num_inner) = kokoro_tokenize(phonemes);
-        // Expected: [0, h=50, ə=83, l=54, ˈ=156, o=57, ʊ=135, ' '=16, w=65, ˈ=156, ɜ=87, ː=158, l=54, d=46, 0]
-        assert_eq!(tokens, vec![0, 50, 83, 54, 156, 57, 135, 16, 65, 156, 87, 158, 54, 46, 0]);
-        assert_eq!(num_inner, 13);
-    }
-
-    // ── kokoro_data_dir ───────────────────────────────────────────────────────
-
-    #[test]
-    fn test_kokoro_data_dir_empty_uses_default() {
-        let result = kokoro_data_dir("");
-        assert!(result.ends_with("voxctrl/kokoro"));
-    }
-
-    #[test]
-    fn test_kokoro_data_dir_custom_path() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        assert_eq!(kokoro_data_dir(path), dir.path());
-    }
-
-    #[test]
-    fn test_kokoro_data_dir_tilde_expands() {
-        let result = kokoro_data_dir("~/my-kokoro");
-        let home = dirs::home_dir().unwrap();
-        assert_eq!(result, home.join("my-kokoro"));
-    }
-
-    // ── kokoro_model_filename ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_kokoro_model_filename_f32() {
-        assert_eq!(kokoro_model_filename("f32"), "kokoro-v1.0.onnx");
-    }
-
-    #[test]
-    fn test_kokoro_model_filename_fp16() {
-        assert_eq!(kokoro_model_filename("fp16"), "kokoro-v1.0.fp16.onnx");
-    }
-
-    #[test]
-    fn test_kokoro_model_filename_int8() {
-        assert_eq!(kokoro_model_filename("int8"), "kokoro-v1.0.int8.onnx");
-    }
-
-    #[test]
-    fn test_kokoro_model_filename_unknown_falls_back_to_f32() {
-        assert_eq!(kokoro_model_filename("unknown"), "kokoro-v1.0.onnx");
-    }
-
-    // ── is_kokoro_ready ───────────────────────────────────────────────────────
-
-    #[test]
-    fn test_is_kokoro_ready_false_when_files_missing() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        assert!(!is_kokoro_ready("fp16", path));
-    }
-
-    #[test]
-    fn test_is_kokoro_ready_true_when_both_files_present() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        fs::write(dir.path().join("kokoro-v1.0.fp16.onnx"), b"fake model").unwrap();
-        let voices_dir = dir.path().join("voices");
-        fs::create_dir_all(&voices_dir).unwrap();
-        fs::write(voices_dir.join("af_heart.npy"), b"fake voices").unwrap();
-        assert!(is_kokoro_ready("fp16", path));
-    }
-
-    #[test]
-    fn test_is_kokoro_ready_false_when_only_model_present() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        fs::write(dir.path().join("kokoro-v1.0.onnx"), b"fake model").unwrap();
-        assert!(!is_kokoro_ready("f32", path));
-    }
-
-    #[test]
-    fn test_is_kokoro_ready_false_when_only_voices_present() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        let voices_dir = dir.path().join("voices");
-        fs::create_dir_all(&voices_dir).unwrap();
-        fs::write(voices_dir.join("af_heart.npy"), b"fake voices").unwrap();
-        assert!(!is_kokoro_ready("f32", path));
-    }
-
-    #[test]
-    fn test_is_kokoro_ready_checks_correct_model_for_quality() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().to_str().unwrap();
-        let voices_dir = dir.path().join("voices");
-        fs::create_dir_all(&voices_dir).unwrap();
-        fs::write(voices_dir.join("af_heart.npy"), b"fake").unwrap();
-        fs::write(dir.path().join("kokoro-v1.0.fp16.onnx"), b"fake").unwrap();
-        assert!(is_kokoro_ready("fp16", path));
-        assert!(!is_kokoro_ready("f32", path));
-        assert!(!is_kokoro_ready("int8", path));
-    }
-
-    // ── load_voice_embedding (NPY) ─────────────────────────────────────
-
-    #[test]
-    fn test_load_voice_embedding_invalid_magic_returns_error() {
-        let dir = tempdir().unwrap();
-        let voices_dir = dir.path().join("voices");
-        fs::create_dir_all(&voices_dir).unwrap();
-        let bad_npy = b"NOTANPY\x01\x00\x00";
-        fs::write(voices_dir.join("af_heart_bad.npy"), bad_npy).unwrap();
-
-        let result = load_voice_embedding(&voices_dir, "af_heart_bad", 0);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_load_voice_embedding_missing_voice_returns_error() {
-        let dir = tempdir().unwrap();
-        let voices_dir = dir.path().join("voices");
-        fs::create_dir_all(&voices_dir).unwrap();
-        write_npy_file(&voices_dir, "af_heart", 10, 256);
-
-        // Requesting a voice not in the directory should error.
-        let result = load_voice_embedding(&voices_dir, "af_bella", 0);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_load_voice_embedding_returns_256_floats() {
-        let dir = tempdir().unwrap();
-        let voices_dir = dir.path().join("voices");
-        fs::create_dir_all(&voices_dir).unwrap();
-        write_npy_file(&voices_dir, "af_heart", 20, 256);
-
-        let result = load_voice_embedding(&voices_dir, "af_heart", 5).unwrap();
-        assert_eq!(result.len(), 256);
-    }
-
-    #[test]
-    fn test_load_voice_embedding_row_indexing() {
-        let dir = tempdir().unwrap();
-        let voices_dir = dir.path().join("voices");
-        fs::create_dir_all(&voices_dir).unwrap();
-        write_npy_file(&voices_dir, "af_heart", 10, 256);
-
-        let row0 = load_voice_embedding(&voices_dir, "af_heart", 0).unwrap();
-        let row1 = load_voice_embedding(&voices_dir, "af_heart", 1).unwrap();
-        // Row 0 starts at float 0.0; row 1 starts at float 256.0
-        assert!((row0[0] - 0.0f32).abs() < f32::EPSILON);
-        assert!((row1[0] - 256.0f32).abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_load_voice_embedding_clamps_out_of_bounds_row() {
-        let dir = tempdir().unwrap();
-        let voices_dir = dir.path().join("voices");
-        fs::create_dir_all(&voices_dir).unwrap();
-        write_npy_file(&voices_dir, "af_heart", 5, 256);
-
-        // Row 9999 should clamp to last valid row without panicking.
-        let result = load_voice_embedding(&voices_dir, "af_heart", 9999);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 256);
+        assert_eq!(frames_processed, 2, "loop must abandon remaining frames after stop()");
     }
 }
 

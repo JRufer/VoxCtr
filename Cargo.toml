@@ -78,10 +78,13 @@ chrono = { version = "0.4", features = ["serde"] }
 # Channel utilities
 crossbeam-channel = "0.5"
 
-# ONNX inference (Kokoro TTS)
+# ONNX inference (optional Moonshine STT backend)
 ort = { version = "2.0.0-rc.12", features = ["load-dynamic"] }
 ndarray = "0.16"
-zip = "2"
+
+# Pocket-TTS neural TTS engine
+pocket-tts = "0.6"
+hf-hub = "0.4"
 
 # UI framework for native overlay
 slint = { version = "1.8.0" }

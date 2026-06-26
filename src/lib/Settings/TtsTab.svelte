@@ -136,9 +136,9 @@
     if (cfg.tts.engine === "piper") {
       engineName = "Piper";
       voice = cfg.tts.voice;
-    } else if (cfg.tts.engine === "kokoro") {
-      engineName = "Kokoro";
-      voice = cfg.tts.kokoro.voice;
+    } else if (cfg.tts.engine === "pocket_tts") {
+      engineName = "Pocket-TTS";
+      voice = cfg.tts.pocket_tts.voice;
     } else if (cfg.tts.engine === "espeak") {
       engineName = "eSpeak-NG";
       voice = null;
@@ -169,46 +169,48 @@
     if (cfg.tts.engine === "piper") {
       return checking || downloading || !downloadedMap[cfg.tts.voice];
     }
-    if (cfg.tts.engine === "kokoro") {
-      return kokoroChecking || kokoroDownloading || !kokoroReady;
+    if (cfg.tts.engine === "pocket_tts") {
+      return pocketTtsChecking || pocketTtsDownloading || !pocketTtsReady;
     }
     return false;
   }
 
-  // ── Kokoro ─────────────────────────────────────────────────────────────────
+  // ── Pocket-TTS ─────────────────────────────────────────────────────────────
 
-  const KOKORO_VOICES = [
-    { id: "af_heart",    label: "Heart",    group: "American Female" },
-    { id: "af_bella",    label: "Bella",    group: "American Female" },
-    { id: "af_sarah",    label: "Sarah",    group: "American Female" },
-    { id: "af_nicole",   label: "Nicole",   group: "American Female" },
-    { id: "af_sky",      label: "Sky",      group: "American Female" },
-    { id: "af_alloy",    label: "Alloy",    group: "American Female" },
-    { id: "af_aoede",    label: "Aoede",    group: "American Female" },
-    { id: "af_jessica",  label: "Jessica",  group: "American Female" },
-    { id: "af_kore",     label: "Kore",     group: "American Female" },
-    { id: "af_nova",     label: "Nova",     group: "American Female" },
-    { id: "af_river",    label: "River",    group: "American Female" },
-    { id: "am_adam",     label: "Adam",     group: "American Male" },
-    { id: "am_michael",  label: "Michael",  group: "American Male" },
-    { id: "am_puck",     label: "Puck",     group: "American Male" },
-    { id: "am_echo",     label: "Echo",     group: "American Male" },
-    { id: "am_eric",     label: "Eric",     group: "American Male" },
-    { id: "am_fenrir",   label: "Fenrir",   group: "American Male" },
-    { id: "am_liam",     label: "Liam",     group: "American Male" },
-    { id: "am_onyx",     label: "Onyx",     group: "American Male" },
-    { id: "am_santa",    label: "Santa",    group: "American Male" },
-    { id: "bf_emma",     label: "Emma",     group: "British Female" },
-    { id: "bf_alice",    label: "Alice",    group: "British Female" },
-    { id: "bf_isabella", label: "Isabella", group: "British Female" },
-    { id: "bf_lily",     label: "Lily",     group: "British Female" },
-    { id: "bm_george",   label: "George",   group: "British Male" },
-    { id: "bm_lewis",    label: "Lewis",    group: "British Male" },
-    { id: "bm_daniel",   label: "Daniel",   group: "British Male" },
-    { id: "bm_fable",    label: "Fable",    group: "British Male" },
-  ];
+  let pocketTtsVoices = $state<{ id: string; label: string }[]>([]);
+  let pocketTtsVoiceDirError = $state<string | null>(null);
 
-  const KOKORO_GROUPS = [...new Set(KOKORO_VOICES.map(v => v.group))];
+  async function loadPocketTtsVoices() {
+    try {
+      pocketTtsVoices = await invoke<{ id: string; label: string }[]>("list_pocket_tts_voices", {
+        voiceDir: cfg.tts.pocket_tts.voice_dir,
+      });
+    } catch (e) {
+      console.error("list_pocket_tts_voices:", e);
+    }
+  }
+
+  async function validatePocketTtsVoiceDir() {
+    const path = cfg.tts.pocket_tts.voice_dir;
+    if (!path) {
+      pocketTtsVoiceDirError = null;
+      await loadPocketTtsVoices();
+      return;
+    }
+    const exists = await invoke<boolean>("check_directory_exists", { path });
+    pocketTtsVoiceDirError = exists ? null : "This folder does not exist. Please create it first or leave blank for the default location.";
+    if (!pocketTtsVoiceDirError) {
+      await loadPocketTtsVoices();
+    }
+  }
+
+  function onPocketTtsVoiceDirChange() {
+    markDirty();
+  }
+
+  function onPocketTtsVoiceDirKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+  }
 
   let piperVoiceOptions = $derived(
     PIPER_VOICES.map(v => ({
@@ -217,86 +219,71 @@
     }))
   );
 
-  let kokoroVoiceOptions = $derived(
-    KOKORO_VOICES.map(v => ({
+  let pocketTtsVoiceOptions = $derived(
+    pocketTtsVoices.map(v => ({
       value: v.id,
-      label: `${v.group} - ${v.label}`
+      label: v.label
     }))
   );
 
   const engineOptions = [
-    { value: "kokoro", label: "Kokoro (neural, natural voices)" },
+    { value: "pocket_tts", label: "Pocket-TTS (neural, voice cloning)" },
     { value: "piper", label: "Piper (neural, high quality)" },
     { value: "espeak", label: "eSpeak-NG (lightweight)" }
   ];
 
-  const kokoroQualityOptions = [
-    { value: "f32", label: "f32 (Best Quality, 310 MB)" },
-    { value: "fp16", label: "fp16 (Balanced, 169 MB)" }
-  ];
+  let pocketTtsReady = $state(false);
+  let pocketTtsChecking = $state(false);
+  let pocketTtsDownloading = $state(false);
 
-  let kokoroReady = $state(false);
-  let kokoroChecking = $state(false);
-  let kokoroDownloading = $state(false);
-  let kokoroDirError = $state<string | null>(null);
-
-  async function checkKokoroReady() {
-    kokoroChecking = true;
+  async function checkPocketTtsReady() {
+    pocketTtsChecking = true;
     try {
-      kokoroReady = await invoke<boolean>("check_kokoro_ready", {
-        quality: cfg.tts.kokoro.quality,
-        dataDir: cfg.tts.kokoro.data_dir,
+      pocketTtsReady = await invoke<boolean>("check_pocket_tts_ready", {
+        voice: cfg.tts.pocket_tts.voice,
+        voiceDir: cfg.tts.pocket_tts.voice_dir,
       });
     } catch (e) {
-      console.error("check_kokoro_ready:", e);
-      kokoroReady = false;
+      console.error("check_pocket_tts_ready:", e);
+      pocketTtsReady = false;
     } finally {
-      kokoroChecking = false;
+      pocketTtsChecking = false;
     }
   }
 
-  async function downloadKokoro() {
-    if (kokoroDownloading) return;
-    kokoroDownloading = true;
+  async function downloadPocketTts() {
+    if (pocketTtsDownloading) return;
+    pocketTtsDownloading = true;
     try {
-      await invoke("download_kokoro", {
-        quality: cfg.tts.kokoro.quality,
-        dataDir: cfg.tts.kokoro.data_dir,
+      await invoke("download_pocket_tts", {
+        voice: cfg.tts.pocket_tts.voice,
+        voiceDir: cfg.tts.pocket_tts.voice_dir,
+        hfToken: cfg.tts.pocket_tts.hf_token,
       });
-      kokoroReady = true;
+      pocketTtsReady = true;
     } catch (e) {
-      alert(`Failed to download Kokoro assets: ${e}`);
+      alert(`Failed to download Pocket-TTS assets: ${e}`);
     } finally {
-      kokoroDownloading = false;
+      pocketTtsDownloading = false;
     }
   }
 
-  function onKokoroDirChange() { markDirty(); }
-
-  async function validateKokoroDir() {
-    const path = cfg.tts.kokoro.data_dir;
-    if (!path) {
-      kokoroDirError = null;
-      return;
-    }
-    const exists = await invoke<boolean>("check_directory_exists", { path });
-    kokoroDirError = exists ? null : "This folder does not exist. Please create it first or leave blank for the default location.";
-    if (!kokoroDirError) {
-      await checkKokoroReady();
-    }
+  function onPocketTtsVoiceChanged() {
+    markDirty();
+    pocketTtsReady = false;
+    checkPocketTtsReady();
   }
+
+  function onPocketTtsTokenChanged() { markDirty(); }
 
   async function onEngineChanged() {
     markDirty();
     engineSwitching = true;
     try {
-      if (cfg.tts.engine === "kokoro") {
-        kokoroReady = false;
-        if (cfg.tts.kokoro.data_dir) {
-          await validateKokoroDir();
-        } else {
-          await checkKokoroReady();
-        }
+      if (cfg.tts.engine === "pocket_tts") {
+        pocketTtsReady = false;
+        await loadPocketTtsVoices();
+        await checkPocketTtsReady();
       } else if (cfg.tts.engine === "piper") {
         if (cfg.tts.voice_dir) {
           await validateVoiceDir();
@@ -319,10 +306,9 @@
       checkAllVoicesDownloaded();
     }
 
-    if (cfg.tts.kokoro.data_dir) {
-      validateKokoroDir();
-    } else if (cfg.tts.engine === "kokoro") {
-      checkKokoroReady();
+    if (cfg.tts.engine === "pocket_tts") {
+      await loadPocketTtsVoices();
+      checkPocketTtsReady();
     }
 
     unlistenTtsStart = await listen<void>("tts-playback-start", () => {
@@ -428,7 +414,7 @@
       <span>Engine</span>
       <CustomSelect bind:value={cfg.tts.engine} options={engineOptions} onchange={onEngineChanged} />
     </label>
-    {#if cfg.tts.engine === "kokoro" || cfg.tts.engine === "piper"}
+    {#if cfg.tts.engine === "piper"}
     <label class="field">
       <span>GPU Acceleration</span>
       <input type="checkbox" bind:checked={cfg.tts.gpu} onchange={markDirty} />
@@ -503,54 +489,66 @@
   </div>
   {/if}
 
-  <!-- ── Kokoro section ─────────────────────────────────────────────────── -->
-  {#if cfg.tts.engine === "kokoro"}
+  <!-- ── Pocket-TTS section ─────────────────────────────────────────────── -->
+  {#if cfg.tts.engine === "pocket_tts"}
   <div class="field-group">
-    <h3>Kokoro Voice</h3>
+    <h3>Pocket-TTS Voice</h3>
     <label class="field col">
       <span class="field-title">Voice</span>
-      <CustomSelect bind:value={cfg.tts.kokoro.voice} options={kokoroVoiceOptions} onchange={markDirty} />
+      <CustomSelect bind:value={cfg.tts.pocket_tts.voice} options={pocketTtsVoiceOptions} onchange={onPocketTtsVoiceChanged} />
     </label>
-
-    <label class="field col">
-      <span class="field-title">Model Quality</span>
-      <CustomSelect bind:value={cfg.tts.kokoro.quality} options={kokoroQualityOptions} onchange={() => { markDirty(); checkKokoroReady(); }} />
-    </label>
-
-
 
     <div class="voice-status-container">
-      {#if kokoroChecking}
+      {#if pocketTtsChecking}
         <span class="status-checking">⏳ Checking local model files...</span>
-      {:else if kokoroDownloading}
-        <span class="status-downloading">⏳ Downloading Kokoro model &amp; voices (may take a few minutes)...</span>
+      {:else if pocketTtsDownloading}
+        <span class="status-downloading">⏳ Downloading Pocket-TTS model &amp; voice clip (may take a few minutes)...</span>
       {:else}
         <div class="status-missing-wrapper">
-          <span class={kokoroReady ? "status-downloaded" : "status-missing"}>
-            {kokoroReady ? "✔ Model and voices downloaded and ready" : "❌ Model files missing"}
+          <span class={pocketTtsReady ? "status-downloaded" : "status-missing"}>
+            {pocketTtsReady ? "✔ Model and voice clip downloaded and ready" : "❌ Model files missing"}
           </span>
-          <button class="btn-download" onclick={downloadKokoro} disabled={kokoroReady || kokoroDownloading}>
-            {kokoroReady ? "Downloaded" : "📥 Download"}
+          <button class="btn-download" onclick={downloadPocketTts} disabled={pocketTtsReady || pocketTtsDownloading}>
+            {pocketTtsReady ? "Downloaded" : "📥 Download"}
           </button>
         </div>
       {/if}
     </div>
 
     <div class="field">
-      <span>Voice directory (leave blank for default)</span>
+      <span>HuggingFace access token</span>
+      <input
+        type="password"
+        bind:value={cfg.tts.pocket_tts.hf_token}
+        onchange={onPocketTtsTokenChanged}
+      />
+    </div>
+    <p class="hint">
+      Pocket-TTS model weights are hosted on a gated HuggingFace repo. Create a token at
+      <code>huggingface.co/settings/tokens</code> and accept the license at
+      <code>huggingface.co/kyutai/pocket-tts</code> before downloading.
+    </p>
+
+    <div class="field">
+      <span>Custom voice directory (leave blank for default)</span>
       <input
         type="text"
-        bind:value={cfg.tts.kokoro.data_dir}
-        onchange={onKokoroDirChange}
-        onblur={validateKokoroDir}
-        onkeydown={onVoiceDirKeydown}
-        class:field-input-error={!!kokoroDirError}
+        bind:value={cfg.tts.pocket_tts.voice_dir}
+        onchange={onPocketTtsVoiceDirChange}
+        onblur={validatePocketTtsVoiceDir}
+        onkeydown={onPocketTtsVoiceDirKeydown}
+        class:field-input-error={!!pocketTtsVoiceDirError}
       />
-      {#if kokoroDirError}
-        <p class="field-error-msg">{kokoroDirError}</p>
+      {#if pocketTtsVoiceDirError}
+        <p class="field-error-msg">{pocketTtsVoiceDirError}</p>
       {/if}
     </div>
-    <p class="hint">Default voice directory: <code>~/.local/share/voxctrl/kokoro/</code></p>
+    <p class="hint">
+      Drop a <code>.wav</code> reference clip into this folder to add it to the voice list —
+      the filename (without extension) becomes the voice's id, e.g. <code>narrator.wav</code> adds
+      "Narrator (Custom)". Naming a clip after a built-in voice (e.g. <code>alba.wav</code>) replaces
+      that voice's reference clip. Default: <code>~/.local/share/voxctrl/pocket-tts-voices/</code>
+    </p>
   </div>
   {/if}
 

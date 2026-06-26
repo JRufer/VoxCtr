@@ -73,24 +73,23 @@ export interface OpenAiConfig {
   timeout_secs: number;
 }
 
-export interface KokoroConfig {
+export interface PocketTtsConfig {
   voice: string;
-  quality: "f32" | "fp16";
-  speed: number;
   prewarm: boolean;
-  data_dir: string;
+  hf_token: string | null;
+  voice_dir: string;
 }
 
 export interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "kokoro";
+  engine: "piper" | "espeak" | "pocket_tts";
   voice: string;
   voice_dir: string;
   stop_key: string[];
   response_overlay: boolean;
   speed: number;
   gpu: boolean;
-  kokoro: KokoroConfig;
+  pocket_tts: PocketTtsConfig;
 }
 
 export interface McpConfig {
@@ -163,12 +162,11 @@ const defaultConfig: AppConfig = {
     response_overlay: true,
     speed: 1.0,
     gpu: false,
-    kokoro: {
-      voice: "af_heart",
-      quality: "fp16",
-      speed: 1.0,
+    pocket_tts: {
+      voice: "alba",
       prewarm: false,
-      data_dir: "",
+      hf_token: null,
+      voice_dir: "",
     },
   },
   mcp: { server_enabled: false, record_timeout: 15.0, visual_feedback: true },

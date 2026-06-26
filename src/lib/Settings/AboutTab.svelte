@@ -66,12 +66,12 @@
         <span class="credit-license">MIT License</span>
       </div>
       <div class="credit-item">
-        <a class="credit-name-link" href="https://github.com/hexgrad/kokoro" target="_blank">Kokoro TTS</a>
-        <span class="credit-license">Apache 2.0</span>
+        <a class="credit-name-link" href="https://github.com/kyutai-labs/pocket-tts" target="_blank">Pocket-TTS (Kyutai Labs)</a>
+        <span class="credit-license">MIT / Apache 2.0</span>
       </div>
       <div class="credit-item">
-        <a class="credit-name-link" href="https://github.com/pykeio/ort" target="_blank">ONNX Runtime (ort)</a>
-        <span class="credit-license">MIT License</span>
+        <a class="credit-name-link" href="https://github.com/huggingface/candle" target="_blank">Candle</a>
+        <span class="credit-license">MIT / Apache 2.0</span>
       </div>
       <div class="credit-item">
         <a class="credit-name-link" href="https://github.com/trossora/whisper-rs" target="_blank">whisper-rs</a>

@@ -185,6 +185,42 @@ await invoke('download_voice', { voiceName: 'en-us-ryan-high' });
 
 ---
 
+#### `list_pocket_tts_voices(voiceDir: string) → { id: string; label: string }[]`
+Returns the built-in Pocket-TTS voice catalogue merged with any custom `.wav` clips found in `voiceDir` (`""` = default directory). A custom clip named after a built-in voice id overrides that entry's label/source instead of adding a duplicate.
+
+```typescript
+const voices = await invoke<{ id: string; label: string }[]>('list_pocket_tts_voices', {
+  voiceDir: '',
+});
+```
+
+---
+
+#### `check_pocket_tts_ready(voice: string, voiceDir: string) → boolean`
+Returns whether the model weights, tokenizer, and the selected voice's reference clip are all present locally (no network access).
+
+```typescript
+const ready = await invoke<boolean>('check_pocket_tts_ready', {
+  voice: 'alba',
+  voiceDir: '',
+});
+```
+
+---
+
+#### `download_pocket_tts(voice: string, voiceDir: string, hfToken: string | null) → void`
+Downloads the gated model weights, tokenizer, and the selected voice's reference clip. For a custom voice resolved from `voiceDir`, the clip is already on disk so only the model weights/tokenizer are fetched.
+
+```typescript
+await invoke('download_pocket_tts', {
+  voice: 'alba',
+  voiceDir: '',
+  hfToken: '<your HuggingFace token>',
+});
+```
+
+---
+
 ### Speech Recognition Models
 
 #### `check_model_downloaded(modelSize: string) → boolean`
@@ -402,24 +438,23 @@ interface OpenAiConfig {
   timeout_secs: number;
 }
 
-interface KokoroConfig {
+interface PocketTtsConfig {
   voice: string;
-  quality: string;
-  speed: number;
   prewarm: boolean;
-  data_dir: string;
+  hf_token: string | null;
+  voice_dir: string;       // custom .wav voice clips; empty = default directory
 }
 
 interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "kokoro";
+  engine: "piper" | "espeak" | "pocket_tts";
   voice: string;
   voice_dir: string;
   stop_key: string[];       // singular field name, plural value
   response_overlay: boolean;
-  speed: number;
-  gpu: boolean;
-  kokoro: KokoroConfig;
+  speed: number;            // not used by pocket_tts
+  gpu: boolean;             // only applies to piper
+  pocket_tts: PocketTtsConfig;
 }
 
 interface McpConfig {
