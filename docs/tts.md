@@ -126,7 +126,7 @@ await invoke('download_pocket_tts', {
 After synthesis, audio is played using `rodio` (cross-platform):
 
 - **Piper** produces raw 16-bit signed LE PCM; rodio plays it directly via `SamplesBuffer`.
-- **Pocket-TTS** produces a `candle::Tensor` of audio samples; `pocket_tts::audio::pcm_i16_le_bytes()` converts it to i16 PCM, played via `SamplesBuffer` at 24 kHz.
+- **Pocket-TTS** is generated and played frame-by-frame via `TTSModel::generate_stream()` rather than waiting for the whole utterance: each Mimi audio frame (`candle::Tensor`) is converted to i16 PCM with `pocket_tts::audio::pcm_i16_le_bytes()` and appended to the sink as soon as it's ready, played via `SamplesBuffer` at 24 kHz. This overlaps playback of earlier frames with generation of later ones, cutting perceived latency from "time to generate the whole sentence" down to roughly "time to generate the first frame." `stop()` is checked between frames, so playback can be interrupted mid-generation instead of only after the whole utterance finishes.
 
 The TTS engine queues requests in a bounded channel (capacity 32). Utterances play sequentially — subsequent calls are queued and played in order without overlapping.
 

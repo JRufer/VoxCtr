@@ -367,6 +367,8 @@ impl TtsEngineWorker {
                             &mut pocket_tts_voice_states,
                             &self.on_playback_start,
                             &sink,
+                            &self.generation,
+                            generation,
                         ),
                     };
 
@@ -481,6 +483,8 @@ fn speak_pocket_tts(
     voice_states: &mut HashMap<String, pocket_tts::ModelState>,
     on_playback_start: &Option<PlaybackCallback>,
     sink: &rodio::Sink,
+    generation_counter: &Arc<std::sync::atomic::AtomicU32>,
+    generation: u32,
 ) -> Result<()> {
     let is_prewarm = u.source_label.as_deref() == Some("prewarm");
     let voice = u.voice.as_deref().unwrap_or(&config.pocket_tts.voice);
@@ -510,20 +514,42 @@ fn speak_pocket_tts(
     }
     let voice_state = voice_states.get(voice).unwrap();
 
-    let audio = model
-        .generate(&u.text, voice_state)
-        .context("pocket-tts generate")?;
-
     if is_prewarm {
+        // Run generation once to warm the model and caches; nothing is played.
+        let _ = model.generate(&u.text, voice_state).context("pocket-tts generate")?;
         return Ok(());
     }
 
-    if let Some(ref cb) = on_playback_start {
-        cb();
-    }
+    // Stream audio frame-by-frame instead of waiting for the whole utterance to
+    // finish generating: each frame is queued onto the sink as soon as it's ready,
+    // so playback of the first frame overlaps with generation of the rest. This cuts
+    // perceived latency from "time to generate the whole sentence" down to roughly
+    // "time to generate the first frame".
+    let mut callback_fired = false;
+    for chunk in model.generate_stream(&u.text, voice_state) {
+        if generation_counter.load(std::sync::atomic::Ordering::SeqCst) != generation {
+            break; // stop() was called — abandon the rest of the generation
+        }
+        let chunk = chunk.context("pocket-tts generate (stream)")?;
+        let chunk = chunk.squeeze(0).context("squeeze pocket-tts audio chunk")?;
+        let bytes =
+            pocket_tts::audio::pcm_i16_le_bytes(&chunk).context("encode pocket-tts audio chunk")?;
 
-    let bytes = pocket_tts::audio::pcm_i16_le_bytes(&audio).context("encode pocket-tts audio")?;
-    play_raw_audio(sink, &bytes, POCKET_TTS_SAMPLE_RATE)
+        if !callback_fired {
+            callback_fired = true;
+            if let Some(ref cb) = on_playback_start {
+                cb();
+            }
+        }
+
+        let samples: Vec<i16> = bytes
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        sink.append(rodio::buffer::SamplesBuffer::new(1, POCKET_TTS_SAMPLE_RATE, samples));
+    }
+    sink.sleep_until_end();
+    Ok(())
 }
 
 // ── Audio playback ────────────────────────────────────────────────────────────
