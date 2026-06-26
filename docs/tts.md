@@ -82,6 +82,15 @@ VoxCtrl bundles a small catalogue of reference voice clips, each pulled from the
 | `charles` | Charles (Male) |
 | `michael` | Michael (Male) |
 
+### Custom Pocket-TTS Voices
+
+Drop a `.wav` reference clip into the configured `pocket_tts.voice_dir` (default `~/.local/share/voxctrl/pocket-tts-voices/`) to add it to the voice list — no re-encoding or extra metadata needed:
+
+- The filename (without extension) becomes the voice's id, e.g. `narrator.wav` adds a voice listed as "Narrator (Custom)".
+- Naming a clip after a built-in voice (e.g. `alba.wav`) overrides that voice's bundled reference clip instead of adding a new entry.
+- Any sample rate works — `TTSModel::get_voice_state()` resamples to the model's rate automatically.
+- Custom clips are read directly from disk; they don't go through the HuggingFace cache or require `download_pocket_tts`.
+
 ---
 
 ## Voice Packs
@@ -110,12 +119,20 @@ Pocket-TTS downloads the model weights (from the gated `kyutai/pocket-tts` repo)
 // Check if model weights, tokenizer, and the selected voice's reference clip are cached
 const ready = await invoke<boolean>('check_pocket_tts_ready', {
   voice: 'alba',
+  voiceDir: '',           // '' = default custom-voice directory
 });
 
 // Download model weights, tokenizer, and the reference clip (requires hf_token)
+// No-op for custom voices resolved from voiceDir — they're already on disk.
 await invoke('download_pocket_tts', {
   voice: 'alba',
+  voiceDir: '',
   hfToken: '<your HuggingFace token>',
+});
+
+// List the merged catalogue (built-ins + any .wav files found in voiceDir)
+const voices = await invoke<{ id: string; label: string }[]>('list_pocket_tts_voices', {
+  voiceDir: '',
 });
 ```
 
@@ -202,6 +219,7 @@ Under `tts` in `config.json`:
 | `pocket_tts.voice` | string | `"alba"` | Default Pocket-TTS voice ID: `"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"` |
 | `pocket_tts.prewarm` | bool | `false` | Pre-warm model on startup for faster first synthesis |
 | `pocket_tts.hf_token` | string or null | `null` | HuggingFace token used to download the gated model weights |
+| `pocket_tts.voice_dir` | string | `""` | Directory scanned for custom `.wav` voice clips; empty = `~/.local/share/voxctrl/pocket-tts-voices/` |
 
 **Example Pocket-TTS config:**
 
@@ -217,7 +235,8 @@ Under `tts` in `config.json`:
   "pocket_tts": {
     "voice": "alba",
     "prewarm": true,
-    "hf_token": "hf_..."
+    "hf_token": "hf_...",
+    "voice_dir": ""
   }
 }
 ```

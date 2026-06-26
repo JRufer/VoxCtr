@@ -80,7 +80,8 @@ Full schema with defaults:
     "pocket_tts": {
       "voice": "alba",
       "prewarm": false,
-      "hf_token": null
+      "hf_token": null,
+      "voice_dir": ""
     }
   },
   "mcp": {
@@ -226,9 +227,10 @@ license on HuggingFace and supply a personal access token via `hf_token`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `voice` | string | `"alba"` | Bundled reference voice ID: `"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"` |
+| `voice` | string | `"alba"` | Bundled reference voice ID (`"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"`), or the filename stem of a custom clip in `voice_dir` |
 | `prewarm` | bool | `false` | Pre-warm model on startup so first speech is instantaneous |
 | `hf_token` | string or null | `null` | HuggingFace access token used to download the gated model weights |
+| `voice_dir` | string | `""` | Directory scanned for custom `.wav` voice clips; empty = `~/.local/share/voxctrl/pocket-tts-voices/`. Drop a `<id>.wav` file in to add it to the voice list — naming it after a built-in voice (e.g. `alba.wav`) overrides that voice's clip. Supports `~` expansion. |
 
 
 ### `mcp` section

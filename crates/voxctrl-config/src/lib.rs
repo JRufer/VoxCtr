@@ -301,7 +301,8 @@ fn default_tts_speed() -> f32 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PocketTtsConfig {
-    /// Bundled reference voice name, e.g. "alba", "anna", "vera", "charles", "michael"
+    /// Bundled reference voice name, e.g. "alba", "anna", "vera", "charles", "michael",
+    /// or the filename stem of a custom clip dropped into `voice_dir`.
     #[serde(default = "default_pocket_tts_voice")]
     pub voice: String,
     /// Pre-warm model on startup so the first synthesis is instant
@@ -310,6 +311,10 @@ pub struct PocketTtsConfig {
     /// HuggingFace access token (required to download the gated `kyutai/pocket-tts` weights)
     #[serde(default)]
     pub hf_token: Option<String>,
+    /// Directory scanned for custom voice clips (`<id>.wav`). Empty = platform default
+    /// (`~/.local/share/voxctrl/pocket-tts-voices/`).
+    #[serde(default)]
+    pub voice_dir: String,
 }
 
 impl Default for PocketTtsConfig {
@@ -318,6 +323,7 @@ impl Default for PocketTtsConfig {
             voice: default_pocket_tts_voice(),
             prewarm: false,
             hf_token: None,
+            voice_dir: String::new(),
         }
     }
 }

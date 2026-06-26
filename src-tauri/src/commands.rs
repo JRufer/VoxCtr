@@ -339,15 +339,20 @@ pub async fn download_voice(voice_name: String, voice_dir: String) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn check_pocket_tts_ready(voice: String) -> Result<bool, String> {
-    Ok(voxctrl_tts::is_pocket_tts_ready(&voice))
+pub async fn check_pocket_tts_ready(voice: String, voice_dir: String) -> Result<bool, String> {
+    Ok(voxctrl_tts::is_pocket_tts_ready(&voice, &voice_dir))
 }
 
 #[tauri::command]
-pub async fn download_pocket_tts(voice: String, hf_token: Option<String>) -> Result<(), String> {
-    voxctrl_tts::download_pocket_tts_assets(&voice, hf_token)
+pub async fn download_pocket_tts(voice: String, voice_dir: String, hf_token: Option<String>) -> Result<(), String> {
+    voxctrl_tts::download_pocket_tts_assets(&voice, &voice_dir, hf_token)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_pocket_tts_voices(voice_dir: String) -> Result<Vec<voxctrl_tts::PocketTtsVoiceOption>, String> {
+    Ok(voxctrl_tts::pocket_tts_voice_catalogue(&voice_dir))
 }
 
 #[tauri::command]

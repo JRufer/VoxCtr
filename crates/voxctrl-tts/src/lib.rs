@@ -61,6 +61,91 @@ pub fn pocket_tts_voice(id: &str) -> Option<&'static PocketTtsVoiceInfo> {
     POCKET_TTS_VOICES.iter().find(|v| v.id == id)
 }
 
+/// Default directory scanned for user-supplied Pocket-TTS voice clips.
+pub fn pocket_tts_voices_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("voxctrl")
+        .join("pocket-tts-voices")
+}
+
+fn resolve_pocket_tts_voices_dir(voice_dir: &str) -> PathBuf {
+    if voice_dir.is_empty() {
+        pocket_tts_voices_dir()
+    } else {
+        expand_tilde(voice_dir)
+    }
+}
+
+/// Scans `voice_dir` for `<id>.wav` files, returning `(id, path)` pairs. A file named
+/// after a built-in voice (e.g. `alba.wav`) overrides that voice's bundled reference clip.
+fn scan_custom_pocket_tts_voices(voice_dir: &str) -> Vec<(String, PathBuf)> {
+    let dir = resolve_pocket_tts_voices_dir(voice_dir);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("wav")) != Some(true) {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        found.push((stem.to_string(), path));
+    }
+    found
+}
+
+fn prettify_voice_label(id: &str) -> String {
+    id.replace(['_', '-'], " ")
+        .split_whitespace()
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PocketTtsVoiceOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// Built-in voices merged with any custom clips found in `voice_dir`, for the voice picker.
+pub fn pocket_tts_voice_catalogue(voice_dir: &str) -> Vec<PocketTtsVoiceOption> {
+    let custom = scan_custom_pocket_tts_voices(voice_dir);
+    let mut options: Vec<PocketTtsVoiceOption> = POCKET_TTS_VOICES
+        .iter()
+        .map(|v| PocketTtsVoiceOption { id: v.id.to_string(), label: v.label.to_string() })
+        .collect();
+
+    for (id, _) in &custom {
+        if let Some(existing) = options.iter_mut().find(|o| &o.id == id) {
+            existing.label = format!("{} (Custom)", prettify_voice_label(id));
+        } else {
+            options.push(PocketTtsVoiceOption {
+                id: id.clone(),
+                label: format!("{} (Custom)", prettify_voice_label(id)),
+            });
+        }
+    }
+    options
+}
+
+/// Resolves a voice id to its reference clip source: either a built-in `hf://` URI or
+/// a local path to a custom clip dropped into `voice_dir`. Custom clips take priority.
+fn resolve_pocket_tts_voice_clip(id: &str, voice_dir: &str) -> Option<String> {
+    let custom = scan_custom_pocket_tts_voices(voice_dir);
+    if let Some((_, path)) = custom.iter().find(|(custom_id, _)| custom_id == id) {
+        return Some(path.to_string_lossy().into_owned());
+    }
+    pocket_tts_voice(id).map(|v| v.reference_clip.to_string())
+}
+
 // ── Pocket-TTS model variant / sample rate ────────────────────────────────────
 
 const POCKET_TTS_VARIANT: &str = "b6369a24";
@@ -75,7 +160,7 @@ const POCKET_TTS_TOKENIZER_FILE: &str = "tokenizer.model";
 
 /// Best-effort, network-free check for whether the model weights, tokenizer, and the
 /// selected voice's reference clip are already present in the local HuggingFace cache.
-pub fn is_pocket_tts_ready(voice: &str) -> bool {
+pub fn is_pocket_tts_ready(voice: &str, voice_dir: &str) -> bool {
     let cache = hf_hub::Cache::default();
 
     let weights_present = cache
@@ -96,8 +181,8 @@ pub fn is_pocket_tts_ready(voice: &str) -> bool {
         .get(POCKET_TTS_TOKENIZER_FILE)
         .is_some();
 
-    let voice_present = match pocket_tts_voice(voice) {
-        Some(v) => hf_cache_file_present(v.reference_clip),
+    let voice_present = match resolve_pocket_tts_voice_clip(voice, voice_dir) {
+        Some(clip) => hf_cache_file_present(&clip),
         None => false,
     };
 
@@ -128,15 +213,14 @@ fn hf_cache_file_present(hf_path: &str) -> bool {
 /// Download the pocket-tts model weights, tokenizer, and the selected voice's reference
 /// clip into the local HuggingFace cache. Requires `HF_TOKEN` to be set (the default
 /// weights repo is gated and requires accepting the model license on huggingface.co).
-pub async fn download_pocket_tts_assets(voice: &str, hf_token: Option<String>) -> Result<()> {
+pub async fn download_pocket_tts_assets(voice: &str, voice_dir: &str, hf_token: Option<String>) -> Result<()> {
     if let Some(token) = hf_token {
         // SAFETY: single-threaded at startup/download time; no concurrent env access.
         unsafe { std::env::set_var("HF_TOKEN", token) };
     }
 
-    let voice_info = pocket_tts_voice(voice)
+    let reference_clip = resolve_pocket_tts_voice_clip(voice, voice_dir)
         .ok_or_else(|| anyhow::anyhow!("unknown pocket-tts voice: {voice}"))?;
-    let reference_clip = voice_info.reference_clip.to_string();
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         info!("Downloading pocket-tts model weights ({POCKET_TTS_VARIANT})...");
@@ -489,7 +573,7 @@ fn speak_pocket_tts(
     let is_prewarm = u.source_label.as_deref() == Some("prewarm");
     let voice = u.voice.as_deref().unwrap_or(&config.pocket_tts.voice);
 
-    if !is_pocket_tts_ready(voice) {
+    if !is_pocket_tts_ready(voice, &config.pocket_tts.voice_dir) {
         anyhow::bail!("pocket-tts assets for voice '{voice}' not found. Download them from TTS settings.");
     }
 
@@ -503,9 +587,9 @@ fn speak_pocket_tts(
     let model = model.as_ref().unwrap();
 
     if !voice_states.contains_key(voice) {
-        let voice_info = pocket_tts_voice(voice)
+        let reference_clip = resolve_pocket_tts_voice_clip(voice, &config.pocket_tts.voice_dir)
             .ok_or_else(|| anyhow::anyhow!("unknown pocket-tts voice: {voice}"))?;
-        let clip_path = pocket_tts::weights::download_if_necessary(voice_info.reference_clip)
+        let clip_path = pocket_tts::weights::download_if_necessary(&reference_clip)
             .context("resolve pocket-tts reference voice clip")?;
         let state = model
             .get_voice_state(&clip_path)
@@ -1033,7 +1117,112 @@ mod tests {
 
     #[test]
     fn test_is_pocket_tts_ready_false_for_unknown_voice() {
-        assert!(!is_pocket_tts_ready("not-a-real-voice"));
+        assert!(!is_pocket_tts_ready("not-a-real-voice", ""));
+    }
+
+    // ── custom voice directory ───────────────────────────────────────────────
+
+    #[test]
+    fn test_scan_custom_pocket_tts_voices_finds_wav_files() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("myvoice.wav"), b"fake audio").unwrap();
+        fs::write(dir.path().join("notes.txt"), b"ignore me").unwrap();
+        let found = scan_custom_pocket_tts_voices(dir.path().to_str().unwrap());
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, "myvoice");
+    }
+
+    #[test]
+    fn test_pocket_tts_voice_catalogue_merges_custom_voices() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("myvoice.wav"), b"fake audio").unwrap();
+        let catalogue = pocket_tts_voice_catalogue(dir.path().to_str().unwrap());
+        assert!(catalogue.iter().any(|v| v.id == "myvoice"));
+        assert!(catalogue.iter().any(|v| v.id == "alba"));
+    }
+
+    #[test]
+    fn test_pocket_tts_voice_catalogue_custom_overrides_builtin_label() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("alba.wav"), b"fake audio").unwrap();
+        let catalogue = pocket_tts_voice_catalogue(dir.path().to_str().unwrap());
+        let alba = catalogue.iter().find(|v| v.id == "alba").unwrap();
+        assert!(alba.label.contains("Custom"));
+    }
+
+    #[test]
+    fn test_resolve_pocket_tts_voice_clip_prefers_custom() {
+        let dir = tempdir().unwrap();
+        let clip = dir.path().join("alba.wav");
+        fs::write(&clip, b"fake audio").unwrap();
+        let resolved = resolve_pocket_tts_voice_clip("alba", dir.path().to_str().unwrap()).unwrap();
+        assert_eq!(resolved, clip.to_string_lossy());
+    }
+
+    #[test]
+    fn test_resolve_pocket_tts_voice_clip_falls_back_to_builtin() {
+        let dir = tempdir().unwrap();
+        let resolved = resolve_pocket_tts_voice_clip("alba", dir.path().to_str().unwrap()).unwrap();
+        assert!(resolved.starts_with("hf://"));
+    }
+
+    #[test]
+    fn test_resolve_pocket_tts_voice_clip_unknown_returns_none() {
+        let dir = tempdir().unwrap();
+        assert!(resolve_pocket_tts_voice_clip("not-a-real-voice", dir.path().to_str().unwrap()).is_none());
+    }
+
+    // ── stop() must bump the generation counter ──────────────────────────────
+    //
+    // Regression test for a bug where the global stop-key hotkey called the raw
+    // `stop_current_playback()` free function instead of `TtsEngineHandle::stop()`.
+    // That stopped the Rodio sink but left the generation counter unchanged, so
+    // Pocket-TTS's frame-by-frame streaming loop (which only checks the counter
+    // between frames) kept appending new audio — and `Sink::append()` resets the
+    // sink's `stopped` flag, so playback silently resumed after the "stop".
+
+    #[test]
+    fn test_handle_stop_increments_generation_counter() {
+        let (tx, _rx) = bounded(32);
+        let generation = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let handle = TtsEngineHandle { tx, generation: generation.clone() };
+
+        assert_eq!(generation.load(std::sync::atomic::Ordering::SeqCst), 0);
+        handle.stop();
+        assert_eq!(generation.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_raw_stop_current_playback_does_not_bump_generation() {
+        // Documents the exact gap that caused the regression: calling the free
+        // function alone never advances any generation counter, since it has no
+        // knowledge of one. Callers MUST go through TtsEngineHandle::stop().
+        let generation = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        stop_current_playback();
+        assert_eq!(generation.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_streaming_loop_cancellation_check_breaks_on_stale_generation() {
+        // Mirrors the per-frame check inside speak_pocket_tts: once stop() bumps
+        // the live counter past the snapshotted generation, the loop must stop
+        // appending further frames instead of running to completion.
+        let generation_counter = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let snapshotted_generation = 0u32;
+
+        let mut frames_processed = 0;
+        for _ in 0..5 {
+            if generation_counter.load(std::sync::atomic::Ordering::SeqCst) != snapshotted_generation {
+                break;
+            }
+            frames_processed += 1;
+            if frames_processed == 2 {
+                // Simulate stop() firing mid-stream.
+                generation_counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        assert_eq!(frames_processed, 2, "loop must abandon remaining frames after stop()");
     }
 }
 

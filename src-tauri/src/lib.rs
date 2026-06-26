@@ -920,6 +920,7 @@ pub fn run() {
             download_voice,
             check_pocket_tts_ready,
             download_pocket_tts,
+            list_pocket_tts_voices,
             check_model_downloaded,
             download_model,
             check_directory_exists,

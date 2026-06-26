@@ -177,13 +177,40 @@
 
   // ── Pocket-TTS ─────────────────────────────────────────────────────────────
 
-  const POCKET_TTS_VOICES = [
-    { id: "alba",    label: "Alba (Female)" },
-    { id: "anna",    label: "Anna (Female)" },
-    { id: "vera",    label: "Vera (Female)" },
-    { id: "charles", label: "Charles (Male)" },
-    { id: "michael", label: "Michael (Male)" },
-  ];
+  let pocketTtsVoices = $state<{ id: string; label: string }[]>([]);
+  let pocketTtsVoiceDirError = $state<string | null>(null);
+
+  async function loadPocketTtsVoices() {
+    try {
+      pocketTtsVoices = await invoke<{ id: string; label: string }[]>("list_pocket_tts_voices", {
+        voiceDir: cfg.tts.pocket_tts.voice_dir,
+      });
+    } catch (e) {
+      console.error("list_pocket_tts_voices:", e);
+    }
+  }
+
+  async function validatePocketTtsVoiceDir() {
+    const path = cfg.tts.pocket_tts.voice_dir;
+    if (!path) {
+      pocketTtsVoiceDirError = null;
+      await loadPocketTtsVoices();
+      return;
+    }
+    const exists = await invoke<boolean>("check_directory_exists", { path });
+    pocketTtsVoiceDirError = exists ? null : "This folder does not exist. Please create it first or leave blank for the default location.";
+    if (!pocketTtsVoiceDirError) {
+      await loadPocketTtsVoices();
+    }
+  }
+
+  function onPocketTtsVoiceDirChange() {
+    markDirty();
+  }
+
+  function onPocketTtsVoiceDirKeydown(e: KeyboardEvent) {
+    if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur();
+  }
 
   let piperVoiceOptions = $derived(
     PIPER_VOICES.map(v => ({
@@ -193,7 +220,7 @@
   );
 
   let pocketTtsVoiceOptions = $derived(
-    POCKET_TTS_VOICES.map(v => ({
+    pocketTtsVoices.map(v => ({
       value: v.id,
       label: v.label
     }))
@@ -214,6 +241,7 @@
     try {
       pocketTtsReady = await invoke<boolean>("check_pocket_tts_ready", {
         voice: cfg.tts.pocket_tts.voice,
+        voiceDir: cfg.tts.pocket_tts.voice_dir,
       });
     } catch (e) {
       console.error("check_pocket_tts_ready:", e);
@@ -229,6 +257,7 @@
     try {
       await invoke("download_pocket_tts", {
         voice: cfg.tts.pocket_tts.voice,
+        voiceDir: cfg.tts.pocket_tts.voice_dir,
         hfToken: cfg.tts.pocket_tts.hf_token,
       });
       pocketTtsReady = true;
@@ -253,6 +282,7 @@
     try {
       if (cfg.tts.engine === "pocket_tts") {
         pocketTtsReady = false;
+        await loadPocketTtsVoices();
         await checkPocketTtsReady();
       } else if (cfg.tts.engine === "piper") {
         if (cfg.tts.voice_dir) {
@@ -277,6 +307,7 @@
     }
 
     if (cfg.tts.engine === "pocket_tts") {
+      await loadPocketTtsVoices();
       checkPocketTtsReady();
     }
 
@@ -496,6 +527,27 @@
       Pocket-TTS model weights are hosted on a gated HuggingFace repo. Create a token at
       <code>huggingface.co/settings/tokens</code> and accept the license at
       <code>huggingface.co/kyutai/pocket-tts</code> before downloading.
+    </p>
+
+    <div class="field">
+      <span>Custom voice directory (leave blank for default)</span>
+      <input
+        type="text"
+        bind:value={cfg.tts.pocket_tts.voice_dir}
+        onchange={onPocketTtsVoiceDirChange}
+        onblur={validatePocketTtsVoiceDir}
+        onkeydown={onPocketTtsVoiceDirKeydown}
+        class:field-input-error={!!pocketTtsVoiceDirError}
+      />
+      {#if pocketTtsVoiceDirError}
+        <p class="field-error-msg">{pocketTtsVoiceDirError}</p>
+      {/if}
+    </div>
+    <p class="hint">
+      Drop a <code>.wav</code> reference clip into this folder to add it to the voice list —
+      the filename (without extension) becomes the voice's id, e.g. <code>narrator.wav</code> adds
+      "Narrator (Custom)". Naming a clip after a built-in voice (e.g. <code>alba.wav</code>) replaces
+      that voice's reference clip. Default: <code>~/.local/share/voxctrl/pocket-tts-voices/</code>
     </p>
   </div>
   {/if}

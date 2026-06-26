@@ -77,6 +77,7 @@ export interface PocketTtsConfig {
   voice: string;
   prewarm: boolean;
   hf_token: string | null;
+  voice_dir: string;
 }
 
 export interface TtsConfig {
@@ -165,6 +166,7 @@ const defaultConfig: AppConfig = {
       voice: "alba",
       prewarm: false,
       hf_token: null,
+      voice_dir: "",
     },
   },
   mcp: { server_enabled: false, record_timeout: 15.0, visual_feedback: true },
