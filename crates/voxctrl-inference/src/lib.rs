@@ -182,7 +182,13 @@ impl InferenceEngine {
             .unwrap_or(false);
 
         if binding_wants_openai && !processed.is_empty() {
-            let mut openai_cfg = app_config.openai.clone();
+            // Re-read the OpenAI settings from disk so changes made in the
+            // Settings UI (model, endpoint, API key, prompts) take effect without
+            // restarting the app. Targets and bindings above are already hot-read
+            // from disk per request; the global AppConfig held by this worker is
+            // frozen at startup (intentional for the Whisper backend), so using
+            // its `openai` section here would ignore the user's latest settings.
+            let mut openai_cfg = voxctrl_config::Config::load().data.openai;
             openai_cfg.enabled = true;
 
             if let Some(ref b) = binding {
