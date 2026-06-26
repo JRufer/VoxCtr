@@ -282,7 +282,7 @@ impl Default for OpenAiConfig {
 pub enum TtsEngine {
     Piper,
     Espeak,
-    Kokoro,
+    PocketTts,
 }
 
 impl Default for TtsEngine {
@@ -291,49 +291,33 @@ impl Default for TtsEngine {
     }
 }
 
-fn default_kokoro_voice() -> String {
-    "af_heart".into()
-}
-
-fn default_kokoro_speed() -> f32 {
-    1.0
+fn default_pocket_tts_voice() -> String {
+    "alba".into()
 }
 
 fn default_tts_speed() -> f32 {
     1.0
 }
 
-fn default_kokoro_quality() -> String {
-    "fp16".into()
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KokoroConfig {
-    /// Voice ID, e.g. "af_heart", "am_adam", "bf_emma", "bm_george"
-    #[serde(default = "default_kokoro_voice")]
+pub struct PocketTtsConfig {
+    /// Bundled reference voice name, e.g. "alba", "anna", "vera", "charles", "michael"
+    #[serde(default = "default_pocket_tts_voice")]
     pub voice: String,
-    /// Model precision: "f32" (best, 310 MB), "fp16" (169 MB), "int8" (fastest, 88 MB)
-    #[serde(default = "default_kokoro_quality")]
-    pub quality: String,
-    /// Speech speed multiplier (0.5 – 2.0)
-    #[serde(default = "default_kokoro_speed")]
-    pub speed: f32,
     /// Pre-warm model on startup so the first synthesis is instant
     #[serde(default)]
     pub prewarm: bool,
-    /// Directory for model / voices files. Empty = platform default.
+    /// HuggingFace access token (required to download the gated `kyutai/pocket-tts` weights)
     #[serde(default)]
-    pub data_dir: String,
+    pub hf_token: Option<String>,
 }
 
-impl Default for KokoroConfig {
+impl Default for PocketTtsConfig {
     fn default() -> Self {
         Self {
-            voice: default_kokoro_voice(),
-            quality: default_kokoro_quality(),
-            speed: default_kokoro_speed(),
+            voice: default_pocket_tts_voice(),
             prewarm: false,
-            data_dir: String::new(),
+            hf_token: None,
         }
     }
 }
@@ -352,11 +336,11 @@ pub struct TtsConfig {
     pub response_overlay: bool,
     #[serde(default = "default_tts_speed")]
     pub speed: f32,
-    /// Enable GPU acceleration for ONNX inference (Kokoro and Piper)
+    /// Enable GPU acceleration for Piper
     #[serde(default)]
     pub gpu: bool,
     #[serde(default)]
-    pub kokoro: KokoroConfig,
+    pub pocket_tts: PocketTtsConfig,
 }
 
 impl Default for TtsConfig {
@@ -370,7 +354,7 @@ impl Default for TtsConfig {
             response_overlay: true,
             speed: 1.0,
             gpu: false,
-            kokoro: KokoroConfig::default(),
+            pocket_tts: PocketTtsConfig::default(),
         }
     }
 }

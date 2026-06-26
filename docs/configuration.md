@@ -77,12 +77,10 @@ Full schema with defaults:
     "response_overlay": true,
     "speed": 1.0,
     "gpu": false,
-    "kokoro": {
-      "voice": "af_heart",
-      "quality": "fp16",
-      "speed": 1.0,
+    "pocket_tts": {
+      "voice": "alba",
       "prewarm": false,
-      "data_dir": ""
+      "hf_token": null
     }
   },
   "mcp": {
@@ -210,24 +208,27 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Enable TTS subsystem |
-| `engine` | string | `"piper"` | Synthesis engine: `"piper"`, `"kokoro"`, or `"espeak"` |
+| `engine` | string | `"piper"` | Synthesis engine: `"piper"`, `"pocket_tts"`, or `"espeak"` |
 | `voice` | string | `"en-us-lessac-medium"` | Active Piper voice name (hyphen-delimited, e.g. `"en-us-ryan-high"`) |
 | `voice_dir` | string | `""` | Directory for Piper voice files; empty = `~/.local/share/voxctrl/piper-voices/`. Supports `~` expansion. |
 | `stop_key` | string[] | `["KEY_ESCAPE"]` | Keys that cancel current TTS playback |
 | `response_overlay` | bool | `true` | Show overlay indicator while TTS is speaking |
-| `speed` | float | `1.0` | Speech synthesis speed multiplier (0.5 – 2.0) |
-| `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Kokoro and Piper |
-| `kokoro` | object | | Kokoro engine sub-configuration (see below) |
+| `speed` | float | `1.0` | Speech synthesis speed multiplier (0.5 – 2.0); not used by Pocket-TTS |
+| `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Piper |
+| `pocket_tts` | object | | Pocket-TTS engine sub-configuration (see below) |
 
-**`kokoro` sub-object:**
+**`pocket_tts` sub-object:**
+
+Pocket-TTS is a voice-cloning neural TTS engine: each voice is a short reference audio clip
+that conditions synthesis, rather than a fixed precomputed voice embedding. The model weights
+are hosted in a **gated** HuggingFace repository (`kyutai/pocket-tts`) — you must accept the
+license on HuggingFace and supply a personal access token via `hf_token`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `voice` | string | `"af_heart"` | Voice ID, e.g. `"af_heart"`, `"am_adam"`, `"bf_emma"`, `"bm_george"` |
-| `quality` | string | `"fp16"` | Model precision: `"f32"` (310 MB), `"fp16"` (169 MB), `"int8"` (88 MB) |
-| `speed` | float | `1.0` | Speech speed multiplier (0.5 – 2.0) |
+| `voice` | string | `"alba"` | Bundled reference voice ID: `"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"` |
 | `prewarm` | bool | `false` | Pre-warm model on startup so first speech is instantaneous |
-| `data_dir` | string | `""` | Custom directory for model/voices; empty = `~/.local/share/voxctrl/kokoro/` |
+| `hf_token` | string or null | `null` | HuggingFace access token used to download the gated model weights |
 
 
 ### `mcp` section

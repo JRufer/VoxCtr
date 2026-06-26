@@ -15,20 +15,15 @@ VoxCtrl includes a neural TTS engine for voice output. This is useful for readin
 
 VoxCtrl invokes the `piper` binary directly (looks first in `~/.local/share/voxctrl/piper/piper`, then on PATH). It pipes text to Piper's stdin, receives raw 16-bit PCM on stdout, and plays via rodio (cross-platform).
 
-### Kokoro (Neural, Natural)
-[Kokoro](https://github.com/hexgrad/kokoro) is a high-quality, natural-sounding neural TTS engine with English voices (American and British accents). VoxCtrl runs Kokoro entirely in Rust: text is phonemised via `espeak-ng`, tokenised against an embedded IPA vocabulary, and synthesised via native ONNX inference (`ort` crate). No Python is required.
+### Pocket-TTS (Neural, Voice Cloning)
+[Pocket-TTS](https://github.com/kyutai-labs/pocket-tts) is Kyutai's lightweight FlowLM + Mimi-codec TTS model, ported to pure Rust on top of [Candle](https://github.com/huggingface/candle). VoxCtrl uses the [`pocket-tts`](https://crates.io/crates/pocket-tts) crate directly — no Python, no ONNX, no subprocess.
+
+Instead of fixed precomputed voice embeddings, Pocket-TTS clones a voice from a short reference audio clip at runtime (`TTSModel::get_voice_state()`). VoxCtrl ships a small built-in catalogue of reference clips so users get a normal voice-picker UX without needing to record anything themselves.
 
 **Prerequisites:**
-- `espeak-ng` installed on the system (`apt install espeak-ng` on Debian/Ubuntu)
+- A HuggingFace account that has accepted the license for the gated [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) model repo, and a personal access token (`hf_token`) with read access. Set it in Settings → TTS → Pocket-TTS, or via the `HF_TOKEN` environment variable.
 
-Model files are downloaded from GitHub releases to `~/.local/share/voxctrl/kokoro/`. During download, the voices pack is automatically unzipped into the `voices/` subdirectory, and the zip archive is deleted to save space and avoid ZIP-parsing disk overhead at runtime. Audio is played via rodio using the raw PCM output from the ONNX model.
-
-**Model quality levels:**
-
-| Quality | File | Size | Use case |
-|---|---|---|---|
-| `f32` | `kokoro-v1.0.onnx` | 310 MB | Highest quality (recommended with GPU acceleration) |
-| `fp16` | `kokoro-v1.0.fp16.onnx` | 169 MB | Default (balanced quality, smaller) |
+Model weights and the per-voice reference clips are downloaded on demand via `pocket_tts::weights::download_if_necessary`, which resolves `hf://owner/repo/filename[@revision]` URIs through the standard HuggingFace cache (`~/.cache/huggingface/hub/`). Subsequent loads are read straight from the local cache — no network access required once downloaded.
 
 ### Espeak-ng (Lightweight)
 If Piper is unavailable or no voice is downloaded, VoxCtrl can use `espeak-ng`. It is invoked as a subprocess with the text as an argument. Quality is lower but espeak-ng is always available as a system package.
@@ -37,19 +32,19 @@ If Piper is unavailable or no voice is downloaded, VoxCtrl can use `espeak-ng`. 
 
 ## GPU Acceleration
 
-VoxCtrl supports **GPU Acceleration** for both the **Kokoro** and **Piper** neural engines:
+VoxCtrl supports **GPU Acceleration** for the **Piper** neural engine:
 
-*   **Kokoro:** Enables the ONNX Runtime CUDA Execution Provider natively inside the Rust backend.
 *   **Piper:** Appends the `--cuda` CLI flag to the spawned `piper` subprocess command dynamically at runtime.
+
+Pocket-TTS (Candle-based) does not currently expose a GPU toggle in this crate version, so the `gpu` config flag and the GPU setting in Settings → TTS only apply to Piper.
 
 ### Requirements & Setup:
 1.  A CUDA-compatible NVIDIA GPU and drivers installed.
-2.  Pointing VoxCtrl to a GPU-enabled ONNX Runtime shared library. Because the app loads the shared library dynamically via `load-dynamic`, you can link the GPU library (e.g. from Python's `onnxruntime-gpu`) using the `ORT_DYLIB_PATH` environment variable:
+2.  Run with the `--cuda` feature where applicable:
     ```bash
-    export ORT_DYLIB_PATH=/path/to/libonnxruntime.so
     cargo tauri dev --features cuda
     ```
-    If GPU initialization fails, the engines will automatically and gracefully fall back to executing on the **CPU** without causing a crash.
+    If GPU initialization fails, Piper automatically and gracefully falls back to executing on the **CPU** without causing a crash.
 
 ---
 
@@ -75,53 +70,17 @@ Voices are downloaded as `.tar.gz` archives from the Piper GitHub release (`v0.0
 
 The default voice is **`en-us-lessac-medium`**.
 
-### Kokoro Voices
+### Pocket-TTS Voices
 
-Kokoro ships voices split across four accent groups. All voices share the same model and voices pack (`voices-v1.0.bin`). Switching voices requires no additional downloads.
+VoxCtrl bundles a small catalogue of reference voice clips, each pulled from the public (ungated) [`kyutai/tts-voices`](https://huggingface.co/datasets/kyutai/tts-voices) dataset repo via an `hf://` URI. Switching voices triggers a one-time download and embedding of that voice's reference clip (`TTSModel::get_voice_state()`), then the computed `ModelState` is cached in memory for the life of the worker thread.
 
-**American Female (`af_*`)**
 | ID | Name |
 |---|---|
-| `af_heart` | Heart (default) |
-| `af_bella` | Bella |
-| `af_sarah` | Sarah |
-| `af_nicole` | Nicole |
-| `af_sky` | Sky |
-| `af_alloy` | Alloy |
-| `af_aoede` | Aoede |
-| `af_jessica` | Jessica |
-| `af_kore` | Kore |
-| `af_nova` | Nova |
-| `af_river` | River |
-
-**American Male (`am_*`)**
-| ID | Name |
-|---|---|
-| `am_adam` | Adam |
-| `am_michael` | Michael |
-| `am_puck` | Puck |
-| `am_echo` | Echo |
-| `am_eric` | Eric |
-| `am_fenrir` | Fenrir |
-| `am_liam` | Liam |
-| `am_onyx` | Onyx |
-| `am_santa` | Santa |
-
-**British Female (`bf_*`)**
-| ID | Name |
-|---|---|
-| `bf_emma` | Emma |
-| `bf_alice` | Alice |
-| `bf_isabella` | Isabella |
-| `bf_lily` | Lily |
-
-**British Male (`bm_*`)**
-| ID | Name |
-|---|---|
-| `bm_george` | George |
-| `bm_lewis` | Lewis |
-| `bm_daniel` | Daniel |
-| `bm_fable` | Fable |
+| `alba` | Alba (Female, default) |
+| `anna` | Anna (Female) |
+| `vera` | Vera (Female) |
+| `charles` | Charles (Male) |
+| `michael` | Michael (Male) |
 
 ---
 
@@ -143,21 +102,20 @@ await invoke('download_voice', {
 });
 ```
 
-### Kokoro — Checking and downloading
+### Pocket-TTS — Checking and downloading
 
-Kokoro downloads the model file and the voices pack ZIP file. It automatically extracts the ZIP into a `voices/` directory (containing standalone `{voice}.npy` files) and deletes the ZIP archive to save space.
+Pocket-TTS downloads the model weights (from the gated `kyutai/pocket-tts` repo), the tokenizer, and the selected voice's reference clip — all resolved through the HuggingFace cache.
 
 ```typescript
-// Check if model files and unzipped voices folder are present
-const ready = await invoke<boolean>('check_kokoro_ready', {
-  quality: 'fp16',        // "f32" | "fp16"
-  dataDir: '',            // '' = ~/.local/share/voxctrl/kokoro/
+// Check if model weights, tokenizer, and the selected voice's reference clip are cached
+const ready = await invoke<boolean>('check_pocket_tts_ready', {
+  voice: 'alba',
 });
 
-// Download and automatically extract model and voices pack
-await invoke('download_kokoro', {
-  quality: 'fp16',
-  dataDir: '',
+// Download model weights, tokenizer, and the reference clip (requires hf_token)
+await invoke('download_pocket_tts', {
+  voice: 'alba',
+  hfToken: '<your HuggingFace token>',
 });
 ```
 
@@ -168,7 +126,7 @@ await invoke('download_kokoro', {
 After synthesis, audio is played using `rodio` (cross-platform):
 
 - **Piper** produces raw 16-bit signed LE PCM; rodio plays it directly via `SamplesBuffer`.
-- **Kokoro** produces raw float32 PCM samples from ONNX inference; samples are converted to i16 and played via `SamplesBuffer` at 24 kHz.
+- **Pocket-TTS** produces a `candle::Tensor` of audio samples; `pocket_tts::audio::pcm_i16_le_bytes()` converts it to i16 PCM, played via `SamplesBuffer` at 24 kHz.
 
 The TTS engine queues requests in a bounded channel (capacity 32). Utterances play sequentially — subsequent calls are queued and played in order without overlapping.
 
@@ -184,8 +142,8 @@ The TTS engine queues requests in a bounded channel (capacity 32). Utterances pl
 ### From a Tauri IPC Command
 ```typescript
 await invoke('speak_text', { text: 'Hello world', voice: 'en-us-ryan-high' });
-// For Kokoro the voice parameter overrides cfg.tts.kokoro.voice:
-await invoke('speak_text', { text: 'Hello world', voice: 'af_bella' });
+// For Pocket-TTS the voice parameter overrides cfg.tts.pocket_tts.voice:
+await invoke('speak_text', { text: 'Hello world', voice: 'charles' });
 ```
 
 The `voice` parameter is optional; if omitted, the configured default voice is used.
@@ -199,18 +157,18 @@ echo "Recording started" > /tmp/voxctrl-tts.fifo
 
 ---
 
-## Pre-warming Kokoro
+## Pre-warming Pocket-TTS
 
-Kokoro loads its ONNX model on first synthesis. Enable `prewarm` to avoid this latency:
+Pocket-TTS loads its model weights on first synthesis. Enable `prewarm` to avoid this latency:
 
 ```json
 "tts": {
-  "engine": "kokoro",
-  "kokoro": { "prewarm": true }
+  "engine": "pocket_tts",
+  "pocket_tts": { "prewarm": true }
 }
 ```
 
-When `prewarm` is `true`, `TtsEngineWorker::start()` enqueues a silent synthesis immediately after spawning the worker thread. The worker processes this short request (a single space) at startup, loading the model files into the OS page cache. Subsequent user-triggered syntheses are faster because the model is already in memory. This adds roughly 5–15 seconds to startup time depending on model size and disk speed.
+When `prewarm` is `true`, `TtsEngineWorker::start()` enqueues a silent synthesis immediately after spawning the worker thread. The worker processes this short request (a single space) at startup, loading the model into memory and computing the configured voice's reference embedding. Subsequent user-triggered syntheses are faster because the model is already warm. This adds startup latency depending on model size and disk speed.
 
 ---
 
@@ -235,35 +193,31 @@ Under `tts` in `config.json`:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Enable TTS functionality |
-| `engine` | string | `"piper"` | `"piper"`, `"kokoro"`, or `"espeak"` |
+| `engine` | string | `"piper"` | `"piper"`, `"pocket_tts"`, or `"espeak"` |
 | `voice` | string | `"en-us-lessac-medium"` | Default voice for Piper (hyphen-delimited) |
 | `voice_dir` | string | `""` | Directory for Piper voice files; empty = `~/.local/share/voxctrl/piper-voices/` |
 | `stop_key` | string[] | `["KEY_ESCAPE"]` | Keys that interrupt playback |
 | `response_overlay` | bool | `true` | Show overlay indicator while TTS is speaking |
-| `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Kokoro and Piper |
-| `kokoro.voice` | string | `"af_heart"` | Default Kokoro voice ID |
-| `kokoro.quality` | string | `"fp16"` | Model precision: `"f32"` or `"fp16"` |
-| `kokoro.speed` | float | `1.0` | Speech rate multiplier (0.5 – 2.0) |
-| `kokoro.prewarm` | bool | `false` | Pre-warm model on startup for faster first synthesis |
-| `kokoro.data_dir` | string | `""` | Directory for Kokoro model/voices files; empty = `~/.local/share/voxctrl/kokoro/` |
+| `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Piper |
+| `pocket_tts.voice` | string | `"alba"` | Default Pocket-TTS voice ID: `"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"` |
+| `pocket_tts.prewarm` | bool | `false` | Pre-warm model on startup for faster first synthesis |
+| `pocket_tts.hf_token` | string or null | `null` | HuggingFace token used to download the gated model weights |
 
-**Example Kokoro config:**
+**Example Pocket-TTS config:**
 
 ```json
 "tts": {
   "enabled": true,
-  "engine": "kokoro",
+  "engine": "pocket_tts",
   "voice": "en-us-lessac-medium",
   "voice_dir": "",
   "stop_key": ["KEY_ESCAPE"],
   "response_overlay": true,
-  "gpu": true,
-  "kokoro": {
-    "voice": "af_heart",
-    "quality": "fp16",
-    "speed": 1.0,
+  "gpu": false,
+  "pocket_tts": {
+    "voice": "alba",
     "prewarm": true,
-    "data_dir": ""
+    "hf_token": "hf_..."
   }
 }
 ```
@@ -306,7 +260,7 @@ The handle is `Clone` — multiple callers can hold a copy and enqueue utterance
 
 ---
 
-## Kokoro Architecture
+## Pocket-TTS Architecture
 
 ```
 User speaks → transcription → speak_text IPC
@@ -315,25 +269,26 @@ User speaks → transcription → speak_text IPC
                                     │
                          (bounded channel, cap 32)
                                     │
-                         speak_kokoro()  (pure Rust)
+                         speak_pocket_tts()  (pure Rust)
                                     │
-              ┌─────────────────────┼──────────────────────┐
-              │                     │                       │
-    phonemize_espeak()      load_voice_embedding()    ort::Session
-    espeak-ng --ipa -q       NPY File → Cached mem     (lazy init,
-    (subprocess)             [num_tokens, 256]          cached per
-              │                     │                  worker thread)
-              │              kokoro_tokenize()               │
-              └──────────────────── │ ──────────────────────┘
+              ┌─────────────────────┴──────────────────────┐
+              │                                             │
+    pocket_tts::TTSModel::load()                  download_if_necessary()
+    (lazy init, cached per                         resolves hf://owner/repo/file
+     worker thread)                                via HF cache (gated repo,
+              │                                     needs HF_TOKEN on first pull)
+              │                                             │
+              │                              TTSModel::get_voice_state(clip_path)
+              │                              → ModelState (cached per voice id)
+              └────────────────────┬────────────────────────┘
                                     │
-                           run_kokoro_inference()
-                           input_ids (int64, 1×T)
-                           style     (float32, 1×256)
-                           speed     (float32, 1)
+                       TTSModel::generate(text, voice_state)
                                     │
-                           f32 audio samples @ 24 kHz
+                         candle::Tensor audio samples @ 24 kHz
                                     │
-                     i16 PCM → rodio::SamplesBuffer (persistent sink)
+              pocket_tts::audio::pcm_i16_le_bytes() → i16 PCM
+                                    │
+                     rodio::SamplesBuffer (persistent sink)
                                     │
                            Sink::sleep_until_end()
 ```

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 pub fn detect_pkg_manager() -> &'static str {
@@ -75,12 +75,6 @@ fn run_command_status(runner: &str, args: &[&str]) -> Result<std::process::ExitS
         .map_err(|e| format!("Failed to spawn {}: {}", runner, e))
 }
 
-fn run_command_success(runner: &str, args: &[&str]) -> bool {
-    run_command_status(runner, args)
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
 pub fn setup_desktop_integration() -> Result<(), String> {
     let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
     let launcher_dir = home_dir.join(".local/share/applications");
@@ -134,48 +128,6 @@ Keywords=whisper;voice;dictation;wayland;
     Ok(())
 }
 
-fn check_install_onnxruntime_cli(_pkg_mgr: &str) -> Result<(), String> {
-    println!("Checking ONNX Runtime for Kokoro TTS...");
-    let mut ort_found = false;
-
-    #[cfg(test)]
-    {
-        if let Ok(mock) = std::env::var("VOXCTRL_ORT_FOUND_MOCK") {
-            ort_found = mock == "true";
-        }
-    }
-    
-    if !ort_found {
-        for path in &["/usr/lib/libonnxruntime.so", "/usr/local/lib/libonnxruntime.so", "/usr/lib/x86_64-linux-gnu/libonnxruntime.so"] {
-            if Path::new(path).exists() {
-                ort_found = true;
-                break;
-            }
-        }
-    }
-    
-    if !ort_found {
-        if run_command_success("python3", &["-c", "import onnxruntime"]) {
-            ort_found = true;
-        }
-    }
-
-    if ort_found {
-        println!("ONNX Runtime is already present.");
-        return Ok(());
-    }
-
-    println!("ONNX Runtime not found. Attempting to install via pip...");
-    let pip_installed = run_command_success("pip3", &["install", "--user", "onnxruntime"]);
-    
-    if !pip_installed {
-        // Try with --break-system-packages (for modern Debian/Ubuntu)
-        let _ = run_command_status("pip3", &["install", "--break-system-packages", "--user", "onnxruntime"]);
-    }
-    
-    Ok(())
-}
-
 pub fn run_cli_installer() -> Result<(), String> {
     println!("=== VoxCtrl CLI Installer & Host Setup ===");
     let pkg_mgr = detect_pkg_manager();
@@ -206,9 +158,6 @@ pub fn run_cli_installer() -> Result<(), String> {
     }
 
     println!("System dependencies and udev rules configured successfully!");
-
-    // ONNX runtime check
-    let _ = check_install_onnxruntime_cli(pkg_mgr);
 
     // Setup desktop integration
     println!("Registering desktop entry and icon...");
@@ -248,12 +197,6 @@ pub async fn run_gui_installer() -> Result<(), String> {
     if !status.success() {
         return Err("Privileged installation steps failed or canceled by user.".to_string());
     }
-
-    // Attempt to install ONNX Runtime as the current user
-    let _ = tokio::task::spawn_blocking(move || {
-        let _ = run_command_status("pip3", &["install", "--user", "onnxruntime"]);
-        let _ = run_command_status("pip3", &["install", "--break-system-packages", "--user", "onnxruntime"]);
-    }).await;
 
     // Desktop integration
     setup_desktop_integration()?;
@@ -337,7 +280,6 @@ mod tests {
         let _lock = crate::test_utils::get_env_lock().lock().unwrap();
         std::env::set_var("VOXCTRL_PKG_MANAGER_MOCK", "apt");
         std::env::set_var("VOXCTRL_INSTALLER_TEST_MOCK", "success");
-        std::env::set_var("VOXCTRL_ORT_FOUND_MOCK", "true");
         
         let temp_dir = tempdir().unwrap();
         std::env::set_var("HOME", temp_dir.path());
@@ -347,7 +289,6 @@ mod tests {
 
         std::env::remove_var("VOXCTRL_PKG_MANAGER_MOCK");
         std::env::remove_var("VOXCTRL_INSTALLER_TEST_MOCK");
-        std::env::remove_var("VOXCTRL_ORT_FOUND_MOCK");
         std::env::remove_var("HOME");
     }
 
@@ -356,7 +297,6 @@ mod tests {
         let _lock = crate::test_utils::get_env_lock().lock().unwrap();
         std::env::set_var("VOXCTRL_PKG_MANAGER_MOCK", "apt");
         std::env::set_var("VOXCTRL_INSTALLER_TEST_MOCK", "failure");
-        std::env::set_var("VOXCTRL_ORT_FOUND_MOCK", "true");
         
         let temp_dir = tempdir().unwrap();
         std::env::set_var("HOME", temp_dir.path());
@@ -366,7 +306,6 @@ mod tests {
 
         std::env::remove_var("VOXCTRL_PKG_MANAGER_MOCK");
         std::env::remove_var("VOXCTRL_INSTALLER_TEST_MOCK");
-        std::env::remove_var("VOXCTRL_ORT_FOUND_MOCK");
         std::env::remove_var("HOME");
     }
 

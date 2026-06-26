@@ -141,10 +141,9 @@ pub fn run() {
     tracing::info!("TTS voice: {}", config.data.tts.voice);
     tracing::info!("TTS speed: {}", config.data.tts.speed);
     tracing::info!("TTS GPU: {}", config.data.tts.gpu);
-    tracing::info!("Kokoro voice: {}", config.data.tts.kokoro.voice);
-    tracing::info!("Kokoro quality: {}", config.data.tts.kokoro.quality);
-    tracing::info!("Kokoro speed: {}", config.data.tts.kokoro.speed);
-    tracing::info!("Kokoro prewarm: {}", config.data.tts.kokoro.prewarm);
+    tracing::info!("Pocket-TTS voice: {}", config.data.tts.pocket_tts.voice);
+    tracing::info!("Pocket-TTS prewarm: {}", config.data.tts.pocket_tts.prewarm);
+    tracing::info!("Pocket-TTS HF token set: {}", config.data.tts.pocket_tts.hf_token.is_some());
     tracing::info!("MCP enabled: {}", config.data.mcp.server_enabled);
     tracing::info!("MCP record timeout: {}", config.data.mcp.record_timeout);
     tracing::info!("ATSPI injection: {}", config.data.atspi.injection);
@@ -913,8 +912,8 @@ pub fn run() {
             stop_monitoring_audio,
             check_voice_downloaded,
             download_voice,
-            check_kokoro_ready,
-            download_kokoro,
+            check_pocket_tts_ready,
+            download_pocket_tts,
             check_model_downloaded,
             download_model,
             check_directory_exists,

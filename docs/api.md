@@ -402,24 +402,22 @@ interface OpenAiConfig {
   timeout_secs: number;
 }
 
-interface KokoroConfig {
+interface PocketTtsConfig {
   voice: string;
-  quality: string;
-  speed: number;
   prewarm: boolean;
-  data_dir: string;
+  hf_token: string | null;
 }
 
 interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "kokoro";
+  engine: "piper" | "espeak" | "pocket_tts";
   voice: string;
   voice_dir: string;
   stop_key: string[];       // singular field name, plural value
   response_overlay: boolean;
-  speed: number;
-  gpu: boolean;
-  kokoro: KokoroConfig;
+  speed: number;            // not used by pocket_tts
+  gpu: boolean;             // only applies to piper
+  pocket_tts: PocketTtsConfig;
 }
 
 interface McpConfig {
