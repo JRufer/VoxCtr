@@ -158,6 +158,49 @@ const POCKET_TTS_TOKENIZER_REPO: &str = "kyutai/pocket-tts-without-voice-cloning
 const POCKET_TTS_TOKENIZER_REVISION: &str = "d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3";
 const POCKET_TTS_TOKENIZER_FILE: &str = "tokenizer.model";
 
+// Vendored copy of the pocket-tts crate's own model config YAML. The crate's
+// `TTSModel::load()` resolves this file relative to `CARGO_MANIFEST_DIR` baked in
+// at *the build machine's* compile time, which doesn't exist on a different
+// runtime machine (e.g. an end user running a packaged AppImage). Its only other
+// fallback is a `config/<variant>.yaml` relative to the process's current
+// directory, so we write this vendored copy there ourselves before loading.
+const POCKET_TTS_CONFIG_YAML: &str =
+    include_str!("../vendor/pocket-tts-config/b6369a24.yaml");
+
+/// Writes the vendored pocket-tts config YAML to a directory we control and
+/// returns that directory, so callers can chdir into it before invoking
+/// `pocket_tts::TTSModel::load()`. See `POCKET_TTS_CONFIG_YAML` for why this
+/// workaround exists.
+fn ensure_pocket_tts_config_dir() -> Result<PathBuf> {
+    let dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("voxctrl")
+        .join("pocket-tts-config");
+    let config_subdir = dir.join("config");
+    std::fs::create_dir_all(&config_subdir).context("create pocket-tts config dir")?;
+    let file_path = config_subdir.join(format!("{POCKET_TTS_VARIANT}.yaml"));
+    if !file_path.exists() {
+        std::fs::write(&file_path, POCKET_TTS_CONFIG_YAML)
+            .context("write vendored pocket-tts config")?;
+    }
+    Ok(dir)
+}
+
+/// Loads the pocket-tts model, working around `TTSModel::load()`'s broken
+/// config file lookup in packaged builds (see `POCKET_TTS_CONFIG_YAML`) by
+/// briefly chdir-ing into a directory containing our vendored copy of the
+/// config, then restoring the previous working directory.
+fn load_pocket_tts_model() -> Result<pocket_tts::TTSModel> {
+    let config_dir = ensure_pocket_tts_config_dir()?;
+    let prev_cwd = std::env::current_dir().ok();
+    std::env::set_current_dir(&config_dir).context("chdir into pocket-tts config dir")?;
+    let result = pocket_tts::TTSModel::load(POCKET_TTS_VARIANT);
+    if let Some(prev) = prev_cwd {
+        let _ = std::env::set_current_dir(prev);
+    }
+    result.context("load pocket-tts model")
+}
+
 /// Best-effort, network-free check for whether the model weights, tokenizer, and the
 /// selected voice's reference clip are already present in the local HuggingFace cache.
 pub fn is_pocket_tts_ready(voice: &str, voice_dir: &str) -> bool {
@@ -431,7 +474,7 @@ impl TtsEngineWorker {
 
                     let sink_res = init_audio(&mut audio_context);
                     if let Err(e) = sink_res {
-                        warn!("TTS audio init error: {e}");
+                        warn!("TTS audio init error: {e:#}");
                         continue;
                     }
                     let sink = sink_res.unwrap();
@@ -462,7 +505,7 @@ impl TtsEngineWorker {
                     }
 
                     if let Err(e) = result {
-                        warn!("TTS speak error: {e}");
+                        warn!("TTS speak error: {e:#}");
                     }
                     if !is_prewarm {
                         if let Some(ref cb) = self.on_playback_end {
@@ -580,9 +623,7 @@ fn speak_pocket_tts(
     // Lazily load the model — stays alive for the worker thread lifetime.
     if model.is_none() {
         info!("Loading pocket-tts model (variant={POCKET_TTS_VARIANT})");
-        *model = Some(
-            pocket_tts::TTSModel::load(POCKET_TTS_VARIANT).context("load pocket-tts model")?,
-        );
+        *model = Some(load_pocket_tts_model()?);
     }
     let model = model.as_ref().unwrap();
 
@@ -809,6 +850,26 @@ mod tests {
     fn create_fake_voice(dir: &std::path::Path, filename: &str) {
         fs::write(dir.join(filename), b"fake onnx model").unwrap();
         fs::write(dir.join(format!("{filename}.json")), b"{}").unwrap();
+    }
+
+    // ── pocket-tts vendored config (packaged-build regression) ────────────────
+
+    #[test]
+    fn test_pocket_tts_config_yaml_is_valid_yaml() {
+        let parsed: serde_yaml::Value = serde_yaml::from_str(POCKET_TTS_CONFIG_YAML)
+            .expect("vendored pocket-tts config must be valid YAML");
+        assert!(parsed.get("weights_path").is_some());
+        assert!(parsed.get("flow_lm").is_some());
+        assert!(parsed.get("mimi").is_some());
+    }
+
+    #[test]
+    fn test_ensure_pocket_tts_config_dir_writes_loadable_file() {
+        let dir = ensure_pocket_tts_config_dir().expect("ensure_pocket_tts_config_dir");
+        let config_file = dir.join("config").join(format!("{POCKET_TTS_VARIANT}.yaml"));
+        assert!(config_file.exists());
+        let contents = fs::read_to_string(&config_file).unwrap();
+        assert_eq!(contents, POCKET_TTS_CONFIG_YAML);
     }
 
     // ── resolve_voices_dir ────────────────────────────────────────────────────
