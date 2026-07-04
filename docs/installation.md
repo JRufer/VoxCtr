@@ -166,6 +166,31 @@ Pocket-TTS is a pure-Rust voice-cloning TTS engine (no system packages required)
 
 ---
 
+## Uninstalling
+
+`scripts/uninstall.sh` reverts everything VoxCtrl's setup and runtime create —
+the udev rule, your `input` group membership, the menu launcher and icon,
+`~/.config/voxctrl/`, `~/.local/share/voxctrl/` (Whisper models, Piper engine
+and voices), the WebKit profile dirs, and the Pocket-TTS entries in the
+HuggingFace cache — returning the system to its pre-VoxCtrl state:
+
+```bash
+# From a clone of this repository:
+./scripts/uninstall.sh              # interactive
+./scripts/uninstall.sh --yes        # no prompts (keeps the .AppImage file)
+
+# Or without cloning:
+curl -fsSL https://raw.githubusercontent.com/JRufer/VoxCtrl/master/scripts/uninstall.sh | bash -s -- --yes
+```
+
+Optional flags: `--remove-appimage` also deletes the `.AppImage` file itself;
+`--remove-packages` also removes the host packages the installer added
+(`wtype`, `xdotool`, `wl-clipboard`, `xclip`, `portaudio`, `espeak-ng`) —
+opt-in because other software may use them. Log out and back in afterwards for
+the `input` group removal to take effect.
+
+---
+
 ## Building from Source
 
 See [Development Guide](./development.md).
