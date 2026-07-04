@@ -110,7 +110,7 @@ const defaultConfig: AppConfig = {
     inference_mode: "Balanced",
     whisper_cpp: {
       model_dir: "",
-      model_size: "large-v3",
+      model_size: "tiny",
       device: "auto",
       threads: 0,
     },
@@ -155,7 +155,7 @@ const defaultConfig: AppConfig = {
   },
   tts: {
     enabled: false,
-    engine: "piper",
+    engine: "espeak",
     voice: "en-us-lessac-medium",
     voice_dir: "",
     stop_key: ["KEY_ESCAPE"],

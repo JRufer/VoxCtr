@@ -16,7 +16,9 @@
   let timerId: any = null;
   let unlistenTtsStart: (() => void) | null = null;
   let unlistenTtsEnd: (() => void) | null = null;
+  let unlistenTtsError: (() => void) | null = null;
   let voiceSpeaking = $state(false);
+  let ttsError = $state<string | null>(null);
   let startTime = 0;
 
   function startTimer() {
@@ -128,8 +130,9 @@
     }
     
     testing = true;
+    ttsError = null;
     startTimer();
-    
+
     let engineName = "TTS";
     let voice: string | null = null;
     
@@ -152,7 +155,7 @@
         voice: voice,
       });
     } catch (e) {
-      alert(`TTS test failed: ${e}`);
+      ttsError = `${e}`;
       clearInterval(timerId);
       isCounting = false;
       testing = false;
@@ -324,12 +327,25 @@
     unlistenTtsEnd = await listen<void>("tts-playback-end", () => {
       voiceSpeaking = false;
     });
+
+    // Speak errors happen asynchronously in the TTS worker thread (missing
+    // engine binary, voice not downloaded, no audio device, ...). Without this
+    // the Test button hangs on "Speaking..." with no feedback at all.
+    unlistenTtsError = await listen<string>("tts-error", (event) => {
+      ttsError = event.payload;
+      clearInterval(timerId);
+      isCounting = false;
+      runSpeed = null;
+      testing = false;
+      voiceSpeaking = false;
+    });
   });
 
   onDestroy(() => {
     if (timerId) clearInterval(timerId);
     if (unlistenTtsStart) unlistenTtsStart();
     if (unlistenTtsEnd) unlistenTtsEnd();
+    if (unlistenTtsError) unlistenTtsError();
   });
 
   // ── Stop Key Recorder ───────────────────────────────────────────────────────────
@@ -443,6 +459,9 @@
         </div>
       {/if}
     </div>
+    {#if ttsError}
+      <p class="field-error-msg tts-error-msg">❌ {ttsError}</p>
+    {/if}
   </div>
 
   <!-- ── Piper section ──────────────────────────────────────────────────── -->
@@ -667,6 +686,9 @@
 
   .tts-test-row {
     @apply flex justify-between items-center w-full;
+  }
+  .tts-error-msg {
+    @apply w-full break-words;
   }
   .run-speed-container {
     display: flex;

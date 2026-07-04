@@ -153,6 +153,29 @@ Because the installer adds your account to the low-level `input` group for globa
 
 ---
 
+## 🔢 Bumping the App Version
+
+The version number is declared independently in three places: `package.json`,
+`src-tauri/tauri.conf.json` (the one that actually drives `getVersion()`, the
+About tab, and the AppImage filename), and `Cargo.toml`'s
+`[workspace.package]`. They've drifted before, and a release has shipped
+under a git tag that didn't match what the built app actually reported.
+
+**Always bump with the script, never by hand-editing one file:**
+
+```bash
+./scripts/bump_version.sh 0.2.8
+cargo check   # refreshes Cargo.lock's recorded crate versions
+git add -A && git commit -m "Bump version to 0.2.8"
+```
+
+CI (`.github/workflows/release.yml`) runs a `check-version-sync` job before
+every release build that fails immediately if the three files disagree, and
+rejects a manually-dispatched release tag that doesn't match the version in
+the files — bump the files instead of overriding the tag.
+
+---
+
 ## 📋 Build Flags & Config Reference
 
 * **Tauri Config (`src-tauri/tauri.conf.json`)**:

@@ -6,6 +6,14 @@
 
 set -euo pipefail
 
+# Parse command line options
+FORCE_CPU_FLAG=false
+for arg in "$@"; do
+    case "$arg" in
+        --cpu) FORCE_CPU_FLAG=true ;;
+    esac
+done
+
 # ── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
@@ -69,6 +77,56 @@ if ! command -v unsquashfs &>/dev/null; then
     exit 1
 fi
 
+# Verify npm is installed (required for Svelte/Vite frontend assets)
+if ! command -v npm &>/dev/null; then
+    fail "The Node Package Manager 'npm' is not installed on your system!"
+    info "Building the Svelte frontend requires Node.js and npm."
+    info "👉 Please install it via your package manager:"
+    info "   - Arch:   sudo pacman -S npm"
+    info "   - Ubuntu: sudo apt install npm"
+    info "   - Fedora: sudo dnf install npm"
+    echo ""
+    exit 1
+fi
+
+# Verify cargo is installed and functional
+if ! command -v cargo &>/dev/null || ! cargo --version &>/dev/null; then
+    # If cargo is missing or not functional, check if rustup is available to configure it
+    if command -v rustup &>/dev/null; then
+        info "rustup is installed but no default toolchain is configured."
+        info "Attempting to initialize rustup stable toolchain..."
+        rustup default stable || true
+        if [ -f "$HOME/.cargo/env" ]; then
+            source "$HOME/.cargo/env" || true
+        fi
+    fi
+
+    # Check cargo again after trying to initialize
+    if ! command -v cargo &>/dev/null || ! cargo --version &>/dev/null; then
+        fail "The Rust compiler toolchain 'cargo' is not installed or not configured on your system!"
+        info "Building the Tauri application requires Cargo and the Rust toolchain."
+        info "👉 Please install it via rustup (recommended) or your package manager:"
+        info "   - rustup (Recommended): curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        info "   - Arch:   sudo pacman -S rustup && rustup default stable"
+        info "   - Ubuntu: sudo apt install cargo"
+        info "   - Fedora: sudo dnf install cargo"
+        echo ""
+        exit 1
+    fi
+fi
+
+# Verify cmake is installed (required for whisper-rs compilation)
+if ! command -v cmake &>/dev/null; then
+    fail "The 'cmake' build tool is not installed on your system!"
+    info "Building the application requires CMake to compile whisper-rs."
+    info "👉 Please install it via your package manager:"
+    info "   - Arch:   sudo pacman -S cmake"
+    info "   - Ubuntu: sudo apt install cmake"
+    info "   - Fedora: sudo dnf install cmake"
+    echo ""
+    exit 1
+fi
+
 ok "AppImage toolchain wrapper is verified and ready."
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -94,6 +152,7 @@ step "Compiling & Packaging Tauri Application"
 export PATH="$ROOT_DIR:$PATH"
 export QT_QPA_PLATFORM=offscreen
 export APPIMAGE_EXTRACT_AND_RUN=1
+export NO_STRIP=true
 
 # Detect and inject common CUDA paths to PATH for CMake nvcc detection in non-interactive shells
 for cuda_dir in "/opt/cuda/bin" "/usr/local/cuda/bin"; do
@@ -120,6 +179,31 @@ elif [ -d "/usr/local/cuda" ]; then
     export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}"
     export LIBRARY_PATH="/usr/local/cuda/lib64:${LIBRARY_PATH:-}"
     CUDA_FOUND=true
+fi
+
+# Check if an NVIDIA GPU is present on the system
+HAS_NVIDIA_GPU=false
+if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+    HAS_NVIDIA_GPU=true
+fi
+
+if [ "$CUDA_FOUND" = false ] && [ "$HAS_NVIDIA_GPU" = true ]; then
+    # NVIDIA GPU is present but toolkit is missing. Fail unless forced to compile for CPU.
+    if [ "${FORCE_CPU_FLAG}" = "true" ] || [ "${FORCE_CPU:-0}" = "1" ]; then
+        warn "NVIDIA GPU detected but CUDA Toolkit is missing. Forcing CPU-only compilation as requested."
+    else
+        fail "NVIDIA GPU detected, but the CUDA Toolkit (nvcc) was not found in standard paths (/opt/cuda or /usr/local/cuda)!"
+        info "Building with CUDA (GPU) support requires the CUDA Toolkit."
+        info "👉 Please install the CUDA Toolkit package for your distribution:"
+        info "   - Arch:   sudo pacman -S cuda"
+        info "   - Ubuntu: sudo apt install nvidia-cuda-toolkit"
+        info "   - Fedora: sudo dnf install cuda-toolkit"
+        echo ""
+        info "If you wish to bypass this check and compile for CPU-only instead, run:"
+        info "   FORCE_CPU=1 ./build_appimage.sh  or  ./build_appimage.sh --cpu"
+        echo ""
+        exit 1
+    fi
 fi
 
 info "Running Tauri release compiler with headless PATH and CUDA injection..."

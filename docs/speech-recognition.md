@@ -22,7 +22,7 @@ VoxCtrl uses **Whisper** (via `whisper-rs`, native bindings to whisper.cpp) for 
 
 The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a distilled model offering near large-v3 quality at medium speed.
 
-The default model is **`large-v3`**. Models are downloaded from Hugging Face as GGUF files on first use. By default they are cached at `~/.local/share/voxctrl/models/`; this path is configurable via `engine.whisper_cpp.model_dir`.
+The default model is **`tiny`**. It's small enough (~75MB) that VoxCtrl downloads it automatically in the background on first launch — no manual step required to start dictating. Models are downloaded from Hugging Face as GGUF files and cached at `~/.local/share/voxctrl/models/` by default; this path is configurable via `engine.whisper_cpp.model_dir`. Larger models (better accuracy, slower) must be downloaded explicitly from Settings → Engine.
 
 Change the active model via `engine.whisper_cpp.model_size` in config. Changing it takes effect on next recording.
 
@@ -213,7 +213,7 @@ Under `engine.whisper_cpp` in `config.json`:
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `model_size` | string | `"large-v3"` | Whisper model |
+| `model_size` | string | `"tiny"` | Whisper model — `tiny`/`tiny.en` auto-download silently on first launch; larger sizes require an explicit download in Settings → Engine |
 | `device` | string | `"auto"` | Compute device |
 | `threads` | integer | `0` | CPU threads (0 = auto) |
 | `model_dir` | string | `""` | Custom model storage path; empty = `~/.local/share/voxctrl/models/`. Supports `~` expansion (e.g. `~/.whisper-models`). The directory must already exist. |

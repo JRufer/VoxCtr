@@ -28,9 +28,50 @@ env:
   CARGO_HTTP_MULTIPLEXING: false
   CARGO_HTTP_HTTP2: false
 
-# ── Build matrix ──────────────────────────────────────────────────────────────
+# ── Version consistency gate ───────────────────────────────────────────────────
+# There is no single source of truth for the app version: it's declared
+# separately in package.json, src-tauri/tauri.conf.json, and Cargo.toml's
+# [workspace.package]. They HAVE drifted before (v0.1.8 shipped with
+# package.json still at 0.1.7) and release tags have been cut that didn't
+# match tauri.conf.json at all (v0.2.7 was tagged via a manual dispatch
+# override while tauri.conf.json still said 0.2.6). Fail fast, before
+# spending build minutes, if they disagree. Always bump via
+# ./scripts/bump_version.sh so this can't happen.
 jobs:
+  check-version-sync:
+    name: Check version files are in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare package.json / tauri.conf.json / Cargo.toml
+        run: |
+          PKG_VERSION=$(jq -r '.version' package.json)
+          TAURI_VERSION=$(jq -r '.version' src-tauri/tauri.conf.json)
+          CARGO_VERSION=$(awk '/^\[workspace\.package\]/{f=1; next} /^\[/{f=0} f && /^version *=/{gsub(/"/,"",$3); print $3; exit}' Cargo.toml)
+
+          echo "package.json:        $PKG_VERSION"
+          echo "tauri.conf.json:      $TAURI_VERSION"
+          echo "Cargo.toml (workspace): $CARGO_VERSION"
+
+          if [ "$PKG_VERSION" != "$TAURI_VERSION" ] || [ "$PKG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Version mismatch across package.json ($PKG_VERSION), src-tauri/tauri.conf.json ($TAURI_VERSION), and Cargo.toml ($CARGO_VERSION). Run ./scripts/bump_version.sh <version> to fix, then push again."
+            exit 1
+          fi
+
+          # A manually-dispatched tag must match the files' version — it
+          # exists to re-run/re-tag a build of the CURRENT version, not to
+          # publish a release under a version the app doesn't actually report.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
+            EXPECTED="v${PKG_VERSION}"
+            if [ "${{ inputs.tag }}" != "$EXPECTED" ]; then
+              echo "::error::Manual tag '${{ inputs.tag }}' does not match the version in the source files ($EXPECTED). Bump the version files to match the tag you want (./scripts/bump_version.sh), or dispatch with tag=$EXPECTED."
+              exit 1
+            fi
+          fi
+
+# ── Build matrix ──────────────────────────────────────────────────────────────
   build:
+    needs: check-version-sync
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:

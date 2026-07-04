@@ -55,15 +55,17 @@
     </div>
   {:else if udevStatus}
     <div class="modal-card">
-      <div class="modal-icon">{udevStatus.needs_relogin ? '🔄' : '⚠️'}</div>
+      <div class="modal-icon">{udevStatus.is_configured ? '✅' : udevStatus.needs_relogin ? '🔄' : '⚠️'}</div>
       <h2 class="modal-title">
-        {udevStatus.needs_relogin ? 'Relogin Required' : 'Hardware Permissions Required'}
+        {udevStatus.is_configured ? 'Permissions Configured' : udevStatus.needs_relogin ? 'Relogin Required' : 'Hardware Permissions Required'}
       </h2>
       <p class="modal-desc">
-        {#if udevStatus.needs_relogin}
-          Hardware hotkey rules are configured, but your active session is missing <code>input</code> group permissions. Please **log out and log back in** (or reboot) for these settings to take effect.
+        {#if udevStatus.is_configured}
+          Hardware hotkey permissions are configured and working in this session. You're all set — global keyboard shortcuts are active.
+        {:else if udevStatus.needs_relogin}
+          Hardware hotkey rules are configured, but your active session is missing <code>input</code> group permissions. Please <strong>log out and log back in</strong> (or reboot) for these settings to take effect. This screen will keep appearing at startup until hotkey permissions are working.
         {:else}
-          VoxCtrl requires global hotkey setup to capture keyboard shortcuts natively. Click below to automatically configure udev rules, input group membership, and desktop integration launcher files.
+          VoxCtrl requires global hotkey setup to capture keyboard shortcuts natively. Click below to automatically configure udev rules, input group membership, and desktop integration launcher files. This screen will keep appearing at startup until hotkey permissions are working.
         {/if}
       </p>
 
@@ -73,9 +75,9 @@
           <span class="error-msg">{installError}</span>
         </div>
       {/if}
-      
+
       <div class="modal-actions">
-        {#if !udevStatus.needs_relogin}
+        {#if !udevStatus.is_configured && !udevStatus.needs_relogin}
           <button
             class="btn-primary"
             onclick={handleSetup}
@@ -84,7 +86,7 @@
           </button>
         {/if}
         <button class="btn-secondary" onclick={handleClose}>
-          {udevStatus.needs_relogin ? 'Close' : 'Continue Anyway'}
+          {udevStatus.is_configured ? 'Close' : udevStatus.needs_relogin ? 'Close' : 'Continue Anyway'}
         </button>
       </div>
     </div>

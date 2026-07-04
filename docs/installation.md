@@ -166,6 +166,31 @@ Pocket-TTS is a pure-Rust voice-cloning TTS engine (no system packages required)
 
 ---
 
+## Uninstalling
+
+`scripts/uninstall.sh` reverts everything VoxCtrl's setup and runtime create —
+the udev rule, your `input` group membership, the menu launcher and icon,
+`~/.config/voxctrl/`, `~/.local/share/voxctrl/` (Whisper models, Piper engine
+and voices), the WebKit profile dirs, and the Pocket-TTS entries in the
+HuggingFace cache — returning the system to its pre-VoxCtrl state:
+
+```bash
+# From a clone of this repository:
+./scripts/uninstall.sh              # interactive
+./scripts/uninstall.sh --yes        # no prompts (keeps the .AppImage file)
+
+# Or without cloning:
+curl -fsSL https://raw.githubusercontent.com/JRufer/VoxCtrl/master/scripts/uninstall.sh | bash -s -- --yes
+```
+
+Optional flags: `--remove-appimage` also deletes the `.AppImage` file itself;
+`--remove-packages` also removes the host packages the installer added
+(`wtype`, `xdotool`, `wl-clipboard`, `xclip`, `portaudio`, `espeak-ng`) —
+opt-in because other software may use them. Log out and back in afterwards for
+the `input` group removal to take effect.
+
+---
+
 ## Building from Source
 
 See [Development Guide](./development.md).
@@ -178,6 +203,35 @@ See [Development Guide](./development.md).
 - Check you are in the `input` group: `groups | grep input`
 - Log out and back in after adding to group
 - On some distros, the udev rule path differs — check the built-in installer logic for details
+
+### Permissions screen keeps reappearing (fresh Arch / CachyOS installs)
+The startup permissions screen reappears on every launch until global hotkeys
+actually work in your session:
+1. Click **Setup System Integration** and enter your password. This writes the
+   udev rule and adds you to the `input` group *first*; the optional host
+   package installation runs afterwards and is allowed to fail (stale pacman
+   mirrors on a freshly installed system are common — run `sudo pacman -Syu`
+   later to fix them).
+2. **Log out and log back in** (or reboot). Group membership only applies to
+   new login sessions; until then the screen shows a "Relogin Required" notice.
+
+### Hotkey records but no text is typed (and no overlay)
+- Download a **Whisper model** first: Settings → Engine → Download. On a fresh
+  install no model is present; VoxCtrl now shows a notification when you press
+  a dictation hotkey without one.
+- The default "Dictate (Hold)" gesture requires the combo to be **held** ~200ms
+  before recording starts — a very quick tap is ignored by design.
+- If a "no microphone audio is arriving" notification appears, pick a working
+  input device in Settings → Audio.
+
+### TTS engines refuse to play
+- **Piper**: download a voice in Settings → TTS first — this also installs the
+  standalone Piper engine into `~/.local/share/voxctrl/piper/`.
+- **eSpeak-NG**: requires the system package (`sudo pacman -S espeak-ng` /
+  `sudo apt install espeak-ng`).
+- **Pocket-TTS**: requires a one-time model download (and a HuggingFace token —
+  see above).
+- Failures now surface directly in Settings → TTS next to the Test button.
 
 ### No audio devices found
 - Run `arecord -l` to verify your mic is recognized by ALSA

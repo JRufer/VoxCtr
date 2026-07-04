@@ -106,6 +106,7 @@ pub async fn save_config(
         if new_config.tts.enabled {
             let app_handle = app.clone();
             let app_handle_end = app.clone();
+            let app_handle_err = app.clone();
             let state_clone = state.inner().clone();
             let state_clone_end = state.inner().clone();
             let new_tts = voxctrl_tts::TtsEngineWorker::start(
@@ -117,6 +118,9 @@ pub async fn save_config(
                 Some(std::sync::Arc::new(move || {
                     state_clone_end.set_speaking(false);
                     let _ = app_handle_end.emit("tts-playback-end", ());
+                })),
+                Some(std::sync::Arc::new(move |msg: String| {
+                    let _ = app_handle_err.emit("tts-error", msg);
                 })),
             );
             *handle = Some(new_tts.clone());
@@ -601,34 +605,59 @@ pub struct UdevStatusPayload {
     pub needs_relogin: bool,
 }
 
-#[tauri::command]
-pub async fn check_udev_status() -> Result<UdevStatusPayload, String> {
+/// Ground truth for whether the evdev hotkey listener can work in THIS
+/// process: at least one `/dev/input/event*` device is readable. Covers setups
+/// that grant access via ACLs (systemd uaccess) rather than the input group.
+#[cfg(target_os = "linux")]
+fn any_input_device_readable() -> bool {
+    let Ok(entries) = std::fs::read_dir("/dev/input") else { return false };
+    entries.flatten().any(|entry| {
+        entry
+            .file_name()
+            .to_str()
+            .map(|n| n.starts_with("event"))
+            .unwrap_or(false)
+            && std::fs::File::open(entry.path()).is_ok()
+    })
+}
+
+/// Shared udev/permission status check used by both the `check_udev_status`
+/// IPC command and the startup diagnostics gate in `lib.rs`.
+///
+/// `in_group` reflects whether hotkeys can work in the CURRENT session (process
+/// groups via `id -Gn`, or actually-readable input devices). Membership that
+/// only exists in the system group database (NSS `/etc/group`) — i.e. `usermod
+/// -aG input` ran but the user has not logged out yet — does NOT count as
+/// working; it sets `needs_relogin` instead so the UI can show the "log out and
+/// back in" message rather than pretending everything is configured while the
+/// evdev listener silently fails.
+pub fn check_udev_status_sync() -> UdevStatusPayload {
     // 1. Check for developer override via environment variable
     if let Ok(override_val) = std::env::var("VOXCTRL_TEST_UDEV_STATUS") {
         match override_val.as_str() {
             "missing" => {
-                return Ok(UdevStatusPayload {
+                return UdevStatusPayload {
                     is_configured: false,
                     rule_exists: false,
                     in_group: false,
                     needs_relogin: false,
-                });
+                };
             }
             "relogin" => {
-                return Ok(UdevStatusPayload {
+                return UdevStatusPayload {
                     is_configured: false,
                     rule_exists: true,
                     in_group: false,
                     needs_relogin: true,
-                });
+                };
             }
             "ok" => {
-                return Ok(UdevStatusPayload {
+                return UdevStatusPayload {
                     is_configured: true,
                     rule_exists: true,
                     in_group: true,
                     needs_relogin: false,
-                });
+                };
             }
             _ => {}
         }
@@ -637,12 +666,12 @@ pub async fn check_udev_status() -> Result<UdevStatusPayload, String> {
     // 2. Platform-specific checks
     #[cfg(not(target_os = "linux"))]
     {
-        Ok(UdevStatusPayload {
+        UdevStatusPayload {
             is_configured: true,
             rule_exists: true,
             in_group: true,
             needs_relogin: false,
-        })
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -652,8 +681,8 @@ pub async fn check_udev_status() -> Result<UdevStatusPayload, String> {
             || std::path::Path::new("/etc/udev/rules.d/99-voxctl.rules").exists()
             || std::path::Path::new("/etc/udev/rules.d/99-voxctr.rules").exists();
 
-        // Check if the current user session has the "input" group by running `id -Gn`
-        let mut in_group = match std::process::Command::new("id").args(&["-Gn"]).output() {
+        // Does the ACTIVE session have the "input" group?
+        let session_in_group = match std::process::Command::new("id").args(&["-Gn"]).output() {
             Ok(output) => {
                 let groups_str = String::from_utf8_lossy(&output.stdout);
                 groups_str.split_whitespace().any(|g| g == "input")
@@ -661,30 +690,40 @@ pub async fn check_udev_status() -> Result<UdevStatusPayload, String> {
             Err(_) => false,
         };
 
-        // Fallback: If not in group in active session, check system group database (NSS /etc/group).
-        // This is robust against sandboxes/containers where active process groups haven't refreshed.
-        if !in_group {
-            if let Ok(username) = std::env::var("USER") {
-                if let Ok(output) = std::process::Command::new("id").args(&["-Gn", &username]).output() {
-                    let groups_str = String::from_utf8_lossy(&output.stdout);
-                    if groups_str.split_whitespace().any(|g| g == "input") {
-                        in_group = true;
-                    }
-                }
-            }
-        }
+        // Hotkeys work if the session has the group OR devices are readable anyway.
+        let in_group = session_in_group || any_input_device_readable();
 
-        // If udev rules exist but user is not in group in active session/database, they need a relogin
-        let needs_relogin = rule_exists && !in_group;
+        // Is the membership at least recorded in the system group database (NSS
+        // /etc/group)? If so, setup already ran and only a relogin is missing.
+        let db_in_group = if in_group {
+            true
+        } else if let Ok(username) = std::env::var("USER") {
+            match std::process::Command::new("id").args(&["-Gn", &username]).output() {
+                Ok(output) => {
+                    let groups_str = String::from_utf8_lossy(&output.stdout);
+                    groups_str.split_whitespace().any(|g| g == "input")
+                }
+                Err(_) => false,
+            }
+        } else {
+            false
+        };
+
+        let needs_relogin = rule_exists && !in_group && db_in_group;
         let is_configured = rule_exists && in_group;
 
-        Ok(UdevStatusPayload {
+        UdevStatusPayload {
             is_configured,
             rule_exists,
             in_group,
             needs_relogin,
-        })
+        }
     }
+}
+
+#[tauri::command]
+pub async fn check_udev_status() -> Result<UdevStatusPayload, String> {
+    Ok(check_udev_status_sync())
 }
 
 #[tauri::command]
