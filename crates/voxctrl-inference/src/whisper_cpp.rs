@@ -95,11 +95,9 @@ impl WhisperCppBackend {
             }
         }
 
-        let first = candidates[0];
         bail!(
-            "Model '{size}' not found in {}.\n\
-             Download with:\n  wget -P {} {GGUF_BASE_URL}{first}",
-            model_dir.display(),
+            "Whisper model '{size}' is not downloaded (looked in {}). \
+             Open Settings → Engine and click Download next to the model.",
             model_dir.display()
         )
     }

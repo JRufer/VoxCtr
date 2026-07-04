@@ -39,6 +39,9 @@ pub struct InferenceOutput {
     pub raw_text: String,
     pub inference_ms: u32,
     pub language: String,
+    /// Set when transcription failed (model missing, backend error, ...). The
+    /// UI layer surfaces this to the user; `text` is empty in that case.
+    pub error: Option<String>,
 }
 
 // ── Engine ────────────────────────────────────────────────────────────────────
@@ -72,6 +75,7 @@ impl InferenceEngine {
                 raw_text: String::new(),
                 inference_ms: 0,
                 language: "en".into(),
+                error: None,
             });
         }
 
@@ -109,6 +113,7 @@ impl InferenceEngine {
                 raw_text: String::new(),
                 inference_ms: 0,
                 language: "en".into(),
+                error: None,
             });
         }
 
@@ -256,6 +261,7 @@ impl InferenceEngine {
             raw_text,
             inference_ms: result.inference_ms,
             language: result.language,
+            error: None,
         })
     }
 
@@ -391,13 +397,44 @@ pub fn run_worker(
         .name("voxctrl-inference".into())
         .spawn(move || {
             let mut engine = InferenceEngine::new(config);
-            if let Err(e) = engine.load() {
-                error!("Failed to load inference backend: {:?}", e);
-                return;
-            }
-            info!("Inference engine ready");
+            // A load failure (typically: model not downloaded yet on a fresh
+            // install) must NOT kill this thread. Keep consuming requests and
+            // retry the load on each one — the user may download the model
+            // from Settings → Engine while the app is running, and dictation
+            // must start working right away, not after an app restart.
+            let mut loaded = match engine.load() {
+                Ok(()) => {
+                    info!("Inference engine ready");
+                    true
+                }
+                Err(e) => {
+                    error!("Failed to load inference backend: {e:#}");
+                    false
+                }
+            };
 
             while let Ok(req) = rx.recv() {
+                if !loaded {
+                    match engine.load() {
+                        Ok(()) => {
+                            info!("Inference engine ready (loaded on demand)");
+                            loaded = true;
+                        }
+                        Err(e) => {
+                            error!("Inference backend still not loadable: {e:#}");
+                            let _ = tx.send(InferenceOutput {
+                                text: String::new(),
+                                target_id: req.target_id,
+                                raw_text: String::new(),
+                                inference_ms: 0,
+                                language: String::new(),
+                                error: Some(format!("{e:#}")),
+                            });
+                            continue;
+                        }
+                    }
+                }
+
                 match engine.process(req) {
                     Ok(output) => {
                         let _ = tx.send(output);
@@ -410,6 +447,7 @@ pub fn run_worker(
                             raw_text: "".to_string(),
                             inference_ms: 0,
                             language: "".to_string(),
+                            error: Some(format!("{e:#}")),
                         });
                     }
                 }

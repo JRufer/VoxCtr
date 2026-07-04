@@ -190,6 +190,15 @@ actually work in your session:
 2. **Log out and log back in** (or reboot). Group membership only applies to
    new login sessions; until then the screen shows a "Relogin Required" notice.
 
+### Hotkey records but no text is typed (and no overlay)
+- Download a **Whisper model** first: Settings → Engine → Download. On a fresh
+  install no model is present; VoxCtrl now shows a notification when you press
+  a dictation hotkey without one.
+- The default "Dictate (Hold)" gesture requires the combo to be **held** ~200ms
+  before recording starts — a very quick tap is ignored by design.
+- If a "no microphone audio is arriving" notification appears, pick a working
+  input device in Settings → Audio.
+
 ### TTS engines refuse to play
 - **Piper**: download a voice in Settings → TTS first — this also installs the
   standalone Piper engine into `~/.local/share/voxctrl/piper/`.

@@ -141,7 +141,9 @@ fn default_tap_ms() -> u32 {
     250
 }
 fn default_hold_ms() -> u32 {
-    1000
+    // Keep in sync with models::default_hold_threshold_ms — 200ms debounces
+    // accidental taps without making a normal hotkey press feel dead.
+    200
 }
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
@@ -398,7 +400,7 @@ pub fn default_bindings() -> Vec<HotkeyBinding> {
             target_id: "default".into(),
             target_ids: vec!["default".into()],
             tap_ms: 250,
-            hold_threshold_ms: 1000,
+            hold_threshold_ms: 200,
             subkey: None,
             disabled: false,
             openai_enabled: Some(false),
@@ -419,7 +421,7 @@ pub fn default_bindings() -> Vec<HotkeyBinding> {
             target_id: "default".into(),
             target_ids: vec!["default".into()],
             tap_ms: 250,
-            hold_threshold_ms: 1000,
+            hold_threshold_ms: 200,
             subkey: None,
             disabled: false,
             openai_enabled: Some(false),

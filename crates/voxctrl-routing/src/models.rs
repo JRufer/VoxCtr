@@ -64,7 +64,11 @@ fn default_tap_ms() -> u32 {
     250
 }
 fn default_hold_threshold_ms() -> u32 {
-    1000
+    // Minimum press duration before a Hold gesture starts recording. Long
+    // enough to debounce accidental taps, short enough that pressing the
+    // hotkey gives near-immediate feedback — the previous 1000ms made a normal
+    // press look completely dead (no overlay, no recording) on fresh installs.
+    200
 }
 
 // ── Delivery types ────────────────────────────────────────────────────────────

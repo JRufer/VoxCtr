@@ -1182,10 +1182,12 @@ fn test_example_configurations_load() {
 fn test_hold_threshold_default() {
     use crate::loader::default_bindings;
     
-    // Test that default bindings have hold threshold set to 1000ms
+    // Default bindings use a 200ms hold threshold: long enough to debounce
+    // accidental taps, short enough that a normal hotkey press gives feedback
+    // (the old 1000ms default made a press look completely dead).
     let bindings = default_bindings();
     for binding in bindings {
-        assert_eq!(binding.hold_threshold_ms, 1000);
+        assert_eq!(binding.hold_threshold_ms, 200);
     }
 }
 

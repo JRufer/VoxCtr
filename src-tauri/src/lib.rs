@@ -309,6 +309,11 @@ pub fn run() {
     });
 
     let state_for_gesture = app_state.clone();
+    // Once-per-session notices for the two silent failure modes of a fresh
+    // install: recording with no Whisper model, and recording with a mic
+    // stream that never delivers audio.
+    let model_notice_shown = Arc::new(AtomicBool::new(false));
+    let mic_notice_shown = Arc::new(AtomicBool::new(false));
     tokio::spawn(async move {
         while let Some(event) = gesture_rx.recv().await {
             use voxctrl_hotkeys::GestureKind;
@@ -335,6 +340,45 @@ pub fn run() {
                     *state_for_gesture.active_binding_label.lock().await = event.binding_label.clone();
                     *state_for_gesture.active_binding_id.lock().await = event.binding_id.clone();
                     state_for_gesture.set_recording(true);
+
+                    // Warn right at the keypress if transcription is doomed to
+                    // fail because the Whisper model was never downloaded.
+                    {
+                        let cfg = state_for_gesture.config.lock().await;
+                        let eng = &cfg.data.engine;
+                        if eng.backend != voxctrl_config::BackendChoice::Moonshine
+                            && !voxctrl_inference::whisper_cpp::is_model_downloaded(
+                                &eng.whisper_cpp.model_size,
+                                &eng.whisper_cpp.model_dir,
+                            )
+                            && !model_notice_shown.swap(true, std::sync::atomic::Ordering::SeqCst)
+                        {
+                            voxctrl_inject::show_notification(
+                                "VoxCtrl",
+                                &format!(
+                                    "Whisper model '{}' is not downloaded — dictation will not produce text. Open Settings → Engine and download it.",
+                                    eng.whisper_cpp.model_size
+                                ),
+                            );
+                        }
+                    }
+
+                    // Warn if the microphone stream never comes up while the
+                    // user is recording (dead input device, audio stack issue).
+                    let st = state_for_gesture.clone();
+                    let mic_shown = mic_notice_shown.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        if st.is_recording()
+                            && !st.is_audio_ready()
+                            && !mic_shown.swap(true, std::sync::atomic::Ordering::SeqCst)
+                        {
+                            voxctrl_inject::show_notification(
+                                "VoxCtrl",
+                                "Recording is active but no microphone audio is arriving. Check the input device in Settings → Audio.",
+                            );
+                        }
+                    });
                 }
                 GestureKind::Stop => {
                     state_for_gesture.set_recording(false);
@@ -350,6 +394,14 @@ pub fn run() {
         std::thread::spawn(move || {
             while let Ok(output) = text_rx.recv() {
                 state.set_processing(false);
+                if let Some(ref err) = output.error {
+                    // Always surface transcription failures — without this a
+                    // fresh install with no Whisper model records audio and
+                    // then silently drops it, which reads as "hotkeys broken".
+                    tracing::error!("Transcription failed: {err}");
+                    voxctrl_inject::show_notification("VoxCtrl — transcription failed", err);
+                    continue;
+                }
                 if output.text.trim().is_empty() {
                     continue;
                 }
