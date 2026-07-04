@@ -23,7 +23,7 @@ Full schema with defaults:
     "inference_mode": "Balanced",
     "whisper_cpp": {
       "model_dir": "",
-      "model_size": "large-v3",
+      "model_size": "tiny",
       "device": "auto",
       "threads": 0
     },
@@ -113,7 +113,7 @@ The engine config is nested into two backend sub-objects.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `model_size` | string | `"large-v3"` | Whisper model to load (see valid values below) |
+| `model_size` | string | `"tiny"` | Whisper model to load (see valid values below). `tiny`/`tiny.en` auto-download silently on first launch; other sizes require an explicit download in Settings → Engine. |
 | `device` | string | `"auto"` | Compute device: `auto`/`cpu`/`cuda`/`vulkan` |
 | `threads` | integer | `0` | CPU thread count; 0 = half of logical cores |
 | `model_dir` | string | `""` | Custom model directory; empty = `~/.local/share/voxctrl/models/`. Supports `~` expansion. The directory must already exist. |

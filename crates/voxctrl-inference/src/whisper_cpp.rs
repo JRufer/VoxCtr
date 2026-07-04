@@ -29,6 +29,15 @@ static GGUF_MAP: &[(&str, &[&str])] = &[
 const GGUF_BASE_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/";
 
+/// Model sizes small enough (~75MB or less) to auto-download silently in the
+/// background at first launch, so the app transcribes out of the box with no
+/// manual step. Anything larger stays an explicit, user-initiated download —
+/// pulling hundreds of MB to a few GB without asking would be a bad surprise
+/// on a metered or slow connection.
+pub fn is_small_auto_downloadable(size: &str) -> bool {
+    matches!(size, "tiny" | "tiny.en")
+}
+
 // ── Backend ───────────────────────────────────────────────────────────────────
 
 pub struct WhisperCppBackend {
@@ -247,6 +256,12 @@ pub fn is_model_downloaded(size: &str, model_dir: &str) -> bool {
     candidates.iter().any(|filename| dir.join(filename).exists())
 }
 
+/// Serializes calls to `download_model`. Guards against two independent
+/// triggers racing on the same file — e.g. the silent startup auto-download of
+/// the default "tiny" model firing at the same time the user clicks "Download"
+/// in Settings before it has finished.
+static DOWNLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
     let candidates = GGUF_MAP
         .iter()
@@ -264,6 +279,13 @@ pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
     let filename = candidates[0];
     let path = model_dir.join(filename);
 
+    if path.exists() {
+        return Ok(());
+    }
+
+    let _guard = DOWNLOAD_LOCK.lock().await;
+    // Re-check after acquiring the lock: another caller may have just
+    // finished downloading this exact file while we were waiting.
     if path.exists() {
         return Ok(());
     }
@@ -286,6 +308,27 @@ pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
 mod tests {
     use super::*;
     use voxctrl_config::WhisperCppConfig;
+
+    // ── is_small_auto_downloadable ────────────────────────────────────────────
+
+    #[test]
+    fn test_is_small_auto_downloadable_tiny_variants() {
+        assert!(is_small_auto_downloadable("tiny"));
+        assert!(is_small_auto_downloadable("tiny.en"));
+    }
+
+    #[test]
+    fn test_is_small_auto_downloadable_rejects_larger_models() {
+        for size in ["base", "base.en", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"] {
+            assert!(!is_small_auto_downloadable(size), "{size} must not auto-download silently");
+        }
+    }
+
+    #[test]
+    fn test_is_small_auto_downloadable_rejects_unknown_and_paths() {
+        assert!(!is_small_auto_downloadable("unknown-size"));
+        assert!(!is_small_auto_downloadable("/tmp/custom.bin"));
+    }
 
     #[test]
     fn test_new_backend() {

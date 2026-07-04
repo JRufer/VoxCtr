@@ -210,7 +210,7 @@ Under `tts` in `config.json`:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Enable TTS functionality |
-| `engine` | string | `"piper"` | `"piper"`, `"pocket_tts"`, or `"espeak"` |
+| `engine` | string | `"espeak"` | `"piper"`, `"pocket_tts"`, or `"espeak"`. eSpeak-NG is the default because it's a system package with no model download; Piper and Pocket-TTS need a voice/model download first. |
 | `voice` | string | `"en-us-lessac-medium"` | Default voice for Piper (hyphen-delimited) |
 | `voice_dir` | string | `""` | Directory for Piper voice files; empty = `~/.local/share/voxctrl/piper-voices/` |
 | `stop_key` | string[] | `["KEY_ESCAPE"]` | Keys that interrupt playback |

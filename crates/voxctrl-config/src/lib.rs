@@ -31,7 +31,11 @@ impl Default for WhisperCppConfig {
     fn default() -> Self {
         Self {
             model_dir: String::new(),
-            model_size: "large-v3".into(),
+            // "tiny" (~75MB) is small enough to auto-download silently at
+            // first launch (see src-tauri/src/lib.rs startup hook) so the app
+            // transcribes out of the box with no manual download step. Users
+            // who want more accuracy can pick a larger model in Settings.
+            model_size: "tiny".into(),
             device: "auto".into(),
             threads: 0,
         }
@@ -353,7 +357,11 @@ impl Default for TtsConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            engine: TtsEngine::Piper,
+            // eSpeak-NG is a system package installed by the setup flow
+            // (installer.rs) — it works immediately with no model download,
+            // unlike Piper (needs a voice download) or Pocket-TTS (needs a
+            // multi-hundred-MB gated model download).
+            engine: TtsEngine::Espeak,
             voice: "en-us-lessac-medium".into(),
             voice_dir: String::new(),
             stop_key: vec!["KEY_ESC".into()],

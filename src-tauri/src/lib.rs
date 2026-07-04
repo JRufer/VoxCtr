@@ -343,10 +343,16 @@ pub fn run() {
 
                     // Warn right at the keypress if transcription is doomed to
                     // fail because the Whisper model was never downloaded.
+                    // Skip this for small models the startup hook already
+                    // auto-downloads in the background (see lib.rs setup()) —
+                    // that flow has its own "downloading.../ready/failed"
+                    // notifications, so this would just be a confusing extra
+                    // "not downloaded, go to Settings" message mid-download.
                     {
                         let cfg = state_for_gesture.config.lock().await;
                         let eng = &cfg.data.engine;
                         if eng.backend != voxctrl_config::BackendChoice::Moonshine
+                            && !voxctrl_inference::whisper_cpp::is_small_auto_downloadable(&eng.whisper_cpp.model_size)
                             && !voxctrl_inference::whisper_cpp::is_model_downloaded(
                                 &eng.whisper_cpp.model_size,
                                 &eng.whisper_cpp.model_dir,
@@ -754,13 +760,47 @@ pub fn run() {
                 eprintln!("Slint overlay binary not found! Check your build directory.");
             }
 
-            // Force show the settings window on startup if the voice model is missing
+            // Force show the settings window on startup if the voice model is
+            // missing — unless it's small enough to auto-download silently in
+            // the background (the shipped default, "tiny"), in which case the
+            // app works out of the box with no Settings visit required.
             let mut show_settings = cfg_data.ui.auto_show_settings;
             if cfg_data.engine.backend != voxctrl_config::BackendChoice::Moonshine {
-                let model_size = &cfg_data.engine.whisper_cpp.model_size;
-                let model_dir = &cfg_data.engine.whisper_cpp.model_dir;
-                if !voxctrl_inference::whisper_cpp::is_model_downloaded(model_size, model_dir) {
-                    show_settings = true;
+                let model_size = cfg_data.engine.whisper_cpp.model_size.clone();
+                let model_dir = cfg_data.engine.whisper_cpp.model_dir.clone();
+                if !voxctrl_inference::whisper_cpp::is_model_downloaded(&model_size, &model_dir) {
+                    if voxctrl_inference::whisper_cpp::is_small_auto_downloadable(&model_size) {
+                        // The inference worker independently retries loading
+                        // the model on every dictation request (see
+                        // voxctrl-inference::run_worker), so transcription
+                        // starts working the moment this finishes — no app
+                        // restart needed.
+                        tauri::async_runtime::spawn(async move {
+                            voxctrl_inject::show_notification(
+                                "VoxCtrl",
+                                &format!("Downloading the default speech model ({model_size})..."),
+                            );
+                            match voxctrl_inference::whisper_cpp::download_model(&model_size, &model_dir).await {
+                                Ok(()) => {
+                                    voxctrl_inject::show_notification(
+                                        "VoxCtrl",
+                                        "Speech model ready — dictation is now available.",
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::error!("Auto-download of default speech model failed: {e:#}");
+                                    voxctrl_inject::show_notification(
+                                        "VoxCtrl",
+                                        &format!(
+                                            "Could not download the default speech model: {e:#}. Open Settings → Engine to retry."
+                                        ),
+                                    );
+                                }
+                            }
+                        });
+                    } else {
+                        show_settings = true;
+                    }
                 }
             }
 
