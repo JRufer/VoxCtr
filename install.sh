@@ -33,6 +33,17 @@ PKG_MGR=$(detect_pkg_manager)
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
+# Verify npm is installed as a dependency at start
+if ! command -v npm &>/dev/null; then
+    fail "The Node Package Manager 'npm' is not installed, which is required as a dependency."
+    info "👉 Please install Node.js and npm via your package manager first:"
+    info "   - Arch:   sudo pacman -S npm"
+    info "   - Ubuntu: sudo apt install npm"
+    info "   - Fedora: sudo dnf install npm"
+    echo ""
+    exit 1
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. Install Host Runtime Dependencies
 # ══════════════════════════════════════════════════════════════════════════════
@@ -137,25 +148,61 @@ else
         
         # Check for build toolchain dependencies
         MISSING_BUILD_TOOLS=0
-        if ! command -v cargo &>/dev/null; then MISSING_BUILD_TOOLS=1; fi
+        if ! command -v cargo &>/dev/null || ! cargo --version &>/dev/null; then MISSING_BUILD_TOOLS=1; fi
         if ! command -v npm &>/dev/null;   then MISSING_BUILD_TOOLS=1; fi
+        if ! command -v cmake &>/dev/null; then MISSING_BUILD_TOOLS=1; fi
+        
+        # Check if an NVIDIA GPU is present
+        HAS_NVIDIA_GPU=false
+        if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
+            HAS_NVIDIA_GPU=true
+        fi
+
+        # If NVIDIA GPU is present but CUDA toolkit is not in standard paths, treat as missing build tools
+        INSTALL_CUDA=false
+        if [ "$HAS_NVIDIA_GPU" = true ]; then
+            if [ ! -d "/opt/cuda" ] && [ ! -d "/usr/local/cuda" ]; then
+                MISSING_BUILD_TOOLS=1
+                INSTALL_CUDA=true
+            fi
+        fi
         
         if [ $MISSING_BUILD_TOOLS -eq 1 ]; then
-            info "Compiler tools are missing. Installing build toolchain dependencies..."
+            info "Compiler tools or dependencies are missing. Installing build toolchain dependencies..."
             case "$PKG_MGR" in
                 pacman)
-                    sudo pacman -S --noconfirm --needed base-devel rustup nodejs npm pkgconf
+                    if [ "$INSTALL_CUDA" = true ]; then
+                        info "NVIDIA GPU detected. Adding 'cuda' toolkit to installation..."
+                        sudo pacman -S --noconfirm --needed base-devel rustup nodejs npm pkgconf cuda cmake
+                    else
+                        sudo pacman -S --noconfirm --needed base-devel rustup nodejs npm pkgconf cmake
+                    fi
                     ;;
                 apt)
-                    sudo apt-get install -y build-essential curl nodejs npm pkg-config
+                    if [ "$INSTALL_CUDA" = true ]; then
+                        info "NVIDIA GPU detected. Adding 'nvidia-cuda-toolkit' to installation..."
+                        sudo apt-get install -y build-essential curl nodejs npm pkg-config nvidia-cuda-toolkit cmake
+                    else
+                        sudo apt-get install -y build-essential curl nodejs npm pkg-config cmake
+                    fi
                     ;;
                 dnf)
                     sudo dnf groupinstall -y "Development Tools"
-                    sudo dnf install -y curl nodejs npm pkgconf-pkg-config
+                    if [ "$INSTALL_CUDA" = true ]; then
+                        info "NVIDIA GPU detected. Adding 'cuda-toolkit' to installation..."
+                        sudo dnf install -y curl nodejs npm pkgconf-pkg-config cuda-toolkit cmake
+                    else
+                        sudo dnf install -y curl nodejs npm pkgconf-pkg-config cmake
+                    fi
                     ;;
                 zypper)
                     sudo zypper install -t pattern -y devel_basis
-                    sudo zypper install -y curl nodejs npm pkg-config
+                    if [ "$INSTALL_CUDA" = true ]; then
+                        info "NVIDIA GPU detected. Adding 'cuda' toolkit to installation..."
+                        sudo zypper install -y curl nodejs npm pkg-config cuda cmake
+                    else
+                        sudo zypper install -y curl nodejs npm pkg-config cmake
+                    fi
                     ;;
             esac
             
