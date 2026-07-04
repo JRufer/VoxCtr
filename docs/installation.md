@@ -179,6 +179,26 @@ See [Development Guide](./development.md).
 - Log out and back in after adding to group
 - On some distros, the udev rule path differs — check the built-in installer logic for details
 
+### Permissions screen keeps reappearing (fresh Arch / CachyOS installs)
+The startup permissions screen reappears on every launch until global hotkeys
+actually work in your session:
+1. Click **Setup System Integration** and enter your password. This writes the
+   udev rule and adds you to the `input` group *first*; the optional host
+   package installation runs afterwards and is allowed to fail (stale pacman
+   mirrors on a freshly installed system are common — run `sudo pacman -Syu`
+   later to fix them).
+2. **Log out and log back in** (or reboot). Group membership only applies to
+   new login sessions; until then the screen shows a "Relogin Required" notice.
+
+### TTS engines refuse to play
+- **Piper**: download a voice in Settings → TTS first — this also installs the
+  standalone Piper engine into `~/.local/share/voxctrl/piper/`.
+- **eSpeak-NG**: requires the system package (`sudo pacman -S espeak-ng` /
+  `sudo apt install espeak-ng`).
+- **Pocket-TTS**: requires a one-time model download (and a HuggingFace token —
+  see above).
+- Failures now surface directly in Settings → TTS next to the Test button.
+
 ### No audio devices found
 - Run `arecord -l` to verify your mic is recognized by ALSA
 - Check if PulseAudio/PipeWire is running: `pactl info`

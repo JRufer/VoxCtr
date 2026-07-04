@@ -39,6 +39,33 @@ pub fn get_install_packages_command(pkg_mgr: &str) -> Option<String> {
     }
 }
 
+/// Builds the privileged setup script shared by the CLI and GUI installers.
+///
+/// The hotkey-permission steps (udev rule, rule reload, input-group membership)
+/// come FIRST and determine the script's exit status. The host package
+/// installation runs last as best-effort: on rolling distros (Arch/CachyOS) a
+/// stale mirror or out-of-date sync database makes the package step fail
+/// routinely, and that must not abort the permission setup — otherwise the
+/// startup permissions warning reappears forever even though the user ran the
+/// setup as instructed.
+pub fn build_privileged_setup_script(pkg_mgr: &str, username: &str) -> String {
+    let mut commands = vec![
+        "echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\", OPTIONS+=\"static_node=uinput\"' > /etc/udev/rules.d/99-voxctrl.rules".to_string(),
+        "udevadm control --reload-rules && udevadm trigger".to_string(),
+    ];
+    if !username.is_empty() {
+        commands.push(format!("usermod -aG input {}", username));
+    }
+
+    let mut script = commands.join(" && ");
+    if let Some(cmd) = get_install_packages_command(pkg_mgr) {
+        script.push_str(&format!(
+            " && ({{ {cmd}; }} || echo 'VoxCtrl: host package installation failed (mirrors/network?). Hotkey permissions were still configured; install the packages manually later.' >&2)"
+        ));
+    }
+    script
+}
+
 fn run_command_status(runner: &str, args: &[&str]) -> Result<std::process::ExitStatus, String> {
     #[cfg(test)]
     {
@@ -133,28 +160,15 @@ pub fn run_cli_installer() -> Result<(), String> {
     let pkg_mgr = detect_pkg_manager();
     println!("Detected Package Manager: {}", pkg_mgr);
 
-    let install_cmd = get_install_packages_command(pkg_mgr);
     let username = std::env::var("USER").unwrap_or_default();
-
-    let mut commands = Vec::new();
-    if let Some(cmd) = install_cmd {
-        commands.push(cmd);
-    }
-    
-    commands.push("echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\", OPTIONS+=\"static_node=uinput\"' > /etc/udev/rules.d/99-voxctrl.rules".to_string());
-    commands.push("udevadm control --reload-rules && udevadm trigger".to_string());
-    if !username.is_empty() {
-        commands.push(format!("usermod -aG input {}", username));
-    }
-
-    let full_script = commands.join(" && ");
+    let full_script = build_privileged_setup_script(pkg_mgr, &username);
     println!("Preparing to run system setup command via sudo...");
     println!("Executing: sudo sh -c \"{}\"", full_script);
 
     let status = run_command_status("sudo", &["sh", "-c", &full_script])?;
 
     if !status.success() {
-        return Err("System packages / udev setup failed.".to_string());
+        return Err("udev rules / input group permission setup failed.".to_string());
     }
 
     println!("System dependencies and udev rules configured successfully!");
@@ -173,29 +187,16 @@ pub fn run_cli_installer() -> Result<(), String> {
 
 pub async fn run_gui_installer() -> Result<(), String> {
     let pkg_mgr = detect_pkg_manager();
-    let install_cmd = get_install_packages_command(pkg_mgr);
     let username = std::env::var("USER").unwrap_or_default();
+    let full_script = build_privileged_setup_script(pkg_mgr, &username);
 
-    let mut commands = Vec::new();
-    if let Some(cmd) = install_cmd {
-        commands.push(cmd);
-    }
-    
-    commands.push("echo 'KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\", OPTIONS+=\"static_node=uinput\"' > /etc/udev/rules.d/99-voxctrl.rules".to_string());
-    commands.push("udevadm control --reload-rules && udevadm trigger".to_string());
-    if !username.is_empty() {
-        commands.push(format!("usermod -aG input {}", username));
-    }
-
-    let full_script = commands.join(" && ");
-    
     let script_clone = full_script.clone();
     let status = tokio::task::spawn_blocking(move || {
         run_command_status("pkexec", &["sh", "-c", &script_clone])
     }).await.map_err(|e| format!("Spawn error: {}", e))??;
 
     if !status.success() {
-        return Err("Privileged installation steps failed or canceled by user.".to_string());
+        return Err("Permission setup (udev rules / input group) failed or was canceled.".to_string());
     }
 
     // Desktop integration
@@ -222,6 +223,32 @@ mod tests {
 
         let unknown_cmd = get_install_packages_command("unknown");
         assert!(unknown_cmd.is_none());
+    }
+
+    #[test]
+    fn test_privileged_script_orders_permissions_before_packages() {
+        // Regression: the udev rule + usermod steps must not be chained *after*
+        // the package install with `&&` — a routine pacman mirror failure on a
+        // fresh Arch/CachyOS system then aborts the permission setup and the
+        // startup permissions warning reappears forever.
+        let script = build_privileged_setup_script("pacman", "alice");
+
+        let rule_pos = script.find("99-voxctrl.rules").expect("script writes udev rule");
+        let usermod_pos = script.find("usermod -aG input alice").expect("script adds user to input group");
+        let pkg_pos = script.find("pacman -S").expect("script installs packages");
+
+        assert!(rule_pos < pkg_pos, "udev rule must be written before package install");
+        assert!(usermod_pos < pkg_pos, "usermod must run before package install");
+        // Package failure must not change the script's exit status.
+        assert!(script.contains("||"), "package install must be best-effort");
+    }
+
+    #[test]
+    fn test_privileged_script_without_packages_or_user() {
+        let script = build_privileged_setup_script("unknown", "");
+        assert!(script.contains("99-voxctrl.rules"));
+        assert!(!script.contains("usermod"));
+        assert!(!script.contains("install"));
     }
 
     #[test]
@@ -267,6 +294,19 @@ mod tests {
 
     #[test]
     fn test_setup_desktop_integration_failure_readonly() {
+        // Root can create directories anywhere, so the "unwritable path" premise
+        // doesn't hold — skip (e.g. containerized CI). Panicking here would also
+        // poison the shared env lock and cascade failures into unrelated tests.
+        #[cfg(unix)]
+        {
+            let uid = std::process::Command::new("id").arg("-u").output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default();
+            if uid == "0" {
+                return;
+            }
+        }
+
         let _lock = crate::test_utils::get_env_lock().lock().unwrap();
         // Set HOME to a non-existent/readonly path
         std::env::set_var("HOME", "/nonexistent_directory_voxctrl_test");

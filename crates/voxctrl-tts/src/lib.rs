@@ -279,12 +279,20 @@ fn resolve_voices_dir(voice_dir: &str) -> PathBuf {
 
 pub fn piper_binary() -> Option<PathBuf> {
     let exe = if cfg!(target_os = "windows") { "piper.exe" } else { "piper" };
-    let local = dirs::data_local_dir()
+    let local_dir = dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("voxctrl")
-        .join("piper")
-        .join(exe);
-    if local.exists() {
+        .join("piper");
+    let local = local_dir.join(exe);
+    // On unix the local install is voxctrl-managed: only use it when healthy
+    // (binary + espeak-ng-data directory), so a broken install falls through to
+    // a system-wide piper and gets repaired on the next voice download.
+    let local_healthy = if cfg!(unix) {
+        local.exists() && local_dir.join("espeak-ng-data").is_dir()
+    } else {
+        local.exists()
+    };
+    if local_healthy {
         return Some(local);
     }
     voxctrl_config::find_in_path("piper")
@@ -358,6 +366,9 @@ impl TtsEngineHandle {
 // ── TTS engine worker ─────────────────────────────────────────────────────────
 
 pub type PlaybackCallback = Arc<dyn Fn() + Send + Sync + 'static>;
+/// Called with a human-readable message whenever an utterance fails to play
+/// (engine missing, voice not downloaded, audio device unavailable, ...).
+pub type ErrorCallback = Arc<dyn Fn(String) + Send + Sync + 'static>;
 
 pub struct TtsEngineWorker {
     config: TtsConfig,
@@ -365,6 +376,7 @@ pub struct TtsEngineWorker {
     generation: Arc<std::sync::atomic::AtomicU32>,
     on_playback_start: Option<PlaybackCallback>,
     on_playback_end: Option<PlaybackCallback>,
+    on_error: Option<ErrorCallback>,
 }
 
 impl TtsEngineWorker {
@@ -372,6 +384,7 @@ impl TtsEngineWorker {
         config: TtsConfig,
         on_playback_start: Option<PlaybackCallback>,
         on_playback_end: Option<PlaybackCallback>,
+        on_error: Option<ErrorCallback>,
     ) -> TtsEngineHandle {
         let (tx, rx) = bounded(32);
         let generation = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -388,7 +401,7 @@ impl TtsEngineWorker {
             });
         }
 
-        let worker = Self { config, rx, generation, on_playback_start, on_playback_end };
+        let worker = Self { config, rx, generation, on_playback_start, on_playback_end, on_error };
         std::thread::Builder::new()
             .name("voxctrl-tts".into())
             .spawn(move || worker.run())
@@ -432,6 +445,11 @@ impl TtsEngineWorker {
                     let sink_res = init_audio(&mut audio_context);
                     if let Err(e) = sink_res {
                         warn!("TTS audio init error: {e}");
+                        if !is_prewarm {
+                            if let Some(ref cb) = self.on_error {
+                                cb(format!("Audio output unavailable: {e}"));
+                            }
+                        }
                         continue;
                     }
                     let sink = sink_res.unwrap();
@@ -462,7 +480,12 @@ impl TtsEngineWorker {
                     }
 
                     if let Err(e) = result {
-                        warn!("TTS speak error: {e}");
+                        warn!("TTS speak error: {e:#}");
+                        if !is_prewarm {
+                            if let Some(ref cb) = self.on_error {
+                                cb(format!("{e:#}"));
+                            }
+                        }
                     }
                     if !is_prewarm {
                         if let Some(ref cb) = self.on_playback_end {
@@ -480,7 +503,13 @@ impl TtsEngineWorker {
     }
 
     fn speak_piper(&self, u: &Utterance, sink: &rodio::Sink) -> Result<()> {
-        let binary = piper_binary().context("piper binary not found")?;
+        let binary = piper_binary().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Piper binary not found. Download a voice from TTS settings (this \
+                 also installs the standalone Piper engine), or install piper \
+                 system-wide."
+            )
+        })?;
         let voice_name = u.voice.as_deref().unwrap_or(&self.config.voice);
 
         let voice_path =
@@ -541,6 +570,14 @@ impl TtsEngineWorker {
     }
 
     fn speak_espeak(&self, u: &Utterance) -> Result<()> {
+        if voxctrl_config::find_in_path("espeak-ng").is_none() {
+            anyhow::bail!(
+                "espeak-ng is not installed on this system. Install it with your \
+                 package manager (e.g. `sudo pacman -S espeak-ng` or `sudo apt \
+                 install espeak-ng`) or switch to another TTS engine."
+            );
+        }
+
         if u.source_label.as_deref() != Some("prewarm") {
             if let Some(ref cb) = self.on_playback_start {
                 cb();
@@ -548,12 +585,15 @@ impl TtsEngineWorker {
         }
 
         let wpm = (175.0 * self.config.speed) as i32;
-        std::process::Command::new("espeak-ng")
+        let status = std::process::Command::new("espeak-ng")
             .arg("-s")
             .arg(wpm.to_string())
             .arg(&u.text)
             .status()
-            .context("espeak-ng")?;
+            .context("spawn espeak-ng")?;
+        if !status.success() {
+            anyhow::bail!("espeak-ng exited with status {:?}", status.code());
+        }
         Ok(())
     }
 }
@@ -704,6 +744,55 @@ pub fn get_voice_path(voice_name: &str, voice_dir: &str) -> Option<PathBuf> {
     None
 }
 
+/// Extracts the piper release tarball into `dest_dir`, preserving the archive's
+/// directory structure with the leading `piper/` component stripped.
+///
+/// Preserving the tree matters: the tarball ships an `espeak-ng-data/`
+/// directory that the piper binary needs for phonemization. An earlier version
+/// of this code flattened every entry's file name into one directory, which
+/// destroyed `espeak-ng-data/` — so the standalone piper binary failed on every
+/// machine without a system-wide piper install (no TTS audio, only a
+/// "piper process failed" log line).
+#[cfg(unix)]
+fn extract_piper_archive(bytes: &[u8], dest_dir: &Path) -> Result<()> {
+    let cursor = std::io::Cursor::new(bytes);
+    let tar = flate2::read::GzDecoder::new(cursor);
+    let mut archive = tar::Archive::new(tar);
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.into_owned();
+
+        // Strip the top-level "piper/" component; skip unsafe paths.
+        let rel: PathBuf = path
+            .components()
+            .skip(1)
+            .filter(|c| matches!(c, std::path::Component::Normal(_)))
+            .collect();
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+
+        let dest = dest_dir.join(&rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        // unpack() handles directories, files, and symlinks and preserves modes.
+        entry.unpack(&dest)?;
+    }
+
+    // Belt and braces: the binary must be executable.
+    use std::os::unix::fs::PermissionsExt;
+    let exe = dest_dir.join("piper");
+    if let Ok(metadata) = std::fs::metadata(&exe) {
+        let mut perms = metadata.permissions();
+        perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&exe, perms);
+    }
+
+    Ok(())
+}
+
 pub async fn download_piper_binary() -> Result<()> {
     #[cfg(unix)]
     {
@@ -712,12 +801,18 @@ pub async fn download_piper_binary() -> Result<()> {
             .join("voxctrl")
             .join("piper");
 
-        tokio::fs::create_dir_all(&local_dir).await?;
-
         let dest_exe = local_dir.join("piper");
-        if dest_exe.exists() {
+        // A correct install has the binary AND the espeak-ng-data directory.
+        // Installs made by the old flattening extractor have the binary but a
+        // bogus `espeak-ng-data` *file* — wipe and re-extract those too.
+        if dest_exe.exists() && local_dir.join("espeak-ng-data").is_dir() {
             return Ok(());
         }
+        if local_dir.exists() {
+            info!("Repairing broken standalone Piper install at {}", local_dir.display());
+            tokio::fs::remove_dir_all(&local_dir).await?;
+        }
+        tokio::fs::create_dir_all(&local_dir).await?;
 
         info!("Downloading standalone Piper binary...");
         let url =
@@ -727,25 +822,7 @@ pub async fn download_piper_binary() -> Result<()> {
         let bytes = response.bytes().await?;
 
         info!("Extracting Piper binary...");
-        let cursor = std::io::Cursor::new(bytes);
-        let tar = flate2::read::GzDecoder::new(cursor);
-        let mut archive = tar::Archive::new(tar);
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            let path = entry.path()?.into_owned();
-            if let Some(file_name) = path.file_name() {
-                let dest = local_dir.join(file_name);
-                let mut outfile = std::fs::File::create(&dest)?;
-                std::io::copy(&mut entry, &mut outfile)?;
-
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(metadata) = std::fs::metadata(&dest) {
-                    let mut perms = metadata.permissions();
-                    perms.set_mode(0o755);
-                    let _ = std::fs::set_permissions(&dest, perms);
-                }
-            }
-        }
+        extract_piper_archive(&bytes, &local_dir)?;
         info!("Standalone Piper binary installed to {}", dest_exe.display());
     }
     Ok(())
@@ -1023,6 +1100,90 @@ mod tests {
     #[test]
     fn test_piper_binary_returns_option_without_panicking() {
         let _ = piper_binary();
+    }
+
+    // ── extract_piper_archive ─────────────────────────────────────────────────
+
+    #[cfg(unix)]
+    fn build_fake_piper_tarball() -> Vec<u8> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let gz = GzEncoder::new(Vec::new(), Compression::fast());
+        let mut builder = tar::Builder::new(gz);
+
+        let mut add_file = |path: &str, content: &[u8], mode: u32| {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(mode);
+            header.set_cksum();
+            builder.append_data(&mut header, path, content).unwrap();
+        };
+
+        add_file("piper/piper", b"#!/bin/sh\necho fake piper\n", 0o755);
+        add_file("piper/libespeak-ng.so.1", b"fake lib", 0o644);
+        // Nested data tree — the part the old flattening extractor destroyed.
+        add_file("piper/espeak-ng-data/phondata", b"fake phondata", 0o644);
+        add_file("piper/espeak-ng-data/lang/gmw/en-US", b"fake lang", 0o644);
+
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_piper_archive_preserves_directory_structure() {
+        let dir = tempdir().unwrap();
+        let bytes = build_fake_piper_tarball();
+
+        extract_piper_archive(&bytes, dir.path()).unwrap();
+
+        // Regression: espeak-ng-data must survive as a real directory tree,
+        // not a flattened pile of files (which broke piper phonemization on
+        // every fresh install without a system-wide piper).
+        assert!(dir.path().join("piper").is_file());
+        assert!(dir.path().join("libespeak-ng.so.1").is_file());
+        assert!(dir.path().join("espeak-ng-data").is_dir());
+        assert!(dir.path().join("espeak-ng-data/phondata").is_file());
+        assert!(dir.path().join("espeak-ng-data/lang/gmw/en-US").is_file());
+
+        // Binary must be executable.
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(dir.path().join("piper")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111, "piper binary must be executable");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_piper_archive_skips_unsafe_paths() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+
+        let gz = GzEncoder::new(Vec::new(), Compression::fast());
+        let mut builder = tar::Builder::new(gz);
+        let content: &[u8] = b"evil";
+        let mut header = tar::Header::new_gnu();
+        // Write the malicious path straight into the header bytes —
+        // Builder::append_data / Header::set_path refuse `..` themselves.
+        {
+            let name = b"piper/../../escape.txt";
+            let gnu = header.as_gnu_mut().unwrap();
+            gnu.name[..name.len()].copy_from_slice(name);
+        }
+        header.set_size(content.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append(&header, content).unwrap();
+        let bytes = builder.into_inner().unwrap().finish().unwrap();
+
+        let dir = tempdir().unwrap();
+        extract_piper_archive(&bytes, dir.path()).unwrap();
+
+        // The ParentDir components must be stripped: nothing lands outside the
+        // destination directory.
+        assert!(!dir.path().parent().unwrap().join("escape.txt").exists());
+        assert!(!dir.path().parent().unwrap().parent().unwrap().join("escape.txt").exists());
+        // The sanitized remainder is extracted inside the destination instead.
+        assert!(dir.path().join("escape.txt").exists());
     }
 
     // ── piper_voices_dir ──────────────────────────────────────────────────────

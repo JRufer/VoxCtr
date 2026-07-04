@@ -253,7 +253,7 @@ pub fn run() {
 
     // ── TTS ───────────────────────────────────────────────────────────────────
     let _tts_handle = if cfg_data.tts.enabled {
-        Some(voxctrl_tts::TtsEngineWorker::start(cfg_data.tts.clone(), None, None))
+        Some(voxctrl_tts::TtsEngineWorker::start(cfg_data.tts.clone(), None, None, None))
     } else {
         None
     };
@@ -495,6 +495,7 @@ pub fn run() {
                             }
                             let app_handle_clone = app_handle.clone();
                             let app_handle_clone_end = app_handle.clone();
+                            let app_handle_clone_err = app_handle.clone();
                             let state_clone = state.clone();
                             let state_clone_end = state.clone();
                             let new_tts = voxctrl_tts::TtsEngineWorker::start(
@@ -506,6 +507,9 @@ pub fn run() {
                                 Some(std::sync::Arc::new(move || {
                                     state_clone_end.set_speaking(false);
                                     let _ = app_handle_clone_end.emit("tts-playback-end", ());
+                                })),
+                                Some(std::sync::Arc::new(move |msg: String| {
+                                    let _ = app_handle_clone_err.emit("tts-error", msg);
                                 })),
                             );
                             *handle = Some(new_tts.clone());
@@ -541,47 +545,14 @@ pub fn run() {
             {
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    let mut check_failed = false;
+                    // Shared with the check_udev_status IPC command. Not
+                    // configured covers both "setup never ran" and "setup ran
+                    // but the session still lacks the input group" — the
+                    // warning window itself shows the right variant (setup
+                    // button vs. relogin notice) by re-querying the status.
+                    let status = crate::commands::check_udev_status_sync();
 
-                    if let Ok(override_val) = std::env::var("VOXCTRL_TEST_UDEV_STATUS") {
-                        match override_val.as_str() {
-                            "missing" | "relogin" => check_failed = true,
-                            _ => {}
-                        }
-                    } else {
-                        // Check if udev rules exist (support new and legacy names)
-                        let rule_exists = std::path::Path::new("/etc/udev/rules.d/99-voxctrl.rules").exists()
-                            || std::path::Path::new("/etc/udev/rules.d/99-voxctl.rules").exists()
-                            || std::path::Path::new("/etc/udev/rules.d/99-voxctr.rules").exists();
-
-                        // Check if the current user session has the "input" group by running `id -Gn`
-                        let mut in_group = match std::process::Command::new("id").args(&["-Gn"]).output() {
-                            Ok(output) => {
-                                let groups_str = String::from_utf8_lossy(&output.stdout);
-                                groups_str.split_whitespace().any(|g| g == "input")
-                            }
-                            Err(_) => false,
-                        };
-
-                        // Fallback: If not in group in active session, check system group database (NSS /etc/group).
-                        // This is robust against sandboxes/containers where active process groups haven't refreshed.
-                        if !in_group {
-                            if let Ok(username) = std::env::var("USER") {
-                                if let Ok(output) = std::process::Command::new("id").args(&["-Gn", &username]).output() {
-                                    let groups_str = String::from_utf8_lossy(&output.stdout);
-                                    if groups_str.split_whitespace().any(|g| g == "input") {
-                                        in_group = true;
-                                    }
-                                }
-                            }
-                        }
-
-                        if !rule_exists || !in_group {
-                            check_failed = true;
-                        }
-                    }
-
-                    if check_failed {
+                    if !status.is_configured {
                         if let Some(w) = app_handle.get_webview_window("udev-warning") {
                             let _ = w.show();
                             let _ = w.set_always_on_top(true);
@@ -1404,36 +1375,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_udev_status_nss_fallback_logic() {
+    async fn test_check_udev_status_session_semantics() {
         let _lock = crate::test_utils::get_env_lock().lock().unwrap();
-        // Query the NSS database manually using the exact logic we implemented to make sure it matches
         #[cfg(target_os = "linux")]
         {
-            if let Ok(username) = std::env::var("USER") {
-                let output = std::process::Command::new("id").args(&["-Gn", &username]).output();
-                if let Ok(out) = output {
-                    let groups_str = String::from_utf8_lossy(&out.stdout);
-                    let database_has_input = groups_str.split_whitespace().any(|g| g == "input");
-                    
-                    // Verify that if check_udev_status is called, the in_group value
-                    // matches whether the database or active session has the "input" group.
-                    std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
-                    let res = check_udev_status().await.unwrap();
-                    
-                    // If either database_has_input is true or active session has it,
-                    // in_group should resolve as true.
-                    let active_session_has_input = match std::process::Command::new("id").args(&["-Gn"]).output() {
-                        Ok(o) => {
-                            let s = String::from_utf8_lossy(&o.stdout);
-                            s.split_whitespace().any(|g| g == "input")
-                        }
-                        Err(_) => false,
-                    };
-                    
-                    if database_has_input || active_session_has_input {
-                        assert!(res.in_group, "User is in input group in database/session, in_group check should be true");
-                    }
+            std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
+            let res = check_udev_status().await.unwrap();
+
+            // in_group must reflect the ACTIVE session: process groups or
+            // actually-readable /dev/input devices. Database-only membership
+            // (usermod ran, no relogin yet) must NOT count — the evdev
+            // listener would still fail — it maps to needs_relogin instead.
+            let session_has_input = match std::process::Command::new("id").args(&["-Gn"]).output() {
+                Ok(o) => {
+                    let s = String::from_utf8_lossy(&o.stdout);
+                    s.split_whitespace().any(|g| g == "input")
                 }
+                Err(_) => false,
+            };
+            if session_has_input {
+                assert!(res.in_group, "session has input group; in_group must be true");
+            }
+
+            // needs_relogin and is_configured are mutually exclusive, and
+            // needs_relogin requires the udev rule to already exist.
+            assert!(!(res.needs_relogin && res.is_configured));
+            if res.needs_relogin {
+                assert!(res.rule_exists);
+                assert!(!res.in_group);
+            }
+            if res.is_configured {
+                assert!(res.rule_exists && res.in_group);
             }
         }
 
