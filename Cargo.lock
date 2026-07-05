@@ -9476,6 +9476,7 @@ name = "voxctrl-inference"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "cc",
  "crossbeam-channel",
  "dirs 5.0.1",
  "ort",
