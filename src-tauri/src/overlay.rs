@@ -1123,23 +1123,27 @@ struct AppState {
     overlay_style: String,
 }
 
-/// (Re-)assert that the overlay is a click-through, always-on-top window.
+/// Make the overlay a click-through, always-on-top window.
 ///
 /// The window level is not "sticky": on X11 another window taking
 /// `_NET_WM_STATE_ABOVE`, a fullscreen app, or the compositor re-stacking
 /// between dictations can push the overlay behind other windows, and it never
-/// recovers on its own. Re-applying the level toggles it (Normal → AlwaysOnTop)
-/// so the compositor re-evaluates stacking and lifts the overlay back to the
-/// front, rather than treating an already-set level as a no-op. Cheap enough to
-/// call on every activation and on a slow heartbeat while visible.
-fn reassert_topmost(ui: &OverlayWindow) {
+/// recovers on its own — so this is called again on each activation and on a
+/// slow heartbeat while visible.
+///
+/// `force_raise` toggles the level (Normal → AlwaysOnTop) so the change is
+/// re-sent even when the level was already AlwaysOnTop, forcing the WM to
+/// re-raise a window that fell behind. It must be `false` on the very first map:
+/// toggling the state while the surface is still being mapped can make some
+/// compositors leave the window unpresented until the next state change.
+fn apply_topmost(ui: &OverlayWindow, force_raise: bool) {
     ui.window().with_winit_window(|w| {
         use i_slint_backend_winit::winit::window::WindowLevel;
         // Keep the overlay click-through in case a remap reset the hit-test.
         let _ = w.set_cursor_hittest(false);
-        // Toggle so the change is re-sent even if the level was already
-        // AlwaysOnTop; this forces the WM to re-raise a window that fell behind.
-        w.set_window_level(WindowLevel::Normal);
+        if force_raise {
+            w.set_window_level(WindowLevel::Normal);
+        }
         w.set_window_level(WindowLevel::AlwaysOnTop);
     });
 }
@@ -1544,7 +1548,9 @@ fn main() {
             if let Err(e) = ui.show() {
                 eprintln!("[overlay] Failed to show window: {:?}", e);
             }
-            reassert_topmost(&ui);
+            // First map: set the level directly (no toggle) so the surface is
+            // presented reliably.
+            apply_topmost(&ui, false);
             shown = true;
             eprintln!("[overlay] window mapped (kept mapped for the session)");
         }
@@ -1579,12 +1585,12 @@ fn main() {
         // was idle, and keep re-asserting on a ~1s heartbeat so it can't linger
         // behind a window that came forward mid-dictation.
         if idle {
-            reassert_topmost(&ui);
+            apply_topmost(&ui, true);
             topmost_tick = 0;
         } else {
             topmost_tick = topmost_tick.wrapping_add(1);
             if topmost_tick % 60 == 0 {
-                reassert_topmost(&ui);
+                apply_topmost(&ui, true);
             }
         }
         idle = false;
