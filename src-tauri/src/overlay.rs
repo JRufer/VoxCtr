@@ -1123,6 +1123,27 @@ struct AppState {
     overlay_style: String,
 }
 
+/// (Re-)assert that the overlay is a click-through, always-on-top window.
+///
+/// The window level is not "sticky": on X11 another window taking
+/// `_NET_WM_STATE_ABOVE`, a fullscreen app, or the compositor re-stacking
+/// between dictations can push the overlay behind other windows, and it never
+/// recovers on its own. Re-applying the level toggles it (Normal → AlwaysOnTop)
+/// so the compositor re-evaluates stacking and lifts the overlay back to the
+/// front, rather than treating an already-set level as a no-op. Cheap enough to
+/// call on every activation and on a slow heartbeat while visible.
+fn reassert_topmost(ui: &OverlayWindow) {
+    ui.window().with_winit_window(|w| {
+        use i_slint_backend_winit::winit::window::WindowLevel;
+        // Keep the overlay click-through in case a remap reset the hit-test.
+        let _ = w.set_cursor_hittest(false);
+        // Toggle so the change is re-sent even if the level was already
+        // AlwaysOnTop; this forces the WM to re-raise a window that fell behind.
+        w.set_window_level(WindowLevel::Normal);
+        w.set_window_level(WindowLevel::AlwaysOnTop);
+    });
+}
+
 /// Critically-damped-ish spring used for load/unload (reveal) animations.
 /// Slightly underdamped so overlays land with a subtle overshoot.
 fn spring(x: &mut f32, v: &mut f32, target: f32, dt: f32) {
@@ -1467,6 +1488,9 @@ fn main() {
     let mut lcg_state = 12345_u32;
     let mut shown = false;
     let mut idle = false;
+    // Counts render ticks while the overlay is visible, to re-assert the
+    // always-on-top level on a slow heartbeat (see reassert_topmost).
+    let mut topmost_tick: u32 = 0;
 
     const DT: f32 = 0.016;
 
@@ -1520,12 +1544,7 @@ fn main() {
             if let Err(e) = ui.show() {
                 eprintln!("[overlay] Failed to show window: {:?}", e);
             }
-            ui.window().with_winit_window(|w| {
-                if let Err(e) = w.set_cursor_hittest(false) {
-                    eprintln!("[overlay] Failed to make window click-through: {:?}", e);
-                }
-                w.set_window_level(i_slint_backend_winit::winit::window::WindowLevel::AlwaysOnTop);
-            });
+            reassert_topmost(&ui);
             shown = true;
             eprintln!("[overlay] window mapped (kept mapped for the session)");
         }
@@ -1553,6 +1572,20 @@ fn main() {
             }
             ui.window().with_winit_window(|w| w.request_redraw());
             return;
+        }
+
+        // Becoming visible again after being idle: a new dictation is starting.
+        // Re-raise now in case the overlay dropped behind other windows while it
+        // was idle, and keep re-asserting on a ~1s heartbeat so it can't linger
+        // behind a window that came forward mid-dictation.
+        if idle {
+            reassert_topmost(&ui);
+            topmost_tick = 0;
+        } else {
+            topmost_tick = topmost_tick.wrapping_add(1);
+            if topmost_tick % 60 == 0 {
+                reassert_topmost(&ui);
+            }
         }
         idle = false;
 
