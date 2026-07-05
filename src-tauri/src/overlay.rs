@@ -1118,8 +1118,15 @@ struct AppState {
     audio_ready: bool,
     audio_level: f32,
     active_target_label: String,
-    x: i32,
-    y: i32,
+    /// Anchor requested by the app ("top" | "bottom" | "center"). Empty until the
+    /// first position message arrives. The overlay computes actual pixel
+    /// coordinates itself, from its own monitor, so positioning is correct
+    /// regardless of the app process's display-scale view.
+    overlay_position: String,
+    /// Monitor preference ("primary" or a monitor name).
+    overlay_monitor: String,
+    /// Set when the anchor/monitor changed so the render tick recomputes coords.
+    position_dirty: bool,
     overlay_style: String,
 }
 
@@ -1146,6 +1153,52 @@ fn apply_topmost(ui: &OverlayWindow, force_raise: bool) {
         }
         w.set_window_level(WindowLevel::AlwaysOnTop);
     });
+}
+
+/// Top-left Y for the overlay given the anchor, in the same pixel space as the
+/// monitor geometry. `margin` is the gap from the top/bottom edge.
+fn anchor_y(monitor_y: i32, monitor_height: i32, window_height: i32, margin: i32, anchor: &str) -> i32 {
+    match anchor {
+        "top" => monitor_y + margin,
+        "bottom" => monitor_y + monitor_height - window_height - margin,
+        _ => monitor_y + (monitor_height - window_height) / 2, // "center" default
+    }
+}
+
+/// Compute the overlay's top-left pixel position for an anchor, using the
+/// overlay's *own* winit monitor + window size. Doing the math here (rather than
+/// receiving pre-scaled pixels from the app process) keeps everything in one
+/// coordinate space, so HiDPI scaling can't offset the window. Returns `None`
+/// until the window is realized (non-zero size) and a monitor is known.
+fn compute_overlay_position(ui: &OverlayWindow, anchor: &str, monitor_pref: &str) -> Option<(i32, i32)> {
+    ui.window()
+        .with_winit_window(|w| {
+            let monitors: Vec<_> = w.available_monitors().collect();
+            let monitor = if monitor_pref.is_empty() || monitor_pref == "primary" {
+                w.primary_monitor().or_else(|| monitors.first().cloned())
+            } else {
+                monitors
+                    .iter()
+                    .find(|m| m.name().as_deref() == Some(monitor_pref))
+                    .cloned()
+                    .or_else(|| w.primary_monitor())
+                    .or_else(|| monitors.first().cloned())
+            }?;
+
+            let wsize = w.outer_size();
+            if wsize.width == 0 || wsize.height == 0 {
+                return None; // window not realized yet
+            }
+
+            let msize = monitor.size();
+            let mpos = monitor.position();
+            let margin = (60.0 * monitor.scale_factor()) as i32;
+
+            let x = mpos.x + (msize.width as i32 - wsize.width as i32) / 2;
+            let y = anchor_y(mpos.y, msize.height as i32, wsize.height as i32, margin, anchor);
+            Some((x, y))
+        })
+        .flatten()
 }
 
 /// Critically-damped-ish spring used for load/unload (reveal) animations.
@@ -1398,8 +1451,9 @@ fn main() {
         audio_ready: true,
         audio_level: 0.0,
         active_target_label: "Focused Window".to_string(),
-        x: -20000,
-        y: -20000,
+        overlay_position: String::new(),
+        overlay_monitor: "primary".to_string(),
+        position_dirty: false,
         overlay_style: "waveform".to_string(),
     }));
 
@@ -1457,8 +1511,13 @@ fn main() {
                         }
                         "position" => {
                             if let Ok(mut state) = state_clone.lock() {
-                                state.x = msg.get("x").and_then(|v| v.as_i64()).unwrap_or(-20000) as i32;
-                                state.y = msg.get("y").and_then(|v| v.as_i64()).unwrap_or(-20000) as i32;
+                                if let Some(p) = msg.get("position").and_then(|v| v.as_str()) {
+                                    state.overlay_position = p.to_string();
+                                }
+                                if let Some(m) = msg.get("monitor").and_then(|v| v.as_str()) {
+                                    state.overlay_monitor = m.to_string();
+                                }
+                                state.position_dirty = true;
                             }
                         }
                         "shutdown" => {
@@ -1501,6 +1560,9 @@ fn main() {
     // unchanged value would not send a corrective request; forcing it for a few
     // frames afterwards moves the overlay back to the configured spot.
     let mut reposition_frames: u32 = 0;
+    // Last position computed from the current anchor, in the overlay's own pixel
+    // space. Recomputed when the anchor changes or the window is (re)mapped.
+    let mut computed_pos: Option<(i32, i32)> = None;
 
     const DT: f32 = 0.016;
     // ~100 ms of forced repositioning covers the WM's re-placement latency after
@@ -1513,9 +1575,11 @@ fn main() {
             None => return,
         };
 
-        let (rec, proc, speak, ready, raw_level, target, tx, ty, style) = {
-            if let Ok(s) = state_clone2.lock() {
-                (s.recording, s.processing, s.speaking, s.audio_ready, s.audio_level, s.active_target_label.clone(), s.x, s.y, s.overlay_style.clone())
+        let (rec, proc, speak, ready, raw_level, target, anchor, monitor_pref, pos_dirty, style) = {
+            if let Ok(mut s) = state_clone2.lock() {
+                let dirty = s.position_dirty;
+                s.position_dirty = false;
+                (s.recording, s.processing, s.speaking, s.audio_ready, s.audio_level, s.active_target_label.clone(), s.overlay_position.clone(), s.overlay_monitor.clone(), dirty, s.overlay_style.clone())
             } else {
                 return;
             }
@@ -1553,6 +1617,7 @@ fn main() {
         // transparent frame instead of hiding.
         let visible_needed = active_main || active_pill || reveal_main > 0.004 || reveal_pill > 0.004;
 
+        let mut just_mapped = false;
         if visible_needed && !shown {
             if let Err(e) = ui.show() {
                 eprintln!("[overlay] Failed to show window: {:?}", e);
@@ -1562,6 +1627,7 @@ fn main() {
             apply_topmost(&ui, false);
             reposition_frames = REPOSITION_FRAMES;
             shown = true;
+            just_mapped = true;
             eprintln!("[overlay] window mapped (kept mapped for the session)");
         }
 
@@ -1607,17 +1673,29 @@ fn main() {
         }
         idle = false;
 
-        // Re-apply position. For a few frames after a window-level change, push
-        // it through winit directly so the WM's re-placement (if any) is undone
-        // even though Slint's cached set_position would otherwise no-op.
-        if tx > -10000 {
-            if reposition_frames > 0 {
-                reposition_frames -= 1;
+        // Recompute the target position when the anchor changed, when the window
+        // was just mapped, or until the first successful computation lands (the
+        // window size isn't known until it is realized).
+        if !anchor.is_empty() && (pos_dirty || just_mapped || computed_pos.is_none()) {
+            if let Some(p) = compute_overlay_position(&ui, &anchor, &monitor_pref) {
+                if computed_pos != Some(p) {
+                    computed_pos = Some(p);
+                }
+                // Re-assert for a few frames so a window-level change can't leave
+                // the window where the WM re-placed it.
+                reposition_frames = reposition_frames.max(REPOSITION_FRAMES);
+            }
+        }
+
+        // Apply the position through winit directly (Slint's set_position is
+        // cached and would no-op after the WM moves the window). Only during the
+        // re-assert window, so steady-state frames cost nothing.
+        if reposition_frames > 0 {
+            reposition_frames -= 1;
+            if let Some((px, py)) = computed_pos {
                 ui.window().with_winit_window(|w| {
-                    w.set_outer_position(i_slint_backend_winit::winit::dpi::PhysicalPosition::new(tx, ty));
+                    w.set_outer_position(i_slint_backend_winit::winit::dpi::PhysicalPosition::new(px, py));
                 });
-            } else {
-                ui.window().set_position(slint::PhysicalPosition::new(tx, ty));
             }
         }
 
@@ -1780,6 +1858,27 @@ mod tests {
     use super::*;
 
     const DT: f32 = 0.016;
+
+    // ── Anchor positioning ───────────────────────────────────────────
+
+    #[test]
+    fn anchor_y_places_top_bottom_center() {
+        let (mon_y, mon_h, win_h) = (0, 1080, 160);
+        assert_eq!(anchor_y(mon_y, mon_h, win_h, 60, "top"), 60);
+        assert_eq!(anchor_y(mon_y, mon_h, win_h, 60, "bottom"), 1080 - 160 - 60);
+        assert_eq!(anchor_y(mon_y, mon_h, win_h, 60, "center"), (1080 - 160) / 2);
+        // Unknown anchor falls back to center.
+        assert_eq!(anchor_y(mon_y, mon_h, win_h, 60, "elsewhere"), (1080 - 160) / 2);
+    }
+
+    #[test]
+    fn anchor_y_hidpi_margin_and_offset_monitor() {
+        // HiDPI: caller passes a scaled margin (60 * 2).
+        assert_eq!(anchor_y(0, 2160, 380, 120, "top"), 120);
+        assert_eq!(anchor_y(0, 2160, 380, 120, "bottom"), 2160 - 380 - 120);
+        // Monitor above the primary (negative origin) keeps the offset.
+        assert_eq!(anchor_y(-1080, 1080, 160, 60, "bottom"), -1080 + 1080 - 160 - 60);
+    }
 
     // ── Load/unload spring ───────────────────────────────────────────
 

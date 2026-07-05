@@ -729,12 +729,26 @@ pub fn run() {
             // Spawn the Slint overlay helper process
             if let Some(overlay_path) = get_overlay_path() {
                 tracing::info!("Spawning Slint overlay helper: {:?}", overlay_path);
-                match std::process::Command::new(&overlay_path)
+                let mut overlay_cmd = std::process::Command::new(&overlay_path);
+                overlay_cmd
                     .stdin(std::process::Stdio::piped())
                     .stdout(std::process::Stdio::inherit())
-                    .stderr(std::process::Stdio::inherit())
-                    .spawn()
+                    .stderr(std::process::Stdio::inherit());
+                // Run the overlay through XWayland on Wayland sessions. A native
+                // Wayland client cannot control its own stacking or position, so
+                // always-on-top and the configured placement are simply ignored
+                // by the compositor. Under XWayland the overlay is an X11 client
+                // and KWin honors _NET_WM_STATE_ABOVE and window positioning.
+                // Only when an X server (XWayland) is actually reachable; on a
+                // pure X11 session WAYLAND_DISPLAY is unset and this is a no-op.
+                if std::env::var_os("DISPLAY").is_some()
+                    && std::env::var_os("WAYLAND_DISPLAY").is_some()
                 {
+                    tracing::info!("Wayland detected; running overlay via XWayland for always-on-top + positioning");
+                    overlay_cmd.env_remove("WAYLAND_DISPLAY");
+                    overlay_cmd.env_remove("WAYLAND_SOCKET");
+                }
+                match overlay_cmd.spawn() {
                     Ok(mut child) => {
                         if let Some(mut stdin) = child.stdin.take() {
                             let rx = overlay_rx.clone();
@@ -887,15 +901,15 @@ pub fn run() {
                     }
 
                     if should_reposition {
-                        if let Some((x, y)) = calculate_overlay_coordinates(&handle, &overlay_position, &overlay_monitor) {
-                            let pos_msg = serde_json::json!({
-                                "type": "position",
-                                "x": x,
-                                "y": y,
-                            });
-                            if let Ok(json_str) = serde_json::to_string(&pos_msg) {
-                                let _ = state_for_ticker.overlay_tx.send(json_str);
-                            }
+                        // Send the anchor + monitor; the overlay computes pixel
+                        // coordinates itself using its own display scale.
+                        let pos_msg = serde_json::json!({
+                            "type": "position",
+                            "position": overlay_position,
+                            "monitor": overlay_monitor,
+                        });
+                        if let Ok(json_str) = serde_json::to_string(&pos_msg) {
+                            let _ = state_for_ticker.overlay_tx.send(json_str);
                         }
                     }
 
@@ -1082,20 +1096,6 @@ impl McpCallbacks for AppState {
     }
 }
 
-pub fn calculate_overlay_y(
-    monitor_y: i32,
-    monitor_height: i32,
-    window_height: i32,
-    scale_factor: f64,
-    position_str: &str,
-) -> i32 {
-    match position_str {
-        "top" => monitor_y + (60.0 * scale_factor) as i32,
-        "bottom" => monitor_y + monitor_height - window_height - (60.0 * scale_factor) as i32,
-        _ => monitor_y + (monitor_height - window_height) / 2, // "center" is default
-    }
-}
-
 pub fn get_overlay_path() -> Option<std::path::PathBuf> {
     // Logged via tracing (stderr) so the resolved path is visible even when
     // stdout is block-buffered behind a pipe.
@@ -1137,39 +1137,6 @@ pub fn get_overlay_path() -> Option<std::path::PathBuf> {
     }
     tracing::error!("get_overlay_path: overlay binary not found");
     None
-}
-
-pub fn calculate_overlay_coordinates(app: &tauri::AppHandle, position_str: &str, monitor_pref: &str) -> Option<(i32, i32)> {
-    let target_monitor = match monitor_pref {
-        "primary" => app.primary_monitor().ok().flatten(),
-        _ => {
-            if let Ok(monitors) = app.available_monitors() {
-                monitors.into_iter().find(|m| m.name().map(|s| s.as_ref()) == Some(monitor_pref))
-            } else {
-                None
-            }
-        }
-    };
-
-    let monitor = target_monitor
-        .or_else(|| app.primary_monitor().ok().flatten())?;
-
-    let monitor_size = monitor.size();
-    let monitor_pos = monitor.position();
-    let scale_factor = monitor.scale_factor();
-    
-    // Slint overlay window physical size is (560 * scale_factor) x (190 * scale_factor)
-    let win_w = (560.0 * scale_factor) as i32;
-    let win_h = (190.0 * scale_factor) as i32;
-    let mon_w = monitor_size.width as i32;
-    let mon_h = monitor_size.height as i32;
-    let mon_x = monitor_pos.x;
-    let mon_y = monitor_pos.y;
-    
-    let x = mon_x + (mon_w - win_w) / 2;
-    let y = calculate_overlay_y(mon_y, mon_h, win_h, scale_factor, position_str);
-    
-    Some((x, y))
 }
 
 #[cfg(test)]
@@ -1236,42 +1203,6 @@ mod tests {
         assert!(!content.contains("OpenAI"));
     }
 
-    #[test]
-    fn test_calculate_overlay_y() {
-        let mon_y = 0;
-        let mon_h = 1080;
-        let win_h = 160;
-
-        let y_top = calculate_overlay_y(mon_y, mon_h, win_h, 1.0, "top");
-        assert_eq!(y_top, 60);
-
-        let y_center = calculate_overlay_y(mon_y, mon_h, win_h, 1.0, "center");
-        assert_eq!(y_center, (1080 - 160) / 2);
-
-        let y_bottom = calculate_overlay_y(mon_y, mon_h, win_h, 1.0, "bottom");
-        assert_eq!(y_bottom, 1080 - 160 - 60);
-
-        // High DPI scaling factor 2.0
-        let y_top_hidpi = calculate_overlay_y(mon_y, mon_h, win_h, 2.0, "top");
-        assert_eq!(y_top_hidpi, 120);
-
-        // Fractional scaling factor 1.5
-        let y_bottom_fractional = calculate_overlay_y(mon_y, mon_h, win_h, 1.5, "bottom");
-        assert_eq!(y_bottom_fractional, 1080 - 160 - 90);
-
-        // Secondary monitor positioned above primary display (negative Y coordinates)
-        let mon_y_negative = -1080;
-        let y_top_negative = calculate_overlay_y(mon_y_negative, mon_h, win_h, 1.0, "top");
-        assert_eq!(y_top_negative, -1080 + 60);
-
-        let y_bottom_negative = calculate_overlay_y(mon_y_negative, mon_h, win_h, 1.0, "bottom");
-        assert_eq!(y_bottom_negative, -1080 + 1080 - 160 - 60);
-
-        // 4K Monitor
-        let mon_h_4k = 2160;
-        let y_center_4k = calculate_overlay_y(mon_y, mon_h_4k, win_h, 1.0, "center");
-        assert_eq!(y_center_4k, (2160 - 160) / 2);
-    }
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32};
     use tokio::sync::Mutex;

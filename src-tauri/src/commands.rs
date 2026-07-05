@@ -169,15 +169,13 @@ pub async fn save_config(
     let _ = app.emit("config-changed", new_config);
 
     let (overlay_position, overlay_monitor) = (guard.data.ui.overlay_position.clone(), guard.data.ui.overlay_monitor.clone());
-    if let Some((x, y)) = crate::calculate_overlay_coordinates(&app, &overlay_position, &overlay_monitor) {
-        let pos_msg = serde_json::json!({
-            "type": "position",
-            "x": x,
-            "y": y,
-        });
-        if let Ok(json_str) = serde_json::to_string(&pos_msg) {
-            let _ = state.overlay_tx.send(json_str);
-        }
+    let pos_msg = serde_json::json!({
+        "type": "position",
+        "position": overlay_position,
+        "monitor": overlay_monitor,
+    });
+    if let Ok(json_str) = serde_json::to_string(&pos_msg) {
+        let _ = state.overlay_tx.send(json_str);
     }
 
     Ok(())
@@ -431,36 +429,34 @@ fn expand_tilde(path: &str) -> std::path::PathBuf {
 
 #[tauri::command]
 pub async fn show_overlay(
-    app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let (position, monitor_pref) = {
         let cfg = state.config.lock().await;
         (cfg.data.ui.overlay_position.clone(), cfg.data.ui.overlay_monitor.clone())
     };
-    
-    if let Some((x, y)) = crate::calculate_overlay_coordinates(&app, &position, &monitor_pref) {
-        let pos_msg = serde_json::json!({
-            "type": "position",
-            "x": x,
-            "y": y,
-        });
-        let status_msg = serde_json::json!({
-            "type": "status",
-            "recording": true,
-            "processing": false,
-            "speaking": false,
-            "audio_ready": true,
-            "audio_level": 0.0,
-            "active_target_label": "Overlay Test",
-        });
-        
-        if let Ok(s) = serde_json::to_string(&pos_msg) {
-            let _ = state.overlay_tx.send(s);
-        }
-        if let Ok(s) = serde_json::to_string(&status_msg) {
-            let _ = state.overlay_tx.send(s);
-        }
+
+    // The overlay computes pixel coordinates from the anchor itself.
+    let pos_msg = serde_json::json!({
+        "type": "position",
+        "position": position,
+        "monitor": monitor_pref,
+    });
+    let status_msg = serde_json::json!({
+        "type": "status",
+        "recording": true,
+        "processing": false,
+        "speaking": false,
+        "audio_ready": true,
+        "audio_level": 0.0,
+        "active_target_label": "Overlay Test",
+    });
+
+    if let Ok(s) = serde_json::to_string(&pos_msg) {
+        let _ = state.overlay_tx.send(s);
+    }
+    if let Ok(s) = serde_json::to_string(&status_msg) {
+        let _ = state.overlay_tx.send(s);
     }
     Ok(())
 }
