@@ -207,12 +207,15 @@ if [ "$CUDA_FOUND" = false ] && [ "$HAS_NVIDIA_GPU" = true ]; then
 fi
 
 info "Running Tauri release compiler with headless PATH and CUDA injection..."
+# The Moonshine ONNX backend is always compiled in so both speech engines
+# (whisper-cpp and Moonshine) are selectable in every AppImage. It links ONNX
+# Runtime, fetched at build time, so this step needs network access.
 if [ "$CUDA_FOUND" = true ]; then
-    info "CUDA detected. Compiling with GPU support..."
-    npx tauri build -- --features cuda
+    info "CUDA detected. Compiling with GPU support (whisper-cpp + Moonshine)..."
+    npx tauri build -- --features cuda,moonshine
 else
-    info "CUDA not detected. Compiling for CPU only..."
-    npx tauri build
+    info "CUDA not detected. Compiling for CPU only (whisper-cpp + Moonshine)..."
+    npx tauri build -- --features moonshine
 fi
 
 ok "Compilation finished successfully."
