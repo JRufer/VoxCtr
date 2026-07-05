@@ -67,10 +67,7 @@ impl WhisperCppBackend {
     }
 
     pub fn default_model_dir() -> PathBuf {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("voxctrl")
-            .join("models")
+        crate::util::models_base_dir()
     }
 
     fn resolve_model_path(&self) -> Result<PathBuf> {
@@ -88,7 +85,7 @@ impl WhisperCppBackend {
         let model_dir = if self.cfg.model_dir.is_empty() {
             Self::default_model_dir()
         } else {
-            expand_tilde(&self.cfg.model_dir)
+            crate::util::expand_tilde(&self.cfg.model_dir)
         };
 
         let candidates = GGUF_MAP
@@ -227,22 +224,6 @@ fn num_cpus() -> u32 {
         .unwrap_or(4)
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(dirs::home_dir);
-    if path == "~" {
-        return home.unwrap_or_else(|| PathBuf::from("~"));
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(h) = home {
-            return h.join(rest);
-        }
-    }
-    PathBuf::from(path)
-}
-
 pub fn is_model_downloaded(size: &str, model_dir: &str) -> bool {
     let candidates = match GGUF_MAP.iter().find(|(name, _)| *name == size) {
         Some((_, files)) => *files,
@@ -251,7 +232,7 @@ pub fn is_model_downloaded(size: &str, model_dir: &str) -> bool {
     let dir = if model_dir.is_empty() {
         WhisperCppBackend::default_model_dir()
     } else {
-        expand_tilde(model_dir)
+        crate::util::expand_tilde(model_dir)
     };
     candidates.iter().any(|filename| dir.join(filename).exists())
 }
@@ -272,7 +253,7 @@ pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
     let model_dir = if model_dir.is_empty() {
         WhisperCppBackend::default_model_dir()
     } else {
-        expand_tilde(model_dir)
+        crate::util::expand_tilde(model_dir)
     };
     tokio::fs::create_dir_all(&model_dir).await?;
 
@@ -507,33 +488,8 @@ mod tests {
         }
     }
 
-    // ── tilde expansion tests ─────────────────────────────────────────────────
-
-    #[test]
-    fn test_expand_tilde_home() {
-        let home = dirs::home_dir().expect("home dir must be available");
-        assert_eq!(expand_tilde("~"), home);
-    }
-
-    #[test]
-    fn test_expand_tilde_subdir() {
-        let home = dirs::home_dir().expect("home dir must be available");
-        let expanded = expand_tilde("~/.models");
-        assert_eq!(expanded, home.join(".models"));
-    }
-
-    #[test]
-    fn test_expand_tilde_absolute_unchanged() {
-        let p = expand_tilde("/tmp/models");
-        assert_eq!(p, std::path::PathBuf::from("/tmp/models"));
-    }
-
-    #[test]
-    fn test_expand_tilde_relative_unchanged() {
-        let p = expand_tilde("relative/path");
-        assert_eq!(p, std::path::PathBuf::from("relative/path"));
-    }
-
+    // Tilde expansion itself is covered by `crate::util` tests; this exercises
+    // it through the whisper model-dir resolution path.
     #[test]
     fn test_is_model_downloaded_tilde_path() {
         use std::io::Write;

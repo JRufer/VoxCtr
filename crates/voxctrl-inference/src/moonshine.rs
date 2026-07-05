@@ -25,7 +25,6 @@
 //! Model sizes have fixed layer/head geometry (`tiny`: 6 layers, `base`: 8),
 //! which determines the number and shape of the cache tensors.
 
-use std::collections::HashMap;
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
@@ -87,31 +86,10 @@ fn valid_model_size(size: &str) -> bool {
 
 // ── Filesystem layout ─────────────────────────────────────────────────────────
 
-/// Default parent directory for all Moonshine models. Mirrors the whisper
-/// backend's `~/.local/share/voxctrl/models` convention with a `moonshine`
-/// subfolder so the two backends never collide.
+/// Default parent directory for all Moonshine models: the shared models base
+/// with a `moonshine` subfolder so the two backends never collide.
 pub fn default_model_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("voxctrl")
-        .join("models")
-        .join("moonshine")
-}
-
-fn expand_tilde(path: &str) -> PathBuf {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(dirs::home_dir);
-    if path == "~" {
-        return home.unwrap_or_else(|| PathBuf::from("~"));
-    }
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(h) = home {
-            return h.join(rest);
-        }
-    }
-    PathBuf::from(path)
+    crate::util::models_base_dir().join("moonshine")
 }
 
 /// Directory holding one model's files: `<model_dir>/<size>/`.
@@ -119,7 +97,7 @@ fn model_size_dir(model_dir: &str, size: &str) -> PathBuf {
     let base = if model_dir.is_empty() {
         default_model_dir()
     } else {
-        expand_tilde(model_dir)
+        crate::util::expand_tilde(model_dir)
     };
     base.join(size)
 }
@@ -182,19 +160,34 @@ pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
 
 // ── Loaded state ──────────────────────────────────────────────────────────────
 
+/// What feeds one decoder input, resolved once at load time so the hot decode
+/// loop binds inputs by position (no per-step name matching or map lookups).
+/// `Cache(i)` refers to the `i`-th KV-cache tensor in emit order.
+enum DecoderInput {
+    InputIds,
+    Hidden,
+    UseCache,
+    EncoderMask,
+    Cache(usize),
+}
+
 struct Loaded {
     encoder: Session,
     decoder: Session,
     tokenizer: Tokenizer,
-    /// Ordered `past_key_values.<layer>.<decoder|encoder>.<key|value>` input
-    /// names, in the same order the decoder emits its `present.*` cache outputs.
-    cache_names: Vec<String>,
+    /// One entry per decoder input, in the graph's declared order, so values can
+    /// be bound positionally.
+    decoder_plan: Vec<DecoderInput>,
+    /// Number of KV-cache tensors (`num_layers * 4`).
+    num_caches: usize,
+    /// For each cache index, whether it is a decoder self-attention cache (which
+    /// grows every step) versus an encoder cross-attention cache (fixed after the
+    /// first step).
+    cache_is_decoder: Vec<bool>,
     /// Shape of an empty (pre-first-step) cache tensor: `[0, kv_heads, 1, head_dim]`.
     empty_cache_shape: [i64; 4],
     /// Whether the encoder graph takes an `attention_mask` input.
     encoder_has_attention_mask: bool,
-    /// Whether the decoder graph takes an `encoder_attention_mask` input.
-    decoder_has_encoder_attention_mask: bool,
 }
 
 // ── Backend ───────────────────────────────────────────────────────────────────
@@ -262,46 +255,69 @@ impl TranscriptionBackend for MoonshineBackend {
             .map_err(|e| anyhow!("load bundled Moonshine tokenizer: {e}"))?;
 
         // Cache tensor names, in the layer/decoder-encoder/key-value order the
-        // decoder both accepts (as `past_key_values.*`) and emits (as `present.*`).
+        // decoder emits its `present.*` outputs. Used only to map named decoder
+        // cache inputs to their emit-order index while building the plan.
         let mut cache_names = Vec::with_capacity(num_layers * 4);
+        let mut cache_is_decoder = Vec::with_capacity(num_layers * 4);
         for i in 0..num_layers {
             for a in ["decoder", "encoder"] {
                 for b in ["key", "value"] {
                     cache_names.push(format!("past_key_values.{i}.{a}.{b}"));
+                    cache_is_decoder.push(a == "decoder");
                 }
             }
         }
+        let num_caches = cache_names.len();
 
-        let enc_inputs: Vec<String> = encoder.inputs().iter().map(|i| i.name().to_string()).collect();
-        let dec_inputs: Vec<String> = decoder.inputs().iter().map(|i| i.name().to_string()).collect();
-        let encoder_has_attention_mask = enc_inputs.iter().any(|n| n == "attention_mask");
-        let decoder_has_encoder_attention_mask =
-            dec_inputs.iter().any(|n| n == "encoder_attention_mask");
+        let encoder_has_attention_mask =
+            encoder.inputs().iter().any(|i| i.name() == "attention_mask");
 
-        // Sanity-check the decoder actually declares the caches we expect for
-        // this size, so a mismatched model fails at load rather than mid-decode.
-        let declared_caches = dec_inputs.iter().filter(|n| n.starts_with("past_key_values.")).count();
-        if declared_caches != cache_names.len() {
+        // Resolve every decoder input to its source once. Binding positionally at
+        // run time then needs no name lookups.
+        let mut decoder_plan = Vec::with_capacity(decoder.inputs().len());
+        for input in decoder.inputs() {
+            let name = input.name();
+            let slot = match name {
+                "input_ids" => DecoderInput::InputIds,
+                "encoder_hidden_states" => DecoderInput::Hidden,
+                "use_cache_branch" => DecoderInput::UseCache,
+                "encoder_attention_mask" => DecoderInput::EncoderMask,
+                n if n.starts_with("past_key_values.") => {
+                    let idx = cache_names
+                        .iter()
+                        .position(|c| c == n)
+                        .ok_or_else(|| anyhow!("unrecognized decoder cache input '{n}'"))?;
+                    DecoderInput::Cache(idx)
+                }
+                other => bail!("unexpected Moonshine decoder input '{other}'"),
+            };
+            decoder_plan.push(slot);
+        }
+
+        // Fail at load (not mid-decode) if the model doesn't expose the caches
+        // this size expects.
+        let declared_caches = decoder_plan
+            .iter()
+            .filter(|s| matches!(s, DecoderInput::Cache(_)))
+            .count();
+        if declared_caches != num_caches {
             bail!(
-                "Moonshine '{size}' decoder declares {declared_caches} cache inputs, expected {} \
-                 for this size — the model files may not match the selected size.",
-                cache_names.len()
+                "Moonshine '{size}' decoder declares {declared_caches} cache inputs, expected \
+                 {num_caches} for this size — the model files may not match the selected size."
             );
         }
 
-        info!(
-            "Moonshine geometry: {num_layers} layers, {kv_heads} kv-heads, head_dim {head_dim}, \
-             enc_mask={encoder_has_attention_mask}, dec_enc_mask={decoder_has_encoder_attention_mask}"
-        );
+        info!("Moonshine geometry: {num_layers} layers, {kv_heads} kv-heads, head_dim {head_dim}");
 
         *self.state.lock().unwrap() = Some(Loaded {
             encoder,
             decoder,
             tokenizer,
-            cache_names,
+            decoder_plan,
+            num_caches,
+            cache_is_decoder,
             empty_cache_shape: [0, kv_heads as i64, 1, head_dim as i64],
             encoder_has_attention_mask,
-            decoder_has_encoder_attention_mask,
         });
         self.loaded = true;
         Ok(())
@@ -351,18 +367,20 @@ type CacheVal = (Vec<i64>, Vec<f32>);
 
 fn run_inference(state: &mut Loaded, audio: &[f32]) -> Result<String> {
     let n_samples = audio.len();
+    let needs_mask = state.encoder_has_attention_mask
+        || state.decoder_plan.iter().any(|s| matches!(s, DecoderInput::EncoderMask));
+    // `attention_mask` (when a graph takes it) is all-ones over the samples.
+    let attention_mask: Vec<i64> = if needs_mask { vec![1; n_samples] } else { Vec::new() };
 
     // ── Encoder: raw waveform → hidden states ─────────────────────────────────
-    // `attention_mask` (when the graph takes it) is all-ones over the samples.
-    let attention_mask: Vec<i64> = vec![1; n_samples];
     let hidden: CacheVal = {
         let audio_tensor = Tensor::from_array(([1_usize, n_samples], audio.to_vec()))
             .context("build audio tensor")?;
-        let mut feed: Vec<(String, SessionInputValue)> = vec![("input_values".into(), audio_tensor.into())];
+        let mut feed: Vec<(&str, SessionInputValue)> = vec![("input_values", audio_tensor.into())];
         if state.encoder_has_attention_mask {
             let mask = Tensor::from_array(([1_usize, n_samples], attention_mask.clone()))
                 .context("build encoder attention_mask")?;
-            feed.push(("attention_mask".into(), mask.into()));
+            feed.push(("attention_mask", mask.into()));
         }
         let outputs = state.encoder.run(feed).context("encoder run")?;
         let (shape, data) = outputs[0]
@@ -375,7 +393,7 @@ fn run_inference(state: &mut Loaded, audio: &[f32]) -> Result<String> {
     // steps; build them once and feed by reference each iteration.
     let hidden_tensor =
         Tensor::from_array((dims(&hidden.0), hidden.1)).context("build hidden-states tensor")?;
-    let enc_mask_tensor = if state.decoder_has_encoder_attention_mask {
+    let enc_mask_tensor = if state.decoder_plan.iter().any(|s| matches!(s, DecoderInput::EncoderMask)) {
         Some(
             Tensor::from_array(([1_usize, n_samples], attention_mask))
                 .context("build decoder encoder_attention_mask")?,
@@ -386,15 +404,10 @@ fn run_inference(state: &mut Loaded, audio: &[f32]) -> Result<String> {
 
     // ── Decoder: greedy autoregressive loop ───────────────────────────────────
     let allocator = Allocator::default();
-    let decoder_input_names: Vec<String> =
-        state.decoder.inputs().iter().map(|i| i.name().to_string()).collect();
 
-    // Caches start empty (0-element, rank-4). Keyed by name for by-name binding.
-    let mut caches: HashMap<String, CacheVal> = state
-        .cache_names
-        .iter()
-        .map(|n| (n.clone(), (state.empty_cache_shape.to_vec(), Vec::new())))
-        .collect();
+    // Caches in emit order; each starts empty (0-element, rank-4).
+    let mut caches: Vec<CacheVal> =
+        vec![(state.empty_cache_shape.to_vec(), Vec::new()); state.num_caches];
 
     let mut tokens: Vec<i64> = vec![SOT_TOKEN];
     let mut next_input: i64 = SOT_TOKEN;
@@ -402,45 +415,40 @@ fn run_inference(state: &mut Loaded, audio: &[f32]) -> Result<String> {
     for step in 0..MAX_TOKENS {
         let use_cache = step > 0;
 
-        // Build owned per-step tensors.
+        // Per-step tensors. Cache tensors are rebuilt from the accumulated data;
+        // input_ids/use_cache change each step. All are bound positionally below.
         let input_ids = Tensor::from_array(([1_usize, 1], vec![next_input])).context("build input_ids")?;
         let use_cache_t = Tensor::from_array(([1_usize], vec![use_cache])).context("build use_cache_branch")?;
-        // Cache tensors for this step, taken by name below.
-        let mut cache_tensors: HashMap<String, Tensor<f32>> = HashMap::with_capacity(caches.len());
-        for name in &state.cache_names {
-            let (shape, data) = &caches[name];
-            cache_tensors.insert(name.clone(), build_cache_tensor(&allocator, shape, data)?);
-        }
+        let mut cache_tensors: Vec<Option<Tensor<f32>>> = caches
+            .iter()
+            .map(|(shape, data)| build_cache_tensor(&allocator, shape, data).map(Some))
+            .collect::<Result<_>>()?;
 
-        // Bind every declared decoder input by name.
+        // Bind inputs positionally, in the decoder's declared order.
         let mut input_ids = Some(input_ids);
         let mut use_cache_t = Some(use_cache_t);
-        let mut feed: Vec<(String, SessionInputValue)> = Vec::with_capacity(decoder_input_names.len());
-        for name in &decoder_input_names {
-            let val: SessionInputValue = match name.as_str() {
-                "input_ids" => input_ids.take().unwrap().into(),
-                "encoder_hidden_states" => (&hidden_tensor).into(),
-                "use_cache_branch" => use_cache_t.take().unwrap().into(),
-                "encoder_attention_mask" => enc_mask_tensor
+        let mut values: Vec<SessionInputValue> = Vec::with_capacity(state.decoder_plan.len());
+        for slot in &state.decoder_plan {
+            let val: SessionInputValue = match slot {
+                DecoderInput::InputIds => input_ids.take().unwrap().into(),
+                DecoderInput::Hidden => (&hidden_tensor).into(),
+                DecoderInput::UseCache => use_cache_t.take().unwrap().into(),
+                DecoderInput::EncoderMask => enc_mask_tensor
                     .as_ref()
-                    .ok_or_else(|| anyhow!("decoder needs encoder_attention_mask but none was built"))?
+                    .expect("EncoderMask slot implies the mask was built")
                     .into(),
-                other if other.starts_with("past_key_values.") => cache_tensors
-                    .remove(other)
-                    .ok_or_else(|| anyhow!("decoder wants unknown cache input '{other}'"))?
-                    .into(),
-                other => bail!("unexpected Moonshine decoder input '{other}'"),
+                DecoderInput::Cache(i) => cache_tensors[*i].take().unwrap().into(),
             };
-            feed.push((name.clone(), val));
+            values.push(val);
         }
 
-        let outputs = state.decoder.run(feed).context("decoder run")?;
-        if outputs.len() < 1 + state.cache_names.len() {
+        let outputs = state.decoder.run(values.as_slice()).context("decoder run")?;
+        if outputs.len() < 1 + state.num_caches {
             bail!(
                 "Moonshine decoder returned {} outputs, expected at least {} (logits + {} caches)",
                 outputs.len(),
-                1 + state.cache_names.len(),
-                state.cache_names.len()
+                1 + state.num_caches,
+                state.num_caches
             );
         }
 
@@ -450,27 +458,21 @@ fn run_inference(state: &mut Loaded, audio: &[f32]) -> Result<String> {
             .context("extract decoder logits")?;
         let next_token = argmax_last_row(lshape, ldata);
 
-        // present caches follow logits, in cache_names order.
-        let mut present: Vec<CacheVal> = Vec::with_capacity(state.cache_names.len());
-        for i in 0..state.cache_names.len() {
-            let (shape, data) = outputs[i + 1]
-                .try_extract_tensor::<f32>()
-                .with_context(|| format!("extract present cache {i}"))?;
-            present.push((shape.to_vec(), data.to_vec()));
-        }
-        drop(outputs);
-
         tokens.push(next_token);
         if next_token == EOT_TOKEN {
             break;
         }
 
-        // Update caches: on the first (uncached) step every cache is refreshed;
-        // afterwards only the decoder self-attention caches grow — the encoder
+        // Update caches from the `present.*` outputs (which follow logits in emit
+        // order). On the first (uncached) step every cache is refreshed; later
+        // only the decoder self-attention caches grow — the encoder
         // cross-attention caches depend solely on the audio and stay fixed.
-        for (name, val) in state.cache_names.iter().zip(present) {
-            if !use_cache || name.contains("decoder") {
-                caches.insert(name.clone(), val);
+        for i in 0..state.num_caches {
+            if !use_cache || state.cache_is_decoder[i] {
+                let (shape, data) = outputs[i + 1]
+                    .try_extract_tensor::<f32>()
+                    .with_context(|| format!("extract present cache {i}"))?;
+                caches[i] = (shape.to_vec(), data.to_vec());
             }
         }
         next_input = next_token;
@@ -478,11 +480,10 @@ fn run_inference(state: &mut Loaded, audio: &[f32]) -> Result<String> {
 
     // ── Detokenize (special tokens stripped) ─────────────────────────────────
     let ids_u32: Vec<u32> = tokens.iter().map(|&t| t as u32).collect();
-    let text = state
+    state
         .tokenizer
         .decode(&ids_u32, true)
-        .map_err(|e| anyhow!("tokenizer decode: {e}"))?;
-    Ok(text)
+        .map_err(|e| anyhow!("tokenizer decode: {e}"))
 }
 
 /// Build a cache tensor. Empty (`data.is_empty()`) caches use the allocator path

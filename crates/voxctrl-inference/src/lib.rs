@@ -2,6 +2,7 @@ pub mod backend;
 #[cfg(feature = "moonshine")]
 pub mod moonshine;
 pub mod postprocess;
+mod util;
 pub mod whisper_cpp;
 
 /// Whether the Moonshine ONNX backend was compiled into this build. When false,
