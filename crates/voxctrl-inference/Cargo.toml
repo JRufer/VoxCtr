@@ -22,6 +22,12 @@ whisper-rs = { version = "0.16" }
 [dev-dependencies]
 tempfile = { workspace = true }
 
+# Used by build.rs to compile the glibc __isoc23_* shim for the Moonshine
+# backend on Linux. `cc` is already in the build graph (whisper-rs-sys), so this
+# adds nothing to compile.
+[build-dependencies]
+cc = "1"
+
 [features]
 default = []
 cuda = ["whisper-rs/cuda"]
