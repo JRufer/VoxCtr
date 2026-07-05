@@ -1493,10 +1493,19 @@ fn main() {
     let mut shown = false;
     let mut idle = false;
     // Counts render ticks while the overlay is visible, to re-assert the
-    // always-on-top level on a slow heartbeat (see reassert_topmost).
+    // always-on-top level on a slow heartbeat (see apply_topmost).
     let mut topmost_tick: u32 = 0;
+    // Frames remaining during which the position is pushed through winit
+    // directly (bypassing Slint's cached set_position). A window-level change
+    // can make the WM re-place the window, and a cached set_position with an
+    // unchanged value would not send a corrective request; forcing it for a few
+    // frames afterwards moves the overlay back to the configured spot.
+    let mut reposition_frames: u32 = 0;
 
     const DT: f32 = 0.016;
+    // ~100 ms of forced repositioning covers the WM's re-placement latency after
+    // a window-level change.
+    const REPOSITION_FRAMES: u32 = 6;
 
     timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(16), move || {
         let ui = match ui_weak.upgrade() {
@@ -1551,6 +1560,7 @@ fn main() {
             // First map: set the level directly (no toggle) so the surface is
             // presented reliably.
             apply_topmost(&ui, false);
+            reposition_frames = REPOSITION_FRAMES;
             shown = true;
             eprintln!("[overlay] window mapped (kept mapped for the session)");
         }
@@ -1586,17 +1596,29 @@ fn main() {
         // behind a window that came forward mid-dictation.
         if idle {
             apply_topmost(&ui, true);
+            reposition_frames = REPOSITION_FRAMES;
             topmost_tick = 0;
         } else {
             topmost_tick = topmost_tick.wrapping_add(1);
             if topmost_tick % 60 == 0 {
                 apply_topmost(&ui, true);
+                reposition_frames = REPOSITION_FRAMES;
             }
         }
         idle = false;
 
+        // Re-apply position. For a few frames after a window-level change, push
+        // it through winit directly so the WM's re-placement (if any) is undone
+        // even though Slint's cached set_position would otherwise no-op.
         if tx > -10000 {
-            ui.window().set_position(slint::PhysicalPosition::new(tx, ty));
+            if reposition_frames > 0 {
+                reposition_frames -= 1;
+                ui.window().with_winit_window(|w| {
+                    w.set_outer_position(i_slint_backend_winit::winit::dpi::PhysicalPosition::new(tx, ty));
+                });
+            } else {
+                ui.window().set_position(slint::PhysicalPosition::new(tx, ty));
+            }
         }
 
         // ── Shared status properties ────────────────────────────────
