@@ -127,7 +127,20 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `model_size` | string | `"base"` | `"base"` or `"tiny"` |
-| `language` | string | `"en"` | BCP-47 language code |
+| `language` | string | `"en"` | BCP-47 language code (output label only) |
+
+> **Build requirement:** the Moonshine backend is an opt-in compile-time
+> feature. It is included only when the app is built with `--features moonshine`
+> (it pulls in ONNX Runtime). In a build **without** that feature, selecting
+> `"moonshine"` transparently falls back to `whisper-cpp` and still uses the
+> Whisper model configured above. The Settings → Engine panel shows whether
+> Moonshine is available in the running build.
+>
+> A Moonshine model is two upstream ONNX graphs (`encoder_model.onnx` and
+> `decoder_model_merged.onnx`), downloaded on demand into
+> `~/.local/share/voxctrl/models/moonshine/<size>/`. You can also place those
+> two files there manually to run fully offline. The tokenizer is bundled into
+> the app, so it is not downloaded.
 
 ### `audio` section
 

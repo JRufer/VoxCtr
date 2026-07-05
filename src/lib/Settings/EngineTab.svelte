@@ -62,6 +62,52 @@
   let downloading = $state(false);
   let modelDirError = $state<string | null>(null);
 
+  // ── Moonshine ────────────────────────────────────────────────────────────
+  // Whether the app was built with the Moonshine backend. When false, choosing
+  // Moonshine silently runs whisper-cpp, so we surface that to the user.
+  let moonshineAvailable = $state(true);
+  let moonshineDownloadedMap = $state<Record<string, boolean>>({});
+  let moonshineChecking = $state(false);
+  let moonshineDownloading = $state(false);
+
+  async function checkMoonshineDownloaded() {
+    moonshineChecking = true;
+    const newMap: Record<string, boolean> = {};
+    for (const m of moonshineModelSizeOptions) {
+      try {
+        newMap[m.value] = await invoke<boolean>("check_moonshine_downloaded", {
+          modelSize: m.value,
+        });
+      } catch (e) {
+        console.error("Failed to check Moonshine download status for " + m.value, e);
+        newMap[m.value] = false;
+      }
+    }
+    moonshineDownloadedMap = newMap;
+    moonshineChecking = false;
+  }
+
+  async function triggerMoonshineDownload(model: string) {
+    if (moonshineDownloading) return;
+    moonshineDownloading = true;
+    try {
+      await invoke("download_moonshine_model", { modelSize: model });
+      moonshineDownloadedMap[model] = true;
+    } catch (e) {
+      alert(`Failed to download Moonshine model: ${e}`);
+    } finally {
+      moonshineDownloading = false;
+    }
+  }
+
+  async function onMoonshineModelChanged() {
+    markDirty();
+    const selected = cfg.engine.moonshine.model_size;
+    if (moonshineAvailable && !moonshineDownloadedMap[selected]) {
+      await triggerMoonshineDownload(selected);
+    }
+  }
+
   async function checkAllModelsDownloaded() {
     checking = true;
     const newMap: Record<string, boolean> = {};
@@ -131,6 +177,12 @@
 
   onMount(async () => {
     checkAllModelsDownloaded();
+    try {
+      moonshineAvailable = await invoke<boolean>("moonshine_available");
+    } catch (e) {
+      console.error("Failed to query Moonshine availability", e);
+    }
+    checkMoonshineDownloaded();
     cudaEnabled = await invoke<boolean>("cuda_enabled");
     // If this is a CPU build but config still says "cuda", reset to "auto"
     if (!cudaEnabled && cfg.engine.whisper_cpp.device === "cuda") {
@@ -242,10 +294,54 @@
   {:else}
     <div class="field-group">
       <h3>Moonshine Settings</h3>
+
+      {#if !moonshineAvailable}
+        <div
+          class="flex items-center gap-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 mb-4"
+        >
+          <span class="text-2xl leading-none text-yellow-500">⚠️</span>
+          <div class="flex-1">
+            <strong class="block text-yellow-200 font-semibold text-sm mb-1"
+              >Moonshine backend not included in this build</strong
+            >
+            <p class="m-0 text-slate-200 text-xs leading-relaxed">
+              This build was compiled without Moonshine, so selecting it will fall
+              back to Whisper.cpp (using the Whisper model configured above).
+              Rebuild with <code>--features moonshine</code> to enable it.
+            </p>
+          </div>
+        </div>
+      {/if}
+
       <label class="field">
         <span>Model size</span>
-        <CustomSelect bind:value={cfg.engine.moonshine.model_size} options={moonshineModelSizeOptions} onchange={markDirty} />
+        <CustomSelect bind:value={cfg.engine.moonshine.model_size} options={moonshineModelSizeOptions} onchange={onMoonshineModelChanged} />
       </label>
+
+      {#if moonshineAvailable}
+        <div class="model-status-container">
+          {#if moonshineChecking}
+            <span class="status-checking">⏳ Checking local model files...</span>
+          {:else if moonshineDownloading}
+            <span class="status-downloading"
+              >⏳ Downloading Moonshine {cfg.engine.moonshine.model_size} (ONNX)...</span
+            >
+          {:else if moonshineDownloadedMap[cfg.engine.moonshine.model_size]}
+            <span class="status-downloaded">✔ Model downloaded</span>
+          {:else}
+            <div class="status-missing-wrapper">
+              <span class="status-missing">Model not downloaded</span>
+              <button
+                class="btn-download"
+                onclick={() => triggerMoonshineDownload(cfg.engine.moonshine.model_size)}
+              >
+                Download {cfg.engine.moonshine.model_size}
+              </button>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       <label class="field">
         <span>Language</span>
         <input

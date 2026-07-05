@@ -30,15 +30,28 @@ cuda = ["whisper-rs/cuda"]
 # CUDA's heavy runtime. Falls back to CPU when no Vulkan device is present.
 vulkan = ["whisper-rs/vulkan"]
 
-# Moonshine ONNX backend via onnxruntime
-moonshine = ["dep:ort", "dep:ndarray"]
+# Moonshine ONNX backend via onnxruntime. `ort` keeps its default features,
+# which include `download-binaries`: ONNX Runtime is fetched at build time and
+# linked into the binary, so the shipped app is self-contained and needs no
+# system `libonnxruntime` at runtime (nothing else in the workspace provides
+# one). Decoding uses the `tokenizers` crate with a tokenizer embedded in the
+# binary (see `assets/moonshine_tokenizer.json`).
+moonshine = ["dep:ort", "dep:tokenizers"]
 
 [dependencies.ort]
 version = "2.0.0-rc.12"
 optional = true
-features = ["download-binaries"]
+# Default features include `download-binaries`, which fetches a prebuilt ONNX
+# Runtime at build time and links it statically, so the resulting binary is
+# self-contained (no system libonnxruntime needed at runtime). Building the
+# `moonshine` feature therefore requires network access to the ONNX Runtime
+# binary host at compile time. To build fully offline instead, switch to
+# `default-features = false, features = ["load-dynamic", "std", "api-24"]` and
+# ship a `libonnxruntime` alongside the app.
 
-[dependencies.ndarray]
-version = "0.16"
+[dependencies.tokenizers]
+version = "0.21"
 optional = true
+default-features = false
+features = ["onig"]
 

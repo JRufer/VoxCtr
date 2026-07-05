@@ -169,15 +169,13 @@ pub async fn save_config(
     let _ = app.emit("config-changed", new_config);
 
     let (overlay_position, overlay_monitor) = (guard.data.ui.overlay_position.clone(), guard.data.ui.overlay_monitor.clone());
-    if let Some((x, y)) = crate::calculate_overlay_coordinates(&app, &overlay_position, &overlay_monitor) {
-        let pos_msg = serde_json::json!({
-            "type": "position",
-            "x": x,
-            "y": y,
-        });
-        if let Ok(json_str) = serde_json::to_string(&pos_msg) {
-            let _ = state.overlay_tx.send(json_str);
-        }
+    let pos_msg = serde_json::json!({
+        "type": "position",
+        "position": overlay_position,
+        "monitor": overlay_monitor,
+    });
+    if let Ok(json_str) = serde_json::to_string(&pos_msg) {
+        let _ = state.overlay_tx.send(json_str);
     }
 
     Ok(())
@@ -371,6 +369,42 @@ pub async fn download_model(model_size: String, model_dir: String) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
+/// Whether the Moonshine ONNX backend was compiled into this build. The UI uses
+/// this to decide whether selecting Moonshine actually runs Moonshine (vs.
+/// transparently falling back to whisper-cpp).
+#[tauri::command]
+pub fn moonshine_available() -> bool {
+    voxctrl_inference::MOONSHINE_COMPILED
+}
+
+#[tauri::command]
+pub async fn check_moonshine_downloaded(model_size: String) -> Result<bool, String> {
+    #[cfg(feature = "moonshine")]
+    {
+        Ok(voxctrl_inference::moonshine::is_model_downloaded(&model_size, ""))
+    }
+    #[cfg(not(feature = "moonshine"))]
+    {
+        let _ = model_size;
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub async fn download_moonshine_model(model_size: String) -> Result<(), String> {
+    #[cfg(feature = "moonshine")]
+    {
+        voxctrl_inference::moonshine::download_model(&model_size, "")
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "moonshine"))]
+    {
+        let _ = model_size;
+        Err("This build was compiled without the Moonshine backend. Rebuild with `--features moonshine` to use it.".into())
+    }
+}
+
 #[tauri::command]
 pub async fn check_directory_exists(path: String) -> Result<bool, String> {
     if path.is_empty() {
@@ -395,36 +429,34 @@ fn expand_tilde(path: &str) -> std::path::PathBuf {
 
 #[tauri::command]
 pub async fn show_overlay(
-    app: tauri::AppHandle,
     state: tauri::State<'_, Arc<AppState>>,
 ) -> Result<(), String> {
     let (position, monitor_pref) = {
         let cfg = state.config.lock().await;
         (cfg.data.ui.overlay_position.clone(), cfg.data.ui.overlay_monitor.clone())
     };
-    
-    if let Some((x, y)) = crate::calculate_overlay_coordinates(&app, &position, &monitor_pref) {
-        let pos_msg = serde_json::json!({
-            "type": "position",
-            "x": x,
-            "y": y,
-        });
-        let status_msg = serde_json::json!({
-            "type": "status",
-            "recording": true,
-            "processing": false,
-            "speaking": false,
-            "audio_ready": true,
-            "audio_level": 0.0,
-            "active_target_label": "Overlay Test",
-        });
-        
-        if let Ok(s) = serde_json::to_string(&pos_msg) {
-            let _ = state.overlay_tx.send(s);
-        }
-        if let Ok(s) = serde_json::to_string(&status_msg) {
-            let _ = state.overlay_tx.send(s);
-        }
+
+    // The overlay computes pixel coordinates from the anchor itself.
+    let pos_msg = serde_json::json!({
+        "type": "position",
+        "position": position,
+        "monitor": monitor_pref,
+    });
+    let status_msg = serde_json::json!({
+        "type": "status",
+        "recording": true,
+        "processing": false,
+        "speaking": false,
+        "audio_ready": true,
+        "audio_level": 0.0,
+        "active_target_label": "Overlay Test",
+    });
+
+    if let Ok(s) = serde_json::to_string(&pos_msg) {
+        let _ = state.overlay_tx.send(s);
+    }
+    if let Ok(s) = serde_json::to_string(&status_msg) {
+        let _ = state.overlay_tx.send(s);
     }
     Ok(())
 }

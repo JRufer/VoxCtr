@@ -65,6 +65,10 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 cuda = ["voxctrl-inference/cuda"]
 vulkan = ["voxctrl-inference/vulkan"]
+# Compiles the Moonshine ONNX speech-to-text backend into the app. Opt-in like
+# cuda/vulkan: it pulls in ONNX Runtime (fetched at build time). Without it, a
+# "moonshine" backend selection transparently falls back to whisper-cpp.
+moonshine = ["voxctrl-inference/moonshine"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -4583,9 +4583,9 @@ dependencies = [
 
 [[package]]
 name = "lzma-rust2"
-version = "0.15.7"
+version = "0.15.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1670343e58806300d87950e3401e820b519b9384281bbabfb15e3636689ffd69"
+checksum = "e20f57f9918e5bd7bc58c22cdd70a6afc7375d4dd9683af5f2b34bd3d2bba619"
 
 [[package]]
 name = "mac-notification-sys"
@@ -4817,21 +4817,6 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
-]
-
-[[package]]
-name = "ndarray"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "882ed72dce9365842bf196bdeedf5055305f11fc8c03dee7bb0194a6cad34841"
-dependencies = [
- "matrixmultiply",
- "num-complex",
- "num-integer",
- "num-traits",
- "portable-atomic",
- "portable-atomic-util",
- "rawpointer",
 ]
 
 [[package]]
@@ -5709,7 +5694,7 @@ version = "2.0.0-rc.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7de3af33d24a745ffb8fab904b13478438d1cd52868e6f17735ef6e1f8bf133"
 dependencies = [
- "ndarray 0.17.2",
+ "ndarray",
  "ort-sys",
  "smallvec",
  "tracing",
@@ -9393,7 +9378,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "voxctrl-app"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9431,7 +9416,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-audio"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cpal",
@@ -9446,7 +9431,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-config"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "dirs 5.0.1",
  "serde",
@@ -9459,7 +9444,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-dbus"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -9471,7 +9456,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-hotkeys"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9488,12 +9473,11 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-inference"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
  "dirs 5.0.1",
- "ndarray 0.16.1",
  "ort",
  "regex",
  "reqwest 0.12.28",
@@ -9501,6 +9485,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "tokenizers",
  "tokio",
  "tracing",
  "voxctrl-config",
@@ -9511,7 +9496,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-inject"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -9525,7 +9510,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-llm"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "reqwest 0.12.28",
@@ -9539,7 +9524,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-mcp"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -9551,7 +9536,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-routing"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -9574,7 +9559,7 @@ dependencies = [
 
 [[package]]
 name = "voxctrl-tts"
-version = "0.2.8"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -10024,9 +10009,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "1.0.7"
+version = "1.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f31141ce3fc3e300ae89b78c0dd67f9708061d1d2eda54b8209346fd6be9a92c"
+checksum = "0d46a5a140e6f7afeccd8eae97eff335163939eac8b929834875168b29b3d267"
 dependencies = [
  "rustls-pki-types",
 ]

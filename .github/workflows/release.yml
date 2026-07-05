@@ -253,7 +253,9 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
           QT_QPA_PLATFORM: offscreen
-        run: npm run tauri build
+        # `moonshine` ships the Moonshine ONNX engine alongside whisper-cpp in
+        # every release build (links ONNX Runtime, fetched at build time).
+        run: npm run tauri build -- --features moonshine
 
       # Portable GPU AppImage. whisper.cpp's Vulkan backend links only
       # libvulkan (lightweight, unlike CUDA), so linuxdeploy bundles it fine.
@@ -262,7 +264,7 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
           QT_QPA_PLATFORM: offscreen
-        run: npm run tauri build -- --features vulkan
+        run: npm run tauri build -- --features vulkan,moonshine
 
       # linuxdeploy bundles whatever graphics/Wayland/input libraries exist on
       # the build host. On ubuntu-22.04 those are older than modern desktops, and
@@ -312,7 +314,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         # Call tauri directly so --bundles lands before the cargo -- separator;
         # `npm run tauri build -- --bundles deb` wrongly sends --bundles to cargo.
-        run: node_modules/.bin/tauri build --bundles deb -- --features cuda
+        run: node_modules/.bin/tauri build --bundles deb -- --features cuda,moonshine
 
       # ── Tauri build (Windows) ───────────────────────────────────────────────
       # NSIS (setup.exe) only — the advertised Windows installer. The WiX/MSI
@@ -321,7 +323,7 @@ jobs:
       # `--bundles nsis` reaches tauri instead of cargo.
       - name: Build installer (Windows, CPU)
         if: runner.os == 'Windows' && !matrix.cuda
-        run: npx tauri build --bundles nsis
+        run: npx tauri build --bundles nsis -- --features moonshine
 
       - name: Copy real CUDA DLLs (Windows, CUDA)
         if: runner.os == 'Windows' && matrix.cuda
@@ -333,7 +335,7 @@ jobs:
 
       - name: Build installer (Windows, CUDA)
         if: runner.os == 'Windows' && matrix.cuda
-        run: npx tauri build --bundles nsis -- --features cuda
+        run: npx tauri build --bundles nsis -- --features cuda,moonshine
 
       # ── Collect and rename Linux artifacts ──────────────────────────────────
       # Search the whole workspace so the path is correct regardless of whether
