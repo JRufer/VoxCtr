@@ -371,6 +371,42 @@ pub async fn download_model(model_size: String, model_dir: String) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
+/// Whether the Moonshine ONNX backend was compiled into this build. The UI uses
+/// this to decide whether selecting Moonshine actually runs Moonshine (vs.
+/// transparently falling back to whisper-cpp).
+#[tauri::command]
+pub fn moonshine_available() -> bool {
+    voxctrl_inference::MOONSHINE_COMPILED
+}
+
+#[tauri::command]
+pub async fn check_moonshine_downloaded(model_size: String) -> Result<bool, String> {
+    #[cfg(feature = "moonshine")]
+    {
+        Ok(voxctrl_inference::moonshine::is_model_downloaded(&model_size, ""))
+    }
+    #[cfg(not(feature = "moonshine"))]
+    {
+        let _ = model_size;
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub async fn download_moonshine_model(model_size: String) -> Result<(), String> {
+    #[cfg(feature = "moonshine")]
+    {
+        voxctrl_inference::moonshine::download_model(&model_size, "")
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "moonshine"))]
+    {
+        let _ = model_size;
+        Err("This build was compiled without the Moonshine backend. Rebuild with `--features moonshine` to use it.".into())
+    }
+}
+
 #[tauri::command]
 pub async fn check_directory_exists(path: String) -> Result<bool, String> {
     if path.is_empty() {

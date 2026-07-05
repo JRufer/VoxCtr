@@ -351,7 +351,12 @@ pub fn run() {
                     {
                         let cfg = state_for_gesture.config.lock().await;
                         let eng = &cfg.data.engine;
-                        if eng.backend != voxctrl_config::BackendChoice::Moonshine
+                        // Moonshine only bypasses the Whisper-model check when it
+                        // is actually compiled in; otherwise the app silently
+                        // falls back to whisper-cpp and still needs the model.
+                        let uses_whisper_model = eng.backend != voxctrl_config::BackendChoice::Moonshine
+                            || !voxctrl_inference::MOONSHINE_COMPILED;
+                        if uses_whisper_model
                             && !voxctrl_inference::whisper_cpp::is_small_auto_downloadable(&eng.whisper_cpp.model_size)
                             && !voxctrl_inference::whisper_cpp::is_model_downloaded(
                                 &eng.whisper_cpp.model_size,
@@ -765,7 +770,12 @@ pub fn run() {
             // the background (the shipped default, "tiny"), in which case the
             // app works out of the box with no Settings visit required.
             let mut show_settings = cfg_data.ui.auto_show_settings;
-            if cfg_data.engine.backend != voxctrl_config::BackendChoice::Moonshine {
+            // Only the whisper-cpp path needs a GGUF model on disk. A Moonshine
+            // selection uses whisper-cpp (and thus its model) unless the
+            // Moonshine backend is actually compiled into this build.
+            let uses_whisper_model = cfg_data.engine.backend != voxctrl_config::BackendChoice::Moonshine
+                || !voxctrl_inference::MOONSHINE_COMPILED;
+            if uses_whisper_model {
                 let model_size = cfg_data.engine.whisper_cpp.model_size.clone();
                 let model_dir = cfg_data.engine.whisper_cpp.model_dir.clone();
                 if !voxctrl_inference::whisper_cpp::is_model_downloaded(&model_size, &model_dir) {
@@ -986,6 +996,9 @@ pub fn run() {
             list_pocket_tts_voices,
             check_model_downloaded,
             download_model,
+            moonshine_available,
+            check_moonshine_downloaded,
+            download_moonshine_model,
             check_directory_exists,
             test_openai,
             cuda_enabled,

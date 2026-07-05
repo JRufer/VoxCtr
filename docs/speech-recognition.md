@@ -219,3 +219,28 @@ Under `engine.whisper_cpp` in `config.json`:
 | `model_dir` | string | `""` | Custom model storage path; empty = `~/.local/share/voxctrl/models/`. Supports `~` expansion (e.g. `~/.whisper-models`). The directory must already exist. |
 
 Language detection is automatic when using whisper-cpp; use the `engine.moonshine.language` field for the Moonshine backend.
+
+## Moonshine backend
+
+[Moonshine](https://github.com/moonshine-ai/moonshine) is an alternative,
+CPU-friendly speech-to-text model. Unlike Whisper it consumes the raw 16 kHz
+waveform directly (no fixed 30-second window), which keeps latency low on the
+short utterances typical of push-to-talk dictation.
+
+It runs through ONNX Runtime as four graphs executed in sequence —
+`preprocess` → `encode` → `uncached_decode` → `cached_decode` — with greedy
+autoregressive decoding: starting from the start-of-transcript token, each
+step's highest-scoring token is fed back in until the end-of-transcript token
+appears (or a length cap derived from the audio duration is reached). The
+resulting token ids are turned back into text with the model's `tokenizer.json`.
+
+**Enabling it.** Moonshine is an opt-in build feature (it links ONNX Runtime),
+compiled in with `--features moonshine`, the same way `cuda` and `vulkan` are
+opt-in. A build without it will transparently fall back to whisper-cpp if
+`"moonshine"` is selected; the Settings → Engine panel indicates whether the
+running build actually includes it.
+
+**Models.** Selecting a size (`base` or `tiny`) and clicking Download in
+Settings → Engine fetches the four ONNX graphs plus `tokenizer.json` into
+`~/.local/share/voxctrl/models/moonshine/<size>/`. You can also drop those
+files there manually to run fully offline.

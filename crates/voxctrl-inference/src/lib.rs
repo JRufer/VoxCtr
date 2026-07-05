@@ -1,12 +1,20 @@
 pub mod backend;
+#[cfg(feature = "moonshine")]
+pub mod moonshine;
 pub mod postprocess;
 pub mod whisper_cpp;
+
+/// Whether the Moonshine ONNX backend was compiled into this build. When false,
+/// selecting Moonshine transparently falls back to whisper-cpp, and callers
+/// (e.g. the "model not downloaded" UI checks) must treat a Moonshine selection
+/// as effectively whisper-cpp.
+pub const MOONSHINE_COMPILED: bool = cfg!(feature = "moonshine");
 
 use std::sync::Arc;
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use voxctrl_config::{AppConfig, BackendChoice};
 
 use backend::{TranscribeRequest, TranscriptionBackend};
@@ -310,9 +318,20 @@ fn build_backend(config: &AppConfig) -> Box<dyn TranscriptionBackend> {
             Box::new(WhisperCppBackend::new(config.engine.whisper_cpp.clone()))
         }
         BackendChoice::Moonshine => {
-            // Moonshine feature not compiled — fall back to whisper-cpp
-            warn!("Moonshine backend selected but not compiled; using whisper-cpp");
-            Box::new(WhisperCppBackend::new(config.engine.whisper_cpp.clone()))
+            #[cfg(feature = "moonshine")]
+            {
+                info!(
+                    "Using Moonshine backend ({} model)",
+                    config.engine.moonshine.model_size
+                );
+                Box::new(moonshine::MoonshineBackend::new(config.engine.moonshine.clone()))
+            }
+            #[cfg(not(feature = "moonshine"))]
+            {
+                // Moonshine feature not compiled — fall back to whisper-cpp.
+                tracing::warn!("Moonshine backend selected but not compiled in this build; using whisper-cpp");
+                Box::new(WhisperCppBackend::new(config.engine.whisper_cpp.clone()))
+            }
         }
         BackendChoice::Auto => {
             let selected = auto_select(config);
