@@ -3,28 +3,29 @@
 //! Moonshine (<https://github.com/moonshine-ai/moonshine>) is a compact
 //! encoder–decoder ASR model designed for on-device use. Unlike Whisper it
 //! consumes the raw 16 kHz waveform directly (no 30-second padding), which makes
-//! it fast and low-latency on short utterances — a good fit for push-to-talk
+//! it fast and low-latency on the short utterances typical of push-to-talk
 //! dictation.
 //!
-//! The upstream ONNX release splits the model into four graphs that we run in
-//! sequence:
+//! This mirrors the upstream `useful-moonshine-onnx` pipeline, which uses two
+//! ONNX graphs:
 //!
-//! 1. `preprocess`      — raw audio `[1, samples]` → features `[1, frames, dim]`
-//! 2. `encode`          — features → encoder context `[1, frames, dim]`
-//! 3. `uncached_decode` — first decoder step: start token + context → logits + KV cache
-//! 4. `cached_decode`   — subsequent steps: one token + context + KV cache → logits + new cache
+//! 1. `encoder_model`         — raw audio `[1, samples]` → hidden states `[1, seq, dim]`
+//! 2. `decoder_model_merged`  — a KV-cached decoder with a `use_cache_branch`
+//!    toggle: given the running token, the encoder hidden states, and the
+//!    accumulated `past_key_values`, it emits the next-token logits plus updated
+//!    cache tensors.
 //!
-//! Decoding is greedy autoregression: start from the start-of-transcript token,
-//! take the arg-max of each step's logits, feed it back until the
-//! end-of-transcript token appears (or a length cap derived from the audio
-//! duration is hit). Token ids are turned back into text with the model's
-//! `tokenizer.json`.
+//! Decoding is greedy autoregression from the start-of-transcript token (id 1)
+//! until the end-of-transcript token (id 2), capped at [`MAX_TOKENS`]. On the
+//! first step `use_cache_branch` is false and empty caches are supplied; every
+//! later step reuses the decoder self-attention cache while the encoder
+//! cross-attention cache stays frozen (it depends only on the audio). Token ids
+//! are turned back into text with the bundled `tokenizer.json`.
 //!
-//! To stay robust against small differences between exported model revisions,
-//! tensors are bound to graph inputs **by position** using each session's
-//! declared input list rather than by hard-coded names, and the presence of an
-//! optional `seq_len` input is detected from the graph arity instead of assumed.
+//! Model sizes have fixed layer/head geometry (`tiny`: 6 layers, `base`: 8),
+//! which determines the number and shape of the cache tensors.
 
+use std::collections::HashMap;
 use std::{
     path::{Path, PathBuf},
     sync::Mutex,
@@ -33,8 +34,9 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionOutputs},
-    value::Tensor,
+    memory::Allocator,
+    session::{builder::GraphOptimizationLevel, Session, SessionInputValue},
+    value::{Shape, Tensor},
 };
 use tokenizers::Tokenizer;
 use tracing::info;
@@ -45,35 +47,42 @@ use crate::backend::{TranscribeRequest, TranscriptionBackend, TranscriptionResul
 // ── Model constants ───────────────────────────────────────────────────────────
 
 /// Start-of-transcript token id (first token fed to the decoder).
-const SOT_TOKEN: i32 = 1;
+const SOT_TOKEN: i64 = 1;
 /// End-of-transcript token id (decoding stops once this is produced).
-const EOT_TOKEN: i32 = 2;
+const EOT_TOKEN: i64 = 2;
 /// Moonshine operates on 16 kHz mono audio.
 const SAMPLE_RATE: usize = 16_000;
-/// Upper bound on decoded tokens, scaled by audio length. Six tokens per second
-/// comfortably exceeds natural speech rates while capping runaway generation if
-/// the model never emits the end token.
-const MAX_TOKENS_PER_SECOND: usize = 6;
-/// Never fewer than this many tokens, so very short clips still get a few steps.
-const MIN_MAX_TOKENS: usize = 8;
+/// Upper bound on decoded tokens per call. Matches upstream; end-of-transcript
+/// normally stops decoding well before this.
+const MAX_TOKENS: usize = 192;
 
-/// The ONNX graph files that make up a Moonshine model, in load order.
-const MODEL_FILES: [&str; 4] = [
-    "preprocess.onnx",
-    "encode.onnx",
-    "uncached_decode.onnx",
-    "cached_decode.onnx",
-];
-const TOKENIZER_FILE: &str = "tokenizer.json";
+/// The two ONNX graph files that make up a Moonshine model.
+const ENCODER_FILE: &str = "encoder_model.onnx";
+const DECODER_FILE: &str = "decoder_model_merged.onnx";
+const MODEL_FILES: [&str; 2] = [ENCODER_FILE, DECODER_FILE];
+
+/// The tokenizer is identical across model sizes and is shipped with the upstream
+/// package rather than hosted per-model, so it is embedded in the binary.
+const TOKENIZER_JSON: &[u8] = include_bytes!("../assets/moonshine_tokenizer.json");
 
 /// Base URL for the upstream ONNX weights on the Hugging Face hub. The float
-/// (non-quantized) graphs live under `onnx/merged/{size}/float/`. Kept as a
+/// (non-quantized) graphs live under `onnx/merged/<size>/float/`. Kept as a
 /// single constant so a hosting change is a one-line edit; users can also point
-/// `model_dir` at a local copy to bypass downloading entirely.
+/// at a local copy to bypass downloading entirely.
 const HF_BASE_URL: &str = "https://huggingface.co/UsefulSensors/moonshine/resolve/main/onnx/merged";
 
+/// Per-size decoder geometry: `(num_layers, num_key_value_heads, head_dim)`. These
+/// determine the shape of the KV-cache tensors. Values from the upstream model.
+fn model_dims(size: &str) -> Option<(usize, usize, usize)> {
+    match size {
+        "tiny" => Some((6, 8, 36)),
+        "base" => Some((8, 8, 52)),
+        _ => None,
+    }
+}
+
 fn valid_model_size(size: &str) -> bool {
-    matches!(size, "tiny" | "base")
+    model_dims(size).is_some()
 }
 
 // ── Filesystem layout ─────────────────────────────────────────────────────────
@@ -115,13 +124,14 @@ fn model_size_dir(model_dir: &str, size: &str) -> PathBuf {
     base.join(size)
 }
 
-/// True when every ONNX graph and the tokenizer for `size` are present on disk.
+/// True when both ONNX graphs for `size` are present on disk. The tokenizer is
+/// embedded, so it is not part of this check.
 pub fn is_model_downloaded(size: &str, model_dir: &str) -> bool {
     if !valid_model_size(size) {
         return false;
     }
     let dir = model_size_dir(model_dir, size);
-    MODEL_FILES.iter().all(|f| dir.join(f).exists()) && dir.join(TOKENIZER_FILE).exists()
+    MODEL_FILES.iter().all(|f| dir.join(f).exists())
 }
 
 // ── Download ──────────────────────────────────────────────────────────────────
@@ -130,7 +140,7 @@ pub fn is_model_downloaded(size: &str, model_dir: &str) -> bool {
 /// load) can't fight over the same files.
 static DOWNLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Fetch every model file for `size` into `<model_dir>/<size>/`. Files already
+/// Fetch both ONNX graphs for `size` into `<model_dir>/<size>/`. Files already
 /// present are skipped, so this is safe to call repeatedly.
 pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
     if !valid_model_size(size) {
@@ -142,26 +152,12 @@ pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
 
     let _guard = DOWNLOAD_LOCK.lock().await;
 
-    // ONNX graphs live under `<size>/float/<file>`; the tokenizer is shared at
-    // `<size>/tokenizer.json`.
-    let mut jobs: Vec<(String, PathBuf)> = MODEL_FILES
-        .iter()
-        .map(|f| {
-            (
-                format!("{HF_BASE_URL}/{size}/float/{f}"),
-                dir.join(f),
-            )
-        })
-        .collect();
-    jobs.push((
-        format!("{HF_BASE_URL}/{size}/{TOKENIZER_FILE}"),
-        dir.join(TOKENIZER_FILE),
-    ));
-
-    for (url, path) in jobs {
+    for file in MODEL_FILES {
+        let path = dir.join(file);
         if path.exists() {
             continue;
         }
+        let url = format!("{HF_BASE_URL}/{size}/float/{file}");
         info!("Downloading Moonshine file: {url}");
         let response = reqwest::get(&url)
             .await
@@ -186,22 +182,19 @@ pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
 
 // ── Loaded state ──────────────────────────────────────────────────────────────
 
-/// One Moonshine session (a graph) plus the number of KV-cache tensors it
-/// produces, discovered from the graph, so we bind cache in/out without relying
-/// on tensor names.
 struct Loaded {
-    preprocess: Session,
-    encode: Session,
-    uncached_decode: Session,
-    cached_decode: Session,
+    encoder: Session,
+    decoder: Session,
     tokenizer: Tokenizer,
-    /// Cache tensors emitted by `uncached_decode` (outputs after the logits).
-    num_cache: usize,
-    /// Non-cache inputs the decoders take: 2 = `[tokens, context]`,
-    /// 3 = `[tokens, context, seq_len]`.
-    decode_fixed_inputs: usize,
-    /// Whether `encode` takes a trailing `seq_len` input in addition to features.
-    encode_takes_seq_len: bool,
+    /// Ordered `past_key_values.<layer>.<decoder|encoder>.<key|value>` input
+    /// names, in the same order the decoder emits its `present.*` cache outputs.
+    cache_names: Vec<String>,
+    /// Shape of an empty (pre-first-step) cache tensor: `[0, kv_heads, 1, head_dim]`.
+    empty_cache_shape: [i64; 4],
+    /// Whether the encoder graph takes an `attention_mask` input.
+    encoder_has_attention_mask: bool,
+    /// Whether the decoder graph takes an `encoder_attention_mask` input.
+    decoder_has_encoder_attention_mask: bool,
 }
 
 // ── Backend ───────────────────────────────────────────────────────────────────
@@ -247,68 +240,68 @@ impl TranscriptionBackend for MoonshineBackend {
 
     fn load(&mut self) -> Result<()> {
         let size = &self.cfg.model_size;
-        if !valid_model_size(size) {
-            bail!("Unknown Moonshine model size '{size}' (expected 'tiny' or 'base')");
-        }
+        let (num_layers, kv_heads, head_dim) = model_dims(size)
+            .ok_or_else(|| anyhow!("Unknown Moonshine model size '{size}' (expected 'tiny' or 'base')"))?;
 
         let dir = model_size_dir("", size);
-        // model_dir override: MoonshineConfig has no dir field, so honor an
-        // explicit path only through the default location. If files are missing,
-        // point the user at exactly where to put them.
         if !is_model_downloaded(size, "") {
             bail!(
-                "Moonshine '{size}' model is not downloaded (expected {} plus {} in {}). \
+                "Moonshine '{size}' model is not downloaded (expected {} in {}). \
                  Open Settings → Engine and download it, or place the files there manually.",
-                MODEL_FILES.join(", "),
-                TOKENIZER_FILE,
+                MODEL_FILES.join(" and "),
                 dir.display()
             );
         }
 
         info!("Loading Moonshine '{size}' model from {}", dir.display());
 
-        let preprocess = Self::build_session(&dir.join("preprocess.onnx"))?;
-        let encode = Self::build_session(&dir.join("encode.onnx"))?;
-        let uncached_decode = Self::build_session(&dir.join("uncached_decode.onnx"))?;
-        let cached_decode = Self::build_session(&dir.join("cached_decode.onnx"))?;
+        let encoder = Self::build_session(&dir.join(ENCODER_FILE))?;
+        let decoder = Self::build_session(&dir.join(DECODER_FILE))?;
 
-        let tokenizer = Tokenizer::from_file(dir.join(TOKENIZER_FILE))
-            .map_err(|e| anyhow!("load tokenizer.json: {e}"))?;
+        let tokenizer = Tokenizer::from_bytes(TOKENIZER_JSON)
+            .map_err(|e| anyhow!("load bundled Moonshine tokenizer: {e}"))?;
 
-        // Discover the KV-cache shape of this export.
-        //   uncached_decode outputs = [logits, cache_0, cache_1, ...]
-        //   cached_decode  inputs   = [tokens, context, (seq_len), cache_0, ...]
-        let num_cache = uncached_decode
-            .outputs()
-            .len()
-            .checked_sub(1)
-            .ok_or_else(|| anyhow!("uncached_decode has no outputs"))?;
-        let cached_inputs = cached_decode.inputs().len();
-        let decode_fixed_inputs = cached_inputs
-            .checked_sub(num_cache)
-            .ok_or_else(|| anyhow!("cached_decode has fewer inputs ({cached_inputs}) than cache tensors ({num_cache})"))?;
-        if !(2..=3).contains(&decode_fixed_inputs) {
+        // Cache tensor names, in the layer/decoder-encoder/key-value order the
+        // decoder both accepts (as `past_key_values.*`) and emits (as `present.*`).
+        let mut cache_names = Vec::with_capacity(num_layers * 4);
+        for i in 0..num_layers {
+            for a in ["decoder", "encoder"] {
+                for b in ["key", "value"] {
+                    cache_names.push(format!("past_key_values.{i}.{a}.{b}"));
+                }
+            }
+        }
+
+        let enc_inputs: Vec<String> = encoder.inputs().iter().map(|i| i.name().to_string()).collect();
+        let dec_inputs: Vec<String> = decoder.inputs().iter().map(|i| i.name().to_string()).collect();
+        let encoder_has_attention_mask = enc_inputs.iter().any(|n| n == "attention_mask");
+        let decoder_has_encoder_attention_mask =
+            dec_inputs.iter().any(|n| n == "encoder_attention_mask");
+
+        // Sanity-check the decoder actually declares the caches we expect for
+        // this size, so a mismatched model fails at load rather than mid-decode.
+        let declared_caches = dec_inputs.iter().filter(|n| n.starts_with("past_key_values.")).count();
+        if declared_caches != cache_names.len() {
             bail!(
-                "Unexpected Moonshine decoder signature: {decode_fixed_inputs} non-cache inputs \
-                 (expected 2 or 3). The model export may be incompatible."
+                "Moonshine '{size}' decoder declares {declared_caches} cache inputs, expected {} \
+                 for this size — the model files may not match the selected size.",
+                cache_names.len()
             );
         }
-        let encode_takes_seq_len = encode.inputs().len() >= 2;
 
         info!(
-            "Moonshine graph shape: {num_cache} cache tensors, {decode_fixed_inputs} fixed decoder inputs, \
-             encode_seq_len={encode_takes_seq_len}"
+            "Moonshine geometry: {num_layers} layers, {kv_heads} kv-heads, head_dim {head_dim}, \
+             enc_mask={encoder_has_attention_mask}, dec_enc_mask={decoder_has_encoder_attention_mask}"
         );
 
         *self.state.lock().unwrap() = Some(Loaded {
-            preprocess,
-            encode,
-            uncached_decode,
-            cached_decode,
+            encoder,
+            decoder,
             tokenizer,
-            num_cache,
-            decode_fixed_inputs,
-            encode_takes_seq_len,
+            cache_names,
+            empty_cache_shape: [0, kv_heads as i64, 1, head_dim as i64],
+            encoder_has_attention_mask,
+            decoder_has_encoder_attention_mask,
         });
         self.loaded = true;
         Ok(())
@@ -352,81 +345,138 @@ impl TranscriptionBackend for MoonshineBackend {
 
 // ── Inference pipeline ────────────────────────────────────────────────────────
 
+/// An owned cache tensor as `(shape, data)`. An empty (0-element) `data` denotes
+/// the pre-first-step placeholder cache.
+type CacheVal = (Vec<i64>, Vec<f32>);
+
 fn run_inference(state: &mut Loaded, audio: &[f32]) -> Result<String> {
     let n_samples = audio.len();
 
-    // 1. Preprocess: raw waveform [1, samples] → features [1, frames, dim].
-    let audio_tensor = Tensor::from_array(([1_usize, n_samples], audio.to_vec()))
-        .context("build audio tensor")?;
-    let (feat_shape, feat_data) = {
-        let outputs = run_positional(&mut state.preprocess, vec![audio_tensor.into()])?;
-        let (shape, data) = outputs[0]
-            .try_extract_tensor::<f32>()
-            .context("extract preprocess output")?;
-        (shape.to_vec(), data.to_vec())
-    };
-
-    // Number of encoder frames = second-to-last dimension of the features.
-    let frames = *feat_shape
-        .iter()
-        .rev()
-        .nth(1)
-        .ok_or_else(|| anyhow!("preprocess output has too few dimensions"))? as i32;
-
-    // 2. Encode: features → context [1, frames, dim].
-    let (ctx_shape, ctx_data) = {
-        let feat_tensor = Tensor::from_array((dims(&feat_shape), feat_data))
-            .context("build features tensor")?;
-        let mut inputs: Vec<SessionInputValue> = vec![feat_tensor.into()];
-        if state.encode_takes_seq_len {
-            let seq = Tensor::from_array(([1_usize], vec![frames])).context("build encode seq_len")?;
-            inputs.push(seq.into());
+    // ── Encoder: raw waveform → hidden states ─────────────────────────────────
+    // `attention_mask` (when the graph takes it) is all-ones over the samples.
+    let attention_mask: Vec<i64> = vec![1; n_samples];
+    let hidden: CacheVal = {
+        let audio_tensor = Tensor::from_array(([1_usize, n_samples], audio.to_vec()))
+            .context("build audio tensor")?;
+        let mut feed: Vec<(String, SessionInputValue)> = vec![("input_values".into(), audio_tensor.into())];
+        if state.encoder_has_attention_mask {
+            let mask = Tensor::from_array(([1_usize, n_samples], attention_mask.clone()))
+                .context("build encoder attention_mask")?;
+            feed.push(("attention_mask".into(), mask.into()));
         }
-        let outputs = run_positional(&mut state.encode, inputs)?;
+        let outputs = state.encoder.run(feed).context("encoder run")?;
         let (shape, data) = outputs[0]
             .try_extract_tensor::<f32>()
-            .context("extract encode output")?;
+            .context("extract encoder hidden states")?;
         (shape.to_vec(), data.to_vec())
     };
 
-    // Context is fed unchanged into every decoder step; build it once and pass by
-    // reference so it is not re-copied each iteration.
-    let context = Tensor::from_array((dims(&ctx_shape), ctx_data)).context("build context tensor")?;
-
-    // 3. First decoder step (no cache yet): start token → logits + KV cache.
-    let max_tokens = ((n_samples / SAMPLE_RATE) * MAX_TOKENS_PER_SECOND).max(MIN_MAX_TOKENS);
-    let mut tokens: Vec<i32> = Vec::with_capacity(max_tokens + 1);
-
-    let mut token_count: i32 = 1;
-    let first_ids = Tensor::from_array(([1_usize, 1], vec![SOT_TOKEN])).context("build start token")?;
-    let (mut logits, mut cache) = {
-        let inputs = decoder_fixed_inputs(state, first_ids, &context, token_count)?;
-        let outputs = run_positional(&mut state.uncached_decode, inputs)?;
-        extract_logits_and_cache(&outputs, state.num_cache)?
+    // Hidden states and the encoder attention mask are constant across decoder
+    // steps; build them once and feed by reference each iteration.
+    let hidden_tensor =
+        Tensor::from_array((dims(&hidden.0), hidden.1)).context("build hidden-states tensor")?;
+    let enc_mask_tensor = if state.decoder_has_encoder_attention_mask {
+        Some(
+            Tensor::from_array(([1_usize, n_samples], attention_mask))
+                .context("build decoder encoder_attention_mask")?,
+        )
+    } else {
+        None
     };
 
-    // 4. Greedy autoregressive loop over cached_decode.
-    for _ in 0..max_tokens {
-        let next = argmax_last_row(&logits.0, &logits.1);
-        if next == EOT_TOKEN {
+    // ── Decoder: greedy autoregressive loop ───────────────────────────────────
+    let allocator = Allocator::default();
+    let decoder_input_names: Vec<String> =
+        state.decoder.inputs().iter().map(|i| i.name().to_string()).collect();
+
+    // Caches start empty (0-element, rank-4). Keyed by name for by-name binding.
+    let mut caches: HashMap<String, CacheVal> = state
+        .cache_names
+        .iter()
+        .map(|n| (n.clone(), (state.empty_cache_shape.to_vec(), Vec::new())))
+        .collect();
+
+    let mut tokens: Vec<i64> = vec![SOT_TOKEN];
+    let mut next_input: i64 = SOT_TOKEN;
+
+    for step in 0..MAX_TOKENS {
+        let use_cache = step > 0;
+
+        // Build owned per-step tensors.
+        let input_ids = Tensor::from_array(([1_usize, 1], vec![next_input])).context("build input_ids")?;
+        let use_cache_t = Tensor::from_array(([1_usize], vec![use_cache])).context("build use_cache_branch")?;
+        // Cache tensors for this step, taken by name below.
+        let mut cache_tensors: HashMap<String, Tensor<f32>> = HashMap::with_capacity(caches.len());
+        for name in &state.cache_names {
+            let (shape, data) = &caches[name];
+            cache_tensors.insert(name.clone(), build_cache_tensor(&allocator, shape, data)?);
+        }
+
+        // Bind every declared decoder input by name.
+        let mut input_ids = Some(input_ids);
+        let mut use_cache_t = Some(use_cache_t);
+        let mut feed: Vec<(String, SessionInputValue)> = Vec::with_capacity(decoder_input_names.len());
+        for name in &decoder_input_names {
+            let val: SessionInputValue = match name.as_str() {
+                "input_ids" => input_ids.take().unwrap().into(),
+                "encoder_hidden_states" => (&hidden_tensor).into(),
+                "use_cache_branch" => use_cache_t.take().unwrap().into(),
+                "encoder_attention_mask" => enc_mask_tensor
+                    .as_ref()
+                    .ok_or_else(|| anyhow!("decoder needs encoder_attention_mask but none was built"))?
+                    .into(),
+                other if other.starts_with("past_key_values.") => cache_tensors
+                    .remove(other)
+                    .ok_or_else(|| anyhow!("decoder wants unknown cache input '{other}'"))?
+                    .into(),
+                other => bail!("unexpected Moonshine decoder input '{other}'"),
+            };
+            feed.push((name.clone(), val));
+        }
+
+        let outputs = state.decoder.run(feed).context("decoder run")?;
+        if outputs.len() < 1 + state.cache_names.len() {
+            bail!(
+                "Moonshine decoder returned {} outputs, expected at least {} (logits + {} caches)",
+                outputs.len(),
+                1 + state.cache_names.len(),
+                state.cache_names.len()
+            );
+        }
+
+        // logits: [1, 1, vocab] → arg-max of the final row.
+        let (lshape, ldata) = outputs[0]
+            .try_extract_tensor::<f32>()
+            .context("extract decoder logits")?;
+        let next_token = argmax_last_row(lshape, ldata);
+
+        // present caches follow logits, in cache_names order.
+        let mut present: Vec<CacheVal> = Vec::with_capacity(state.cache_names.len());
+        for i in 0..state.cache_names.len() {
+            let (shape, data) = outputs[i + 1]
+                .try_extract_tensor::<f32>()
+                .with_context(|| format!("extract present cache {i}"))?;
+            present.push((shape.to_vec(), data.to_vec()));
+        }
+        drop(outputs);
+
+        tokens.push(next_token);
+        if next_token == EOT_TOKEN {
             break;
         }
-        tokens.push(next);
-        token_count += 1;
 
-        let ids = Tensor::from_array(([1_usize, 1], vec![next])).context("build next token")?;
-        let mut inputs = decoder_fixed_inputs(state, ids, &context, token_count)?;
-        for (shape, data) in cache.drain(..) {
-            let t = Tensor::from_array((dims(&shape), data)).context("build cache tensor")?;
-            inputs.push(t.into());
+        // Update caches: on the first (uncached) step every cache is refreshed;
+        // afterwards only the decoder self-attention caches grow — the encoder
+        // cross-attention caches depend solely on the audio and stay fixed.
+        for (name, val) in state.cache_names.iter().zip(present) {
+            if !use_cache || name.contains("decoder") {
+                caches.insert(name.clone(), val);
+            }
         }
-        let outputs = run_positional(&mut state.cached_decode, inputs)?;
-        let (new_logits, new_cache) = extract_logits_and_cache(&outputs, state.num_cache)?;
-        logits = new_logits;
-        cache = new_cache;
+        next_input = next_token;
     }
 
-    // 5. Decode token ids to text, dropping the special tokens.
+    // ── Detokenize (special tokens stripped) ─────────────────────────────────
     let ids_u32: Vec<u32> = tokens.iter().map(|&t| t as u32).collect();
     let text = state
         .tokenizer
@@ -435,74 +485,24 @@ fn run_inference(state: &mut Loaded, audio: &[f32]) -> Result<String> {
     Ok(text)
 }
 
-/// Build the fixed (non-cache) decoder inputs: `[tokens, context]` and, when the
-/// export declares it, a trailing `seq_len` scalar holding the running token
-/// count.
-fn decoder_fixed_inputs<'a>(
-    state: &Loaded,
-    ids: Tensor<i32>,
-    context: &'a Tensor<f32>,
-    token_count: i32,
-) -> Result<Vec<SessionInputValue<'a>>> {
-    let mut inputs: Vec<SessionInputValue> = Vec::with_capacity(state.decode_fixed_inputs + state.num_cache);
-    inputs.push(ids.into());
-    inputs.push(context.into());
-    if state.decode_fixed_inputs == 3 {
-        let seq = Tensor::from_array(([1_usize], vec![token_count])).context("build decode seq_len")?;
-        inputs.push(seq.into());
+/// Build a cache tensor. Empty (`data.is_empty()`) caches use the allocator path
+/// because `from_array` rejects the 0-sized dimension of the placeholder shape.
+fn build_cache_tensor(allocator: &Allocator, shape: &[i64], data: &[f32]) -> Result<Tensor<f32>> {
+    if data.is_empty() {
+        Tensor::<f32>::new(allocator, Shape::new(shape.iter().copied()))
+            .map_err(|e| anyhow!("allocate empty cache tensor: {e}"))
+    } else {
+        Tensor::from_array((dims(shape), data.to_vec())).context("build cache tensor")
     }
-    Ok(inputs)
-}
-
-/// Run a session binding `values` to its inputs positionally (input `i` gets
-/// `values[i]`), which avoids depending on the export's tensor names.
-fn run_positional<'s>(
-    session: &'s mut Session,
-    values: Vec<SessionInputValue<'_>>,
-) -> Result<SessionOutputs<'s>> {
-    let names: Vec<String> = session.inputs().iter().map(|i| i.name().to_string()).collect();
-    if names.len() != values.len() {
-        bail!(
-            "graph expects {} inputs but {} were supplied",
-            names.len(),
-            values.len()
-        );
-    }
-    let feed: Vec<(String, SessionInputValue)> = names.into_iter().zip(values).collect();
-    session.run(feed).context("ort session run")
-}
-
-/// Split a decoder step's outputs into `(logits shape, logits data)` and the
-/// owned KV-cache tensors, copying out of the borrowed session outputs so the
-/// session can be run again.
-#[allow(clippy::type_complexity)]
-fn extract_logits_and_cache(
-    outputs: &SessionOutputs,
-    num_cache: usize,
-) -> Result<((Vec<i64>, Vec<f32>), Vec<(Vec<i64>, Vec<f32>)>)> {
-    let (lshape, ldata) = outputs[0]
-        .try_extract_tensor::<f32>()
-        .context("extract decoder logits")?;
-    let logits = (lshape.to_vec(), ldata.to_vec());
-
-    let mut cache = Vec::with_capacity(num_cache);
-    for i in 0..num_cache {
-        let (shape, data) = outputs[i + 1]
-            .try_extract_tensor::<f32>()
-            .with_context(|| format!("extract KV cache tensor {i}"))?;
-        cache.push((shape.to_vec(), data.to_vec()));
-    }
-    Ok((logits, cache))
 }
 
 /// Arg-max over the final timestep of a `[1, seq, vocab]` (or `[1, vocab]`)
 /// logits tensor, returning the winning token id.
-fn argmax_last_row(shape: &[i64], data: &[f32]) -> i32 {
+fn argmax_last_row(shape: &[i64], data: &[f32]) -> i64 {
     let vocab = *shape.last().unwrap_or(&1) as usize;
     if vocab == 0 || data.is_empty() {
         return EOT_TOKEN;
     }
-    // The last `vocab` values are the distribution for the most recent timestep.
     let start = data.len().saturating_sub(vocab);
     let row = &data[start..];
     let mut best = 0usize;
@@ -513,7 +513,7 @@ fn argmax_last_row(shape: &[i64], data: &[f32]) -> i32 {
             best = i;
         }
     }
-    best as i32
+    best as i64
 }
 
 /// Convert an `i64` ONNX shape into the `usize` dims `Tensor::from_array` wants.
@@ -551,15 +551,20 @@ mod tests {
     }
 
     #[test]
+    fn test_model_dims() {
+        assert_eq!(model_dims("tiny"), Some((6, 8, 36)));
+        assert_eq!(model_dims("base"), Some((8, 8, 52)));
+        assert_eq!(model_dims("nope"), None);
+    }
+
+    #[test]
     fn test_default_model_dir_has_moonshine_segment() {
-        let dir = default_model_dir();
-        assert!(dir.ends_with("moonshine"));
+        assert!(default_model_dir().ends_with("moonshine"));
     }
 
     #[test]
     fn test_model_size_dir_layout() {
-        let dir = model_size_dir("/tmp/models", "base");
-        assert_eq!(dir, PathBuf::from("/tmp/models/base"));
+        assert_eq!(model_size_dir("/tmp/models", "base"), PathBuf::from("/tmp/models/base"));
     }
 
     #[test]
@@ -571,7 +576,6 @@ mod tests {
     #[test]
     fn test_is_model_downloaded_missing_files() {
         let dir = tempfile::tempdir().unwrap();
-        // Empty directory: nothing downloaded.
         assert!(!is_model_downloaded("base", dir.path().to_str().unwrap()));
     }
 
@@ -581,22 +585,26 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let size_dir = root.path().join("base");
         std::fs::create_dir_all(&size_dir).unwrap();
-        for f in MODEL_FILES.iter().chain([&TOKENIZER_FILE]) {
-            std::fs::File::create(size_dir.join(f))
-                .unwrap()
-                .write_all(b"x")
-                .unwrap();
+        for f in MODEL_FILES {
+            std::fs::File::create(size_dir.join(f)).unwrap().write_all(b"x").unwrap();
         }
         assert!(is_model_downloaded("base", root.path().to_str().unwrap()));
 
-        // Remove one graph → no longer considered downloaded.
-        std::fs::remove_file(size_dir.join("encode.onnx")).unwrap();
+        std::fs::remove_file(size_dir.join(DECODER_FILE)).unwrap();
         assert!(!is_model_downloaded("base", root.path().to_str().unwrap()));
     }
 
     #[test]
+    fn test_bundled_tokenizer_loads_and_strips_specials() {
+        let tok = Tokenizer::from_bytes(TOKENIZER_JSON).expect("bundled tokenizer must parse");
+        // Decoding just the special SOT/EOT ids with skip_special_tokens yields
+        // empty text — the exact behavior the decode loop relies on.
+        let out = tok.decode(&[SOT_TOKEN as u32, EOT_TOKEN as u32], true).unwrap();
+        assert_eq!(out.trim(), "");
+    }
+
+    #[test]
     fn test_argmax_last_row_multistep() {
-        // Two timesteps, vocab of 4. Arg-max must come from the LAST row.
         let shape = [1_i64, 2, 4];
         let data = [
             0.1, 0.9, 0.2, 0.3, // step 0 (ignored)
@@ -607,9 +615,7 @@ mod tests {
 
     #[test]
     fn test_argmax_last_row_single_step() {
-        let shape = [1_i64, 5];
-        let data = [0.0, 0.0, 0.0, 7.0, 1.0];
-        assert_eq!(argmax_last_row(&shape, &data), 3);
+        assert_eq!(argmax_last_row(&[1, 5], &[0.0, 0.0, 0.0, 7.0, 1.0]), 3);
     }
 
     #[test]
@@ -619,15 +625,12 @@ mod tests {
 
     #[test]
     fn test_dims_conversion() {
-        assert_eq!(dims(&[1, 40, 288]), vec![1_usize, 40, 288]);
+        assert_eq!(dims(&[1, 8, 0, 52]), vec![1_usize, 8, 0, 52]);
     }
 
     #[test]
     fn test_new_backend_reports_name_and_unloaded() {
-        let cfg = MoonshineConfig {
-            model_size: "base".into(),
-            language: "en".into(),
-        };
+        let cfg = MoonshineConfig { model_size: "base".into(), language: "en".into() };
         let b = MoonshineBackend::new(cfg);
         assert_eq!(b.name(), "moonshine");
         assert!(!b.is_loaded());
@@ -635,10 +638,7 @@ mod tests {
 
     #[test]
     fn test_transcribe_before_load_errors() {
-        let cfg = MoonshineConfig {
-            model_size: "base".into(),
-            language: "en".into(),
-        };
+        let cfg = MoonshineConfig { model_size: "base".into(), language: "en".into() };
         let b = MoonshineBackend::new(cfg);
         let req = TranscribeRequest {
             audio: vec![0.0; 1600],

@@ -34,14 +34,15 @@ vulkan = ["whisper-rs/vulkan"]
 # which include `download-binaries`: ONNX Runtime is fetched at build time and
 # linked into the binary, so the shipped app is self-contained and needs no
 # system `libonnxruntime` at runtime (nothing else in the workspace provides
-# one). The tokenizer for decoding is loaded from the model's `tokenizer.json`.
+# one). Decoding uses the `tokenizers` crate with a tokenizer embedded in the
+# binary (see `assets/moonshine_tokenizer.json`).
 moonshine = ["dep:ort", "dep:tokenizers"]
 
 [dependencies.ort]
 version = "2.0.0-rc.12"
 optional = true
 # Default features include `download-binaries`, which fetches a prebuilt ONNX
-# Runtime at build time and links it in, so the resulting binary is
+# Runtime at build time and links it statically, so the resulting binary is
 # self-contained (no system libonnxruntime needed at runtime). Building the
 # `moonshine` feature therefore requires network access to the ONNX Runtime
 # binary host at compile time. To build fully offline instead, switch to

@@ -227,12 +227,13 @@ CPU-friendly speech-to-text model. Unlike Whisper it consumes the raw 16 kHz
 waveform directly (no fixed 30-second window), which keeps latency low on the
 short utterances typical of push-to-talk dictation.
 
-It runs through ONNX Runtime as four graphs executed in sequence —
-`preprocess` → `encode` → `uncached_decode` → `cached_decode` — with greedy
-autoregressive decoding: starting from the start-of-transcript token, each
-step's highest-scoring token is fed back in until the end-of-transcript token
-appears (or a length cap derived from the audio duration is reached). The
-resulting token ids are turned back into text with the model's `tokenizer.json`.
+It runs through ONNX Runtime as two graphs — an `encoder_model` that turns the
+raw waveform into hidden states, and a KV-cached `decoder_model_merged` that
+greedily generates tokens: starting from the start-of-transcript token, each
+step's highest-scoring token is fed back in (reusing the decoder's attention
+cache) until the end-of-transcript token appears or a length cap is reached. The
+resulting token ids are turned back into text with the model's tokenizer, which
+is bundled into the app.
 
 **Enabling it.** Moonshine is an opt-in build feature (it links ONNX Runtime),
 compiled in with `--features moonshine`, the same way `cuda` and `vulkan` are
@@ -241,6 +242,7 @@ opt-in. A build without it will transparently fall back to whisper-cpp if
 running build actually includes it.
 
 **Models.** Selecting a size (`base` or `tiny`) and clicking Download in
-Settings → Engine fetches the four ONNX graphs plus `tokenizer.json` into
-`~/.local/share/voxctrl/models/moonshine/<size>/`. You can also drop those
-files there manually to run fully offline.
+Settings → Engine fetches the two ONNX graphs (`encoder_model.onnx` and
+`decoder_model_merged.onnx`) into
+`~/.local/share/voxctrl/models/moonshine/<size>/`. You can also drop those two
+files there manually to run fully offline; the tokenizer ships inside the app.

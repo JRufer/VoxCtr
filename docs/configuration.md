@@ -136,11 +136,11 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 > Whisper model configured above. The Settings → Engine panel shows whether
 > Moonshine is available in the running build.
 >
-> Moonshine models are the four upstream ONNX graphs
-> (`preprocess`, `encode`, `uncached_decode`, `cached_decode`) plus a
-> `tokenizer.json`, downloaded on demand into
+> A Moonshine model is two upstream ONNX graphs (`encoder_model.onnx` and
+> `decoder_model_merged.onnx`), downloaded on demand into
 > `~/.local/share/voxctrl/models/moonshine/<size>/`. You can also place those
-> files there manually to run fully offline.
+> two files there manually to run fully offline. The tokenizer is bundled into
+> the app, so it is not downloaded.
 
 ### `audio` section
 
