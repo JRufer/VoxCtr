@@ -8,11 +8,22 @@ set -euo pipefail
 
 # Parse command line options
 FORCE_CPU_FLAG=false
+NO_MOONSHINE=false
 for arg in "$@"; do
     case "$arg" in
         --cpu) FORCE_CPU_FLAG=true ;;
+        # Build the whisper-cpp-only AppImage (the pre-Moonshine build). This
+        # drops the `moonshine` cargo feature so the compile no longer downloads
+        # a prebuilt ONNX Runtime from cdn.pyke.io — useful for offline builds or
+        # when that download host is unreachable/blocked.
+        --no-moonshine) NO_MOONSHINE=true ;;
     esac
 done
+
+# Env override: MOONSHINE=0 is equivalent to --no-moonshine.
+if [ "${MOONSHINE:-1}" = "0" ]; then
+    NO_MOONSHINE=true
+fi
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -127,6 +138,39 @@ if ! command -v cmake &>/dev/null; then
     exit 1
 fi
 
+# Verify the GTK/WebKit development libraries Tauri links against are present.
+# Without these, the Rust compile fails deep in the build with a cryptic
+# pkg-config error (e.g. "Package gdk-3.0 was not found") rather than a clear
+# up-front message. We check via pkg-config: gtk+-3.0 covers the overlay's gdk
+# dependency, webkit2gtk-4.1 covers the Tauri webview.
+if ! command -v pkg-config &>/dev/null; then
+    fail "'pkg-config' is not installed on your system!"
+    info "Building the Tauri application requires pkg-config to locate GTK/WebKit."
+    info "👉 Please install it via your package manager:"
+    info "   - Arch:   sudo pacman -S pkgconf"
+    info "   - Ubuntu: sudo apt install pkg-config"
+    info "   - Fedora: sudo dnf install pkgconf-pkg-config"
+    echo ""
+    exit 1
+fi
+
+MISSING_DEV_LIBS=()
+for pc in gtk+-3.0 webkit2gtk-4.1; do
+    if ! pkg-config --exists "$pc" 2>/dev/null; then
+        MISSING_DEV_LIBS+=("$pc")
+    fi
+done
+if [ ${#MISSING_DEV_LIBS[@]} -gt 0 ]; then
+    fail "Missing GTK/WebKit development libraries: ${MISSING_DEV_LIBS[*]}"
+    info "Tauri links against these at build time; the Rust compile will fail without them."
+    info "👉 Please install the development packages for your distribution:"
+    info "   - Arch:   sudo pacman -S gtk3 webkit2gtk-4.1"
+    info "   - Ubuntu: sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev"
+    info "   - Fedora: sudo dnf install gtk3-devel webkit2gtk4.1-devel"
+    echo ""
+    exit 1
+fi
+
 ok "AppImage toolchain wrapper is verified and ready."
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -206,16 +250,46 @@ if [ "$CUDA_FOUND" = false ] && [ "$HAS_NVIDIA_GPU" = true ]; then
     fi
 fi
 
-info "Running Tauri release compiler with headless PATH and CUDA injection..."
-# The Moonshine ONNX backend is always compiled in so both speech engines
-# (whisper-cpp and Moonshine) are selectable in every AppImage. It links ONNX
-# Runtime, fetched at build time, so this step needs network access.
+# Assemble the cargo feature list for the release build.
+#   - cuda      : GPU acceleration (only when a CUDA toolkit was found).
+#   - moonshine : the Moonshine ONNX speech engine (default on; opt out with
+#                 --no-moonshine / MOONSHINE=0). This feature makes the compile
+#                 download a prebuilt ONNX Runtime from cdn.pyke.io, so it is the
+#                 one part of the build that requires network access.
+BUILD_FEATURES=""
 if [ "$CUDA_FOUND" = true ]; then
-    info "CUDA detected. Compiling with GPU support (whisper-cpp + Moonshine)..."
-    npx tauri build -- --features cuda,moonshine
+    BUILD_FEATURES="cuda"
+fi
+if [ "$NO_MOONSHINE" = false ]; then
+    BUILD_FEATURES="${BUILD_FEATURES:+$BUILD_FEATURES,}moonshine"
+fi
+
+# The Moonshine backend fetches a prebuilt ONNX Runtime from cdn.pyke.io at
+# compile time. If that host is unreachable the build only fails after a long
+# compile, so probe it up front and point users at the offline escape hatch.
+if [ "$NO_MOONSHINE" = false ] && command -v curl &>/dev/null; then
+    info "Checking reachability of the ONNX Runtime download host (cdn.pyke.io)..."
+    # Without -f, curl succeeds as long as it *connected* (even on an HTTP 4xx),
+    # and only fails on connection-level problems: DNS, connect timeout, or a
+    # proxy/egress policy rejecting the CONNECT (403/407). That is exactly the
+    # condition that dooms the ONNX Runtime download, so key off the exit status.
+    if ! curl -s -o /dev/null --connect-timeout 10 --max-time 20 https://cdn.pyke.io/ 2>/dev/null; then
+        warn "Could not reach cdn.pyke.io."
+        warn "The Moonshine build downloads a prebuilt ONNX Runtime from there at compile"
+        warn "time; if it stays unreachable the build will fail after a long compile."
+        info "To build the whisper-cpp-only AppImage without this download, re-run with:"
+        info "   ./build_appimage.sh --no-moonshine     (or  MOONSHINE=0 ./build_appimage.sh )"
+        echo ""
+    fi
+fi
+
+info "Running Tauri release compiler with headless PATH and CUDA injection..."
+if [ -n "$BUILD_FEATURES" ]; then
+    info "Compiling with features: ${BUILD_FEATURES}"
+    npx tauri build -- --features "$BUILD_FEATURES"
 else
-    info "CUDA not detected. Compiling for CPU only (whisper-cpp + Moonshine)..."
-    npx tauri build -- --features moonshine
+    info "Compiling with default features (whisper-cpp only)..."
+    npx tauri build
 fi
 
 ok "Compilation finished successfully."
