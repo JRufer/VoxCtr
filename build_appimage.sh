@@ -10,7 +10,12 @@ set -euo pipefail
 FORCE_CPU_FLAG=false
 NO_MOONSHINE=false
 VERBOSE_FLAG=false
-HIDE_SHADOW_LIBS=false
+# Shadow-library handling is ON by default: if a third-party app (e.g. Insync)
+# has copies of the GLib/GTK libraries under /usr/lib, linuxdeploy sweeps them in
+# and the AppImage build fails. By default we move them aside for the build and
+# restore them afterwards (needs sudo). Pass --keep-shadow-libs to disable that
+# and only get a warning instead.
+HIDE_SHADOW_LIBS=true
 for arg in "$@"; do
     case "$arg" in
         --cpu) FORCE_CPU_FLAG=true ;;
@@ -23,17 +28,20 @@ for arg in "$@"; do
         # logging. Tauri otherwise collapses a bundling failure into a bare
         # "failed to run linuxdeploy"; this surfaces linuxdeploy's real error.
         --verbose|-v) VERBOSE_FLAG=true ;;
-        # Automatically move any third-party GLib/GTK shadow libraries (e.g.
-        # Insync's /usr/lib/insync) out of linuxdeploy's search path for the
-        # duration of the build and restore them afterwards. Needs sudo. Without
-        # this the script only *warns* about them (see the detection in step 1).
+        # Explicit form of the default behaviour (kept for compatibility).
         --hide-shadow-libs|--fix-shadow-libs) HIDE_SHADOW_LIBS=true ;;
+        # Opt out: do NOT touch third-party shadow libraries; only warn. The
+        # build will likely fail at linuxdeploy if any are present.
+        --keep-shadow-libs|--no-hide-shadow-libs) HIDE_SHADOW_LIBS=false ;;
     esac
 done
 
-# Env override: MOONSHINE=0 is equivalent to --no-moonshine.
+# Env overrides.
 if [ "${MOONSHINE:-1}" = "0" ]; then
     NO_MOONSHINE=true
+fi
+if [ "${KEEP_SHADOW_LIBS:-0}" = "1" ]; then
+    HIDE_SHADOW_LIBS=false
 fi
 
 # ── Colors ───────────────────────────────────────────────────────────────────
@@ -273,14 +281,13 @@ if [ ${#SHADOW_LIB_DIRS[@]} -gt 0 ]; then
     warn "dependencies (e.g. Insync's libgio-2.0.so.0 needs libselinux.so.1) — the"
     warn "late, cryptic 'failed to run linuxdeploy'."
     if [ "$HIDE_SHADOW_LIBS" = true ]; then
-        info "--hide-shadow-libs is set: these will be moved aside for the build and"
-        info "restored automatically when it finishes."
+        info "These will be moved aside for the build and restored automatically when it"
+        info "finishes (needs sudo). Pass --keep-shadow-libs to disable and build as-is."
     else
-        info "Re-run with --hide-shadow-libs to move them aside automatically (needs sudo):"
-        info "   ./build_appimage.sh --hide-shadow-libs"
-        info "…or do it by hand — move each directory OUT of /usr/lib (a sibling path, not"
-        info "a rename in place; the glob still matches anything under /usr/lib), then"
-        info "restore it afterwards. For example:"
+        info "--keep-shadow-libs is set, so they are left in place and the build will most"
+        info "likely fail at linuxdeploy. To let the script handle them, drop that flag."
+        info "To do it by hand, move each directory OUT of /usr/lib (a sibling path, not a"
+        info "rename in place; the glob still matches anything under /usr/lib), e.g.:"
         for _d in "${SHADOW_LIB_DIRS[@]}"; do
             _hide="$(dirname "$(dirname "$_d")")/$(basename "$_d").buildhide"
             info "   sudo mv \"$_d\" \"$_hide\"    # …build…    then: sudo mv \"$_hide\" \"$_d\""
