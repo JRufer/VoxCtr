@@ -9,6 +9,7 @@ set -euo pipefail
 # Parse command line options
 FORCE_CPU_FLAG=false
 NO_MOONSHINE=false
+VERBOSE_FLAG=false
 for arg in "$@"; do
     case "$arg" in
         --cpu) FORCE_CPU_FLAG=true ;;
@@ -17,6 +18,10 @@ for arg in "$@"; do
         # a prebuilt ONNX Runtime from cdn.pyke.io — useful for offline builds or
         # when that download host is unreachable/blocked.
         --no-moonshine) NO_MOONSHINE=true ;;
+        # Pass --verbose to `tauri build` and crank up linuxdeploy's own
+        # logging. Tauri otherwise collapses a bundling failure into a bare
+        # "failed to run linuxdeploy"; this surfaces linuxdeploy's real error.
+        --verbose|-v) VERBOSE_FLAG=true ;;
     esac
 done
 
@@ -306,13 +311,23 @@ if [ "$NO_MOONSHINE" = false ] && command -v curl &>/dev/null; then
     fi
 fi
 
+# In verbose mode, ask Tauri and linuxdeploy to print what they are doing so a
+# bundling failure shows linuxdeploy's real error instead of just Tauri's
+# generic "failed to run linuxdeploy" wrapper.
+TAURI_VERBOSE=()
+if [ "$VERBOSE_FLAG" = true ]; then
+    TAURI_VERBOSE=(--verbose)
+    export VERBOSE=2          # linuxdeploy log verbosity (0=error … 2=debug)
+    info "Verbose mode enabled: streaming Tauri + linuxdeploy output."
+fi
+
 info "Running Tauri release compiler with headless PATH and CUDA injection..."
 if [ -n "$BUILD_FEATURES" ]; then
     info "Compiling with features: ${BUILD_FEATURES}"
-    npx tauri build -- --features "$BUILD_FEATURES"
+    npx tauri build "${TAURI_VERBOSE[@]}" -- --features "$BUILD_FEATURES"
 else
     info "Compiling with default features (whisper-cpp only)..."
-    npx tauri build
+    npx tauri build "${TAURI_VERBOSE[@]}"
 fi
 
 ok "Compilation finished successfully."
