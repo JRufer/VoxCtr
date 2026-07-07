@@ -238,7 +238,12 @@ fi
 # Note: the shadow directory must be moved *out* of the scanned prefix entirely —
 # renaming it in place (e.g. to insync.disabled) or renaming the files (…so.0.bak)
 # does NOT help, because the glob still matches anything under /usr/lib.
+# Note: /usr/lib64 and /lib are commonly symlinks to /usr/lib (Arch/CachyOS), so
+# the same physical directory can be reached under several prefixes. Canonicalize
+# each candidate and dedupe, otherwise the same shadow dir is processed twice and
+# the second hide collides with the first.
 SHADOW_LIB_DIRS=()
+declare -A _shadow_seen=()
 shopt -s nullglob
 for _prefix in /usr/lib /usr/lib64 /lib /lib64; do
     [ -d "$_prefix" ] || continue
@@ -251,7 +256,11 @@ for _prefix in /usr/lib /usr/lib64 /lib /lib64; do
            || compgen -G "$_sub/libglib-2.0.so*"    >/dev/null 2>&1 \
            || compgen -G "$_sub/libgdk_pixbuf-2.0.so*" >/dev/null 2>&1 \
            || compgen -G "$_sub/libgtk-3.so*"       >/dev/null 2>&1; then
-            SHADOW_LIB_DIRS+=("$_sub")
+            _canon="$(readlink -f "$_sub" 2>/dev/null || echo "$_sub")"
+            if [ -z "${_shadow_seen[$_canon]:-}" ]; then
+                _shadow_seen[$_canon]=1
+                SHADOW_LIB_DIRS+=("$_canon")
+            fi
         fi
     done
 done
