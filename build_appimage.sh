@@ -171,6 +171,29 @@ if [ ${#MISSING_DEV_LIBS[@]} -gt 0 ]; then
     exit 1
 fi
 
+# Verify the tools Tauri's AppImage bundler shells out to. Tauri downloads and
+# runs `linuxdeploy` for the final packaging step; linuxdeploy in turn requires
+# `patchelf` (to rewrite library rpaths) and `file` (to classify binaries). When
+# either is missing the Rust compile succeeds but bundling dies late with a
+# generic "failed to run linuxdeploy" and no obvious cause. Check them up front.
+MISSING_BUNDLE_TOOLS=()
+for tool in patchelf file; do
+    if ! command -v "$tool" &>/dev/null; then
+        MISSING_BUNDLE_TOOLS+=("$tool")
+    fi
+done
+if [ ${#MISSING_BUNDLE_TOOLS[@]} -gt 0 ]; then
+    fail "Missing AppImage bundling tools: ${MISSING_BUNDLE_TOOLS[*]}"
+    info "Tauri's AppImage packager runs 'linuxdeploy', which needs these to succeed."
+    info "Without them the build fails late with 'failed to run linuxdeploy'."
+    info "👉 Please install them via your package manager:"
+    info "   - Arch:   sudo pacman -S patchelf file"
+    info "   - Ubuntu: sudo apt install patchelf file"
+    info "   - Fedora: sudo dnf install patchelf file"
+    echo ""
+    exit 1
+fi
+
 ok "AppImage toolchain wrapper is verified and ready."
 
 # ══════════════════════════════════════════════════════════════════════════════
