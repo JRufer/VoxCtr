@@ -151,6 +151,9 @@ else
         if ! command -v cargo &>/dev/null || ! cargo --version &>/dev/null; then MISSING_BUILD_TOOLS=1; fi
         if ! command -v npm &>/dev/null;   then MISSING_BUILD_TOOLS=1; fi
         if ! command -v cmake &>/dev/null; then MISSING_BUILD_TOOLS=1; fi
+        # patchelf/file are needed by linuxdeploy for the AppImage packaging step.
+        if ! command -v patchelf &>/dev/null; then MISSING_BUILD_TOOLS=1; fi
+        if ! command -v file &>/dev/null;     then MISSING_BUILD_TOOLS=1; fi
         
         # Check if an NVIDIA GPU is present
         HAS_NVIDIA_GPU=false
@@ -173,35 +176,35 @@ else
                 pacman)
                     if [ "$INSTALL_CUDA" = true ]; then
                         info "NVIDIA GPU detected. Adding 'cuda' toolkit to installation..."
-                        sudo pacman -S --noconfirm --needed base-devel rustup nodejs npm pkgconf cuda cmake
+                        sudo pacman -S --noconfirm --needed base-devel rustup nodejs npm pkgconf cuda cmake patchelf file
                     else
-                        sudo pacman -S --noconfirm --needed base-devel rustup nodejs npm pkgconf cmake
+                        sudo pacman -S --noconfirm --needed base-devel rustup nodejs npm pkgconf cmake patchelf file
                     fi
                     ;;
                 apt)
                     if [ "$INSTALL_CUDA" = true ]; then
                         info "NVIDIA GPU detected. Adding 'nvidia-cuda-toolkit' to installation..."
-                        sudo apt-get install -y build-essential curl nodejs npm pkg-config nvidia-cuda-toolkit cmake
+                        sudo apt-get install -y build-essential curl nodejs npm pkg-config nvidia-cuda-toolkit cmake patchelf file
                     else
-                        sudo apt-get install -y build-essential curl nodejs npm pkg-config cmake
+                        sudo apt-get install -y build-essential curl nodejs npm pkg-config cmake patchelf file
                     fi
                     ;;
                 dnf)
                     sudo dnf groupinstall -y "Development Tools"
                     if [ "$INSTALL_CUDA" = true ]; then
                         info "NVIDIA GPU detected. Adding 'cuda-toolkit' to installation..."
-                        sudo dnf install -y curl nodejs npm pkgconf-pkg-config cuda-toolkit cmake
+                        sudo dnf install -y curl nodejs npm pkgconf-pkg-config cuda-toolkit cmake patchelf file
                     else
-                        sudo dnf install -y curl nodejs npm pkgconf-pkg-config cmake
+                        sudo dnf install -y curl nodejs npm pkgconf-pkg-config cmake patchelf file
                     fi
                     ;;
                 zypper)
                     sudo zypper install -t pattern -y devel_basis
                     if [ "$INSTALL_CUDA" = true ]; then
                         info "NVIDIA GPU detected. Adding 'cuda' toolkit to installation..."
-                        sudo zypper install -y curl nodejs npm pkg-config cuda cmake
+                        sudo zypper install -y curl nodejs npm pkg-config cuda cmake patchelf file
                     else
-                        sudo zypper install -y curl nodejs npm pkg-config cmake
+                        sudo zypper install -y curl nodejs npm pkg-config cmake patchelf file
                     fi
                     ;;
             esac
