@@ -10,6 +10,7 @@ set -euo pipefail
 FORCE_CPU_FLAG=false
 NO_MOONSHINE=false
 VERBOSE_FLAG=false
+HIDE_SHADOW_LIBS=false
 for arg in "$@"; do
     case "$arg" in
         --cpu) FORCE_CPU_FLAG=true ;;
@@ -22,6 +23,11 @@ for arg in "$@"; do
         # logging. Tauri otherwise collapses a bundling failure into a bare
         # "failed to run linuxdeploy"; this surfaces linuxdeploy's real error.
         --verbose|-v) VERBOSE_FLAG=true ;;
+        # Automatically move any third-party GLib/GTK shadow libraries (e.g.
+        # Insync's /usr/lib/insync) out of linuxdeploy's search path for the
+        # duration of the build and restore them afterwards. Needs sudo. Without
+        # this the script only *warns* about them (see the detection in step 1).
+        --hide-shadow-libs|--fix-shadow-libs) HIDE_SHADOW_LIBS=true ;;
     esac
 done
 
@@ -39,6 +45,27 @@ warn() { echo -e "  ${YELLOW}[WARN]${NC}  $*"; }
 info() { echo -e "  ${BLUE}[*]${NC}    $*"; }
 fail() { echo -e "  ${RED}[FAIL]${NC}  $*"; }
 step() { echo -e "\n${BOLD}── $* ──────────────────────────────────────────${NC}"; }
+
+# Shadow-library hiding (see --hide-shadow-libs). SHADOW_HIDE_MAP holds
+# "original|hidden" entries for directories we moved out of linuxdeploy's search
+# path; restore_shadow_libs() puts them back and is wired to run on any exit
+# (normal, error, or Ctrl-C) so a third-party app like Insync is never left
+# displaced if the build fails midway.
+SHADOW_HIDE_MAP=()
+restore_shadow_libs() {
+    local entry orig hidden
+    for entry in "${SHADOW_HIDE_MAP[@]}"; do
+        orig="${entry%%|*}"; hidden="${entry#*|}"
+        if [ -e "$hidden" ] && [ ! -e "$orig" ]; then
+            if sudo mv "$hidden" "$orig"; then
+                info "Restored $orig"
+            else
+                warn "Could not restore $orig — run manually: sudo mv \"$hidden\" \"$orig\""
+            fi
+        fi
+    done
+}
+trap restore_shadow_libs EXIT INT TERM
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. Verification of appimagetool Wrapper
@@ -236,16 +263,20 @@ if [ ${#SHADOW_LIB_DIRS[@]} -gt 0 ]; then
     warn "try to bundle these instead of the system copies, then fail on their extra"
     warn "dependencies (e.g. Insync's libgio-2.0.so.0 needs libselinux.so.1) — the"
     warn "late, cryptic 'failed to run linuxdeploy'."
-    info "Move each directory OUT of /usr/lib for the build, then restore it after."
-    info "(Renaming it in place or renaming the .so files does not work — it is still"
-    info " matched by the glob.) For example:"
-    for _d in "${SHADOW_LIB_DIRS[@]}"; do
-        info "   sudo mv \"$_d\" \"/opt/$(basename "$_d").buildhide\""
-    done
-    info "   ./build_appimage.sh"
-    for _d in "${SHADOW_LIB_DIRS[@]}"; do
-        info "   sudo mv \"/opt/$(basename "$_d").buildhide\" \"$_d\"   # restore after"
-    done
+    if [ "$HIDE_SHADOW_LIBS" = true ]; then
+        info "--hide-shadow-libs is set: these will be moved aside for the build and"
+        info "restored automatically when it finishes."
+    else
+        info "Re-run with --hide-shadow-libs to move them aside automatically (needs sudo):"
+        info "   ./build_appimage.sh --hide-shadow-libs"
+        info "…or do it by hand — move each directory OUT of /usr/lib (a sibling path, not"
+        info "a rename in place; the glob still matches anything under /usr/lib), then"
+        info "restore it afterwards. For example:"
+        for _d in "${SHADOW_LIB_DIRS[@]}"; do
+            _hide="$(dirname "$(dirname "$_d")")/$(basename "$_d").buildhide"
+            info "   sudo mv \"$_d\" \"$_hide\"    # …build…    then: sudo mv \"$_hide\" \"$_d\""
+        done
+    fi
     echo ""
 fi
 
@@ -369,6 +400,32 @@ if [ "$VERBOSE_FLAG" = true ]; then
     TAURI_VERBOSE=(--verbose)
     export VERBOSE=2          # linuxdeploy log verbosity (0=error … 2=debug)
     info "Verbose mode enabled: streaming Tauri + linuxdeploy output."
+fi
+
+# With --hide-shadow-libs, move any detected third-party GLib/GTK directories out
+# of linuxdeploy's search path now, recording each move so the EXIT trap restores
+# them once the build finishes (or fails). They are staged in a sibling of the
+# scanned prefix (e.g. /usr/lib/insync -> /usr/insync.buildhide) — outside
+# /usr/lib so the plugin's glob can't reach them, and on the same filesystem so
+# the move is an instant rename.
+if [ "$HIDE_SHADOW_LIBS" = true ] && [ ${#SHADOW_LIB_DIRS[@]} -gt 0 ]; then
+    step "Hiding third-party shadow libraries from linuxdeploy"
+    for _d in "${SHADOW_LIB_DIRS[@]}"; do
+        _hide="$(dirname "$(dirname "$_d")")/$(basename "$_d").buildhide"
+        if [ -e "$_hide" ]; then
+            fail "Staging path $_hide already exists; refusing to overwrite it."
+            info "Move it out of the way and re-run, or restore it manually."
+            exit 1
+        fi
+        info "Moving $_d -> $_hide (restored automatically when the build finishes)..."
+        if sudo mv "$_d" "$_hide"; then
+            SHADOW_HIDE_MAP+=("$_d|$_hide")
+        else
+            fail "Could not move $_d out of the way (sudo required)."
+            exit 1
+        fi
+    done
+    ok "Shadow libraries hidden; they will be restored automatically on exit."
 fi
 
 info "Running Tauri release compiler with headless PATH and CUDA injection..."
