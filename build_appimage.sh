@@ -199,37 +199,54 @@ if [ ${#MISSING_BUNDLE_TOOLS[@]} -gt 0 ]; then
     exit 1
 fi
 
-# Warn about third-party library directories (registered via /etc/ld.so.conf.d)
-# that ship their own copies of core GLib/GTK libraries. linuxdeploy resolves the
-# app's libgio/libglib to those shadow copies and then fails to bundle them
-# because they drag in exotic dependencies the host lacks — the classic case is
-# Insync, whose /usr/lib/insync/libgio-2.0.so.0 needs libselinux.so.1. That
-# surfaces 20 minutes into the build as a cryptic "failed to run linuxdeploy", so
-# flag it up front with the remediation.
-if [ -d /etc/ld.so.conf.d ]; then
-    shopt -s nullglob
-    for _conf in /etc/ld.so.conf.d/*.conf; do
-        while IFS= read -r _dir; do
-            case "$_dir" in
-                ""|\#*|/usr/lib|/usr/lib64|/lib|/lib64|/usr/local/lib|/usr/local/lib64|/usr/lib/*-linux-gnu)
-                    continue ;;
-            esac
-            [ -d "$_dir" ] || continue
-            if compgen -G "$_dir/libgio-2.0.so*" >/dev/null 2>&1 \
-               || compgen -G "$_dir/libglib-2.0.so*" >/dev/null 2>&1; then
-                warn "'$_dir' (added by $(basename "$_conf")) ships its own GLib libraries."
-                warn "linuxdeploy will try to bundle those instead of the system copies and"
-                warn "fail — e.g. Insync's libgio-2.0.so.0 needs libselinux.so.1 — showing up"
-                warn "as a late 'failed to run linuxdeploy'."
-                info "Take that directory off the linker path for the build, then restore it:"
-                info "   sudo mv \"$_conf\" \"$_conf.disabled\" && sudo ldconfig"
-                info "   ./build_appimage.sh"
-                info "   sudo mv \"$_conf.disabled\" \"$_conf\" && sudo ldconfig   # restore after"
-                echo ""
-            fi
-        done < "$_conf"
+# Warn about third-party directories under /usr/lib (or /lib) that ship their own
+# copies of the core GLib/GTK libraries. linuxdeploy's GTK plugin deploys that
+# stack by globbing library names across these prefixes and *their subdirectories*
+# — not via the loader, the ld.so cache, or the environment — so it sweeps in any
+# stray copy it finds and then fails to bundle it when it needs a library the host
+# lacks. The classic case is Insync: /usr/lib/insync/libgio-2.0.so.0 needs
+# libselinux.so.1, absent on Arch/CachyOS. That surfaces late as a cryptic
+# "failed to run linuxdeploy", so flag it up front with the correct remediation.
+#
+# Note: the shadow directory must be moved *out* of the scanned prefix entirely —
+# renaming it in place (e.g. to insync.disabled) or renaming the files (…so.0.bak)
+# does NOT help, because the glob still matches anything under /usr/lib.
+SHADOW_LIB_DIRS=()
+shopt -s nullglob
+for _prefix in /usr/lib /usr/lib64 /lib /lib64; do
+    [ -d "$_prefix" ] || continue
+    for _sub in "$_prefix"/*/; do
+        _sub="${_sub%/}"
+        # Skip the standard multiarch dir (e.g. /usr/lib/x86_64-linux-gnu).
+        case "$_sub" in */*-linux-gnu) continue ;; esac
+        if compgen -G "$_sub/libgio-2.0.so*"        >/dev/null 2>&1 \
+           || compgen -G "$_sub/libgobject-2.0.so*" >/dev/null 2>&1 \
+           || compgen -G "$_sub/libglib-2.0.so*"    >/dev/null 2>&1 \
+           || compgen -G "$_sub/libgdk_pixbuf-2.0.so*" >/dev/null 2>&1 \
+           || compgen -G "$_sub/libgtk-3.so*"       >/dev/null 2>&1; then
+            SHADOW_LIB_DIRS+=("$_sub")
+        fi
     done
-    shopt -u nullglob
+done
+shopt -u nullglob
+if [ ${#SHADOW_LIB_DIRS[@]} -gt 0 ]; then
+    warn "Found third-party copies of the GLib/GTK libraries under /usr/lib:"
+    for _d in "${SHADOW_LIB_DIRS[@]}"; do warn "    $_d"; done
+    warn "linuxdeploy's GTK plugin globs those library names across /usr/lib and will"
+    warn "try to bundle these instead of the system copies, then fail on their extra"
+    warn "dependencies (e.g. Insync's libgio-2.0.so.0 needs libselinux.so.1) — the"
+    warn "late, cryptic 'failed to run linuxdeploy'."
+    info "Move each directory OUT of /usr/lib for the build, then restore it after."
+    info "(Renaming it in place or renaming the .so files does not work — it is still"
+    info " matched by the glob.) For example:"
+    for _d in "${SHADOW_LIB_DIRS[@]}"; do
+        info "   sudo mv \"$_d\" \"/opt/$(basename "$_d").buildhide\""
+    done
+    info "   ./build_appimage.sh"
+    for _d in "${SHADOW_LIB_DIRS[@]}"; do
+        info "   sudo mv \"/opt/$(basename "$_d").buildhide\" \"$_d\"   # restore after"
+    done
+    echo ""
 fi
 
 ok "AppImage toolchain wrapper is verified and ready."
