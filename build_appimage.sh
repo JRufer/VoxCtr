@@ -199,6 +199,39 @@ if [ ${#MISSING_BUNDLE_TOOLS[@]} -gt 0 ]; then
     exit 1
 fi
 
+# Warn about third-party library directories (registered via /etc/ld.so.conf.d)
+# that ship their own copies of core GLib/GTK libraries. linuxdeploy resolves the
+# app's libgio/libglib to those shadow copies and then fails to bundle them
+# because they drag in exotic dependencies the host lacks — the classic case is
+# Insync, whose /usr/lib/insync/libgio-2.0.so.0 needs libselinux.so.1. That
+# surfaces 20 minutes into the build as a cryptic "failed to run linuxdeploy", so
+# flag it up front with the remediation.
+if [ -d /etc/ld.so.conf.d ]; then
+    shopt -s nullglob
+    for _conf in /etc/ld.so.conf.d/*.conf; do
+        while IFS= read -r _dir; do
+            case "$_dir" in
+                ""|\#*|/usr/lib|/usr/lib64|/lib|/lib64|/usr/local/lib|/usr/local/lib64|/usr/lib/*-linux-gnu)
+                    continue ;;
+            esac
+            [ -d "$_dir" ] || continue
+            if compgen -G "$_dir/libgio-2.0.so*" >/dev/null 2>&1 \
+               || compgen -G "$_dir/libglib-2.0.so*" >/dev/null 2>&1; then
+                warn "'$_dir' (added by $(basename "$_conf")) ships its own GLib libraries."
+                warn "linuxdeploy will try to bundle those instead of the system copies and"
+                warn "fail — e.g. Insync's libgio-2.0.so.0 needs libselinux.so.1 — showing up"
+                warn "as a late 'failed to run linuxdeploy'."
+                info "Take that directory off the linker path for the build, then restore it:"
+                info "   sudo mv \"$_conf\" \"$_conf.disabled\" && sudo ldconfig"
+                info "   ./build_appimage.sh"
+                info "   sudo mv \"$_conf.disabled\" \"$_conf\" && sudo ldconfig   # restore after"
+                echo ""
+            fi
+        done < "$_conf"
+    done
+    shopt -u nullglob
+fi
+
 ok "AppImage toolchain wrapper is verified and ready."
 
 # ══════════════════════════════════════════════════════════════════════════════
