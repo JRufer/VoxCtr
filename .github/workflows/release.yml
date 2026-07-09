@@ -85,13 +85,6 @@ jobs:
             artifact_label: linux-x86_64
             cuda: false
 
-          # ── Linux CUDA ─────────────────────────────────────────────────────
-          - name: linux-cuda
-            os: ubuntu-22.04
-            features: "cuda"
-            artifact_label: linux-x86_64-cuda
-            cuda: true
-
           # ── Linux Vulkan ───────────────────────────────────────────────────
           # Portable GPU AppImage: accelerates NVIDIA/AMD/Intel via the host
           # Vulkan driver, with CPU fallback. Far lighter to bundle than CUDA.
@@ -108,13 +101,6 @@ jobs:
             features: ""
             artifact_label: windows-x86_64
             cuda: false
-
-          # ── Windows CUDA ───────────────────────────────────────────────────
-          - name: windows-cuda
-            os: windows-2022
-            features: "cuda"
-            artifact_label: windows-x86_64-cuda
-            cuda: true
 
     steps:
       - uses: actions/checkout@v4
@@ -153,81 +139,6 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y vulkan-sdk
           glslc --version
-
-      # ── CUDA toolkit ────────────────────────────────────────────────────────
-      # Installs CUDA headers + libraries for compilation only.
-      # End-users need an NVIDIA driver (not the Toolkit) to run CUDA builds.
-
-      # CUDA toolkit + Rust CUDA build artifacts consume ~10-12 GB. Free up the
-      # large pre-installed packages that the GitHub-hosted runner ships with but
-      # that this build does not need (Android SDK, CodeQL, Haskell GHC, etc.)
-      # before installing CUDA so linuxdeploy has enough /tmp space to extract.
-      - name: Free disk space for CUDA build (Linux)
-        if: runner.os == 'Linux' && matrix.cuda
-        run: |
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /opt/hostedtoolcache/CodeQL \
-            /usr/local/share/boost \
-            "$AGENT_TOOLSDIRECTORY"
-          df -h
-
-      - name: Install CUDA Toolkit (Linux)
-        if: runner.os == 'Linux' && matrix.cuda
-        uses: Jimver/cuda-toolkit@v0.2.35
-        id: cuda-linux
-        with:
-          cuda: "12.8.0"
-          linux-local-args: '["--toolkit"]'
-
-      # Export the extra CMake variables that whisper.cpp's CUDA build needs.
-      # Jimver sets CUDA_PATH; we also need CUDACXX and the root aliases.
-      - name: Set CUDA CMake variables (Linux)
-        if: runner.os == 'Linux' && matrix.cuda
-        run: |
-          CUDA_ROOT="${{ steps.cuda-linux.outputs.CUDA_PATH }}"
-          echo "CUDA_PATH=${CUDA_ROOT}"              >> "$GITHUB_ENV"
-          echo "CUDA_TOOLKIT_ROOT_DIR=${CUDA_ROOT}"  >> "$GITHUB_ENV"
-          echo "CUDAToolkit_ROOT=${CUDA_ROOT}"        >> "$GITHUB_ENV"
-          echo "CUDACXX=${CUDA_ROOT}/bin/nvcc"        >> "$GITHUB_ENV"
-
-      - name: Install CUDA Toolkit (Windows)
-        if: runner.os == 'Windows' && matrix.cuda
-        uses: Jimver/cuda-toolkit@v0.2.35
-        with:
-          cuda: "12.8.0"
-
-      - name: Configure CUDA MSBuild and environment (Windows)
-        if: runner.os == 'Windows' && matrix.cuda
-        shell: pwsh
-        run: |
-          $cudaPath = $env:CUDA_PATH
-          Write-Host "CUDA_PATH is $cudaPath"
-          
-          # Copy MSBuildExtensions to Visual Studio so CMake can find CUDA
-          $source = Join-Path $cudaPath "extras\visual_studio_integration\MSBuildExtensions\*"
-          $destinations = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "BuildCustomizations" -ErrorAction SilentlyContinue | Where-Object { $_.FullName -like "*MSBuild\Microsoft\VC\*\BuildCustomizations" }
-          
-          if ($destinations) {
-              foreach ($destDir in $destinations) {
-                  $dest = $destDir.FullName
-                  Write-Host "Copying MSBuildExtensions to: $dest"
-                  Copy-Item -Path $source -Destination $dest -Force
-              }
-          } else {
-              $dest = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Microsoft\VC\v170\BuildCustomizations"
-              Write-Host "Fallback copying MSBuildExtensions to: $dest"
-              if (!(Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
-              Copy-Item -Path $source -Destination $dest -Force
-          }
-          
-          # Set environment variables for CMake nvcc detection
-          "CUDA_PATH=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "CUDA_TOOLKIT_ROOT_DIR=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "CUDAToolkit_ROOT=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "CUDACXX=$cudaPath\bin\nvcc.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       # ── Rust ────────────────────────────────────────────────────────────────
       - uses: dtolnay/rust-toolchain@stable
@@ -308,34 +219,14 @@ jobs:
       # bundle into the AppImage, causing it to OOM or fail. deb packaging does
       # not use linuxdeploy and works reliably. CUDA users on Linux are almost
       # always on Debian/Ubuntu and can install the .deb directly.
-      - name: Build deb (Linux, CUDA)
-        if: runner.os == 'Linux' && matrix.cuda
-        env:
-          QT_QPA_PLATFORM: offscreen
-        # Call tauri directly so --bundles lands before the cargo -- separator;
-        # `npm run tauri build -- --bundles deb` wrongly sends --bundles to cargo.
-        run: node_modules/.bin/tauri build --bundles deb -- --features cuda,moonshine
-
       # ── Tauri build (Windows) ───────────────────────────────────────────────
       # NSIS (setup.exe) only — the advertised Windows installer. The WiX/MSI
       # bundler's `light.exe` fails to harvest the voxctrl-overlay sidecar, and
       # the MSI is a secondary, unadvertised artifact. Call tauri directly so
       # `--bundles nsis` reaches tauri instead of cargo.
       - name: Build installer (Windows, CPU)
-        if: runner.os == 'Windows' && !matrix.cuda
+        if: runner.os == 'Windows'
         run: npx tauri build --bundles nsis -- --features moonshine
-
-      - name: Copy real CUDA DLLs (Windows, CUDA)
-        if: runner.os == 'Windows' && matrix.cuda
-        shell: pwsh
-        run: |
-          Copy-Item "$env:CUDA_PATH\bin\cudart64_12.dll" "src-tauri\resources\cudart64_12.dll" -Force
-          Copy-Item "$env:CUDA_PATH\bin\cublas64_12.dll" "src-tauri\resources\cublas64_12.dll" -Force
-          Copy-Item "$env:CUDA_PATH\bin\cublasLt64_12.dll" "src-tauri\resources\cublasLt64_12.dll" -Force
-
-      - name: Build installer (Windows, CUDA)
-        if: runner.os == 'Windows' && matrix.cuda
-        run: npx tauri build --bundles nsis -- --features cuda,moonshine
 
       # ── Collect and rename Linux artifacts ──────────────────────────────────
       # Search the whole workspace so the path is correct regardless of whether
@@ -440,12 +331,7 @@ jobs:
             |---|---|---|
             | Linux | `-linux-x86_64.AppImage` | None |
             | Linux (GPU) | `-linux-x86_64-vulkan.AppImage` | Any Vulkan GPU |
-            | Linux (NVIDIA) | `-linux-x86_64-cuda.deb` | NVIDIA driver 520+ |
             | Windows | `-windows-x86_64-setup.exe` | None |
-            | Windows (NVIDIA) | `-windows-x86_64-cuda-setup.exe` | NVIDIA driver 520+ |
-
-            **CUDA builds** use your GPU for Whisper inference (~3–10× faster).
-            They require an NVIDIA driver but **not** the CUDA Toolkit.
 
             **The Vulkan AppImage** is a portable GPU build: it accelerates any
             NVIDIA/AMD/Intel GPU via the host Vulkan driver, and falls back to
@@ -453,16 +339,11 @@ jobs:
 
             **CPU builds** run on any hardware, including AMD, Intel, and ARM.
 
-            ### Linux CPU — first run
+            ### Linux CPU / GPU — first run
             ```bash
-            chmod +x VoxCtrl_*-linux-x86_64.AppImage
+            chmod +x VoxCtrl_*-linux-x86_64*.AppImage
             # Run the built-in host setup (configures evdev global hotkeys and udev permissions)
-            ./VoxCtrl_*-linux-x86_64.AppImage --install
+            ./VoxCtrl_*-linux-x86_64*.AppImage --install
             # Launch the application
-            ./VoxCtrl_*-linux-x86_64.AppImage
-            ```
-
-            ### Linux CUDA — install
-            ```bash
-            sudo dpkg -i VoxCtrl_*-linux-x86_64-cuda.deb
+            ./VoxCtrl_*-linux-x86_64*.AppImage
             ```
