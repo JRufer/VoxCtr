@@ -1,24 +1,23 @@
 /*
  * glibc __isoc23_* compatibility shims for the Moonshine backend.
  *
- * The prebuilt ONNX Runtime static library (pyke, pulled in by `ort` with
- * `download-binaries`) is compiled against glibc >= 2.38. Under C23, glibc
- * redirects strtol/strtoul/... to __isoc23_* symbols, so the static archive
- * references e.g. __isoc23_strtol. Our release runners are ubuntu-22.04
- * (glibc 2.35), which has no such symbols, and the static link fails with
- * "undefined symbol: __isoc23_strtol".
+ * This compatibility layer is compiled without standard headers (like stdlib.h)
+ * to prevent glibc >= 2.38 headers from inline-redirecting the calls to strtol/strtoul
+ * back to __isoc23_* (which would create an infinite recursion loop at compile-time).
  *
- * These forwarders provide the symbols by calling the classic libc functions,
- * so the binary links and runs on older glibc while keeping the AppImage's low
- * glibc floor. The only C23 difference is that base 0 also accepts a "0b"
- * binary prefix; ONNX Runtime's integer config parsing does not depend on that,
- * so forwarding to the classic functions is safe.
- *
- * Compiled and linked only for the `moonshine` feature on Linux (see build.rs).
+ * Declaring the prototypes manually ensures the compiled code calls the real external
+ * classic functions (e.g. strtol@GLIBC_2.2.5), making the binary portable and stable.
  */
 
-#include <stdlib.h>
-#include <inttypes.h>
+long strtol(const char *nptr, char **endptr, int base);
+long long strtoll(const char *nptr, char **endptr, int base);
+unsigned long strtoul(const char *nptr, char **endptr, int base);
+unsigned long long strtoull(const char *nptr, char **endptr, int base);
+
+typedef long int intmax_t;
+typedef unsigned long int uintmax_t;
+intmax_t strtoimax(const char *nptr, char **endptr, int base);
+uintmax_t strtoumax(const char *nptr, char **endptr, int base);
 
 long __isoc23_strtol(const char *nptr, char **endptr, int base) {
     return strtol(nptr, endptr, base);

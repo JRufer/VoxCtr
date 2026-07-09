@@ -8,9 +8,11 @@ set -euo pipefail
 
 # Parse command line options
 FORCE_CPU_FLAG=false
+FORCE_VULKAN_FLAG=false
 for arg in "$@"; do
     case "$arg" in
         --cpu) FORCE_CPU_FLAG=true ;;
+        --vulkan) FORCE_VULKAN_FLAG=true ;;
     esac
 done
 
@@ -54,16 +56,14 @@ if [ -f "./appimagetool" ] && [ ! -f "./appimagetool.bin" ]; then
     chmod +x appimagetool.bin
 fi
 
-# Create the wrapper if missing
-if [ ! -f "./appimagetool" ]; then
-    info "Creating headless FUSE-bypass wrapper script..."
-    cat > ./appimagetool <<'EOF'
+# Create the wrapper script
+info "Creating headless FUSE-bypass wrapper script..."
+cat > ./appimagetool <<'EOF'
 #!/usr/bin/env bash
 export QT_QPA_PLATFORM=offscreen
 exec "$(dirname "$0")/appimagetool.bin" --appimage-extract-and-run "$@"
 EOF
-    chmod +x ./appimagetool
-fi
+chmod +x ./appimagetool
 
 # Verify unsquashfs is installed (required for FUSE-less extraction of AppImage builders)
 if ! command -v unsquashfs &>/dev/null; then
@@ -154,68 +154,120 @@ export QT_QPA_PLATFORM=offscreen
 export APPIMAGE_EXTRACT_AND_RUN=1
 export NO_STRIP=true
 
-# Detect and inject common CUDA paths to PATH for CMake nvcc detection in non-interactive shells
-for cuda_dir in "/opt/cuda/bin" "/usr/local/cuda/bin"; do
-    if [ -d "$cuda_dir" ]; then
-        export PATH="$cuda_dir:$PATH"
-    fi
-done
-
-# Set CUDA home variables if found on the system
-CUDA_FOUND=false
-if [ -d "/opt/cuda" ]; then
-    export CUDA_PATH="/opt/cuda"
-    export CUDA_TOOLKIT_ROOT_DIR="/opt/cuda"
-    export CUDAToolkit_ROOT="/opt/cuda"
-    export CUDACXX="/opt/cuda/bin/nvcc"
-    export LD_LIBRARY_PATH="/opt/cuda/lib64:${LD_LIBRARY_PATH:-}"
-    export LIBRARY_PATH="/opt/cuda/lib64:${LIBRARY_PATH:-}"
-    CUDA_FOUND=true
-elif [ -d "/usr/local/cuda" ]; then
-    export CUDA_PATH="/usr/local/cuda"
-    export CUDA_TOOLKIT_ROOT_DIR="/usr/local/cuda"
-    export CUDAToolkit_ROOT="/usr/local/cuda"
-    export CUDACXX="/usr/local/cuda/bin/nvcc"
-    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}"
-    export LIBRARY_PATH="/usr/local/cuda/lib64:${LIBRARY_PATH:-}"
-    CUDA_FOUND=true
-fi
-
 # Check if an NVIDIA GPU is present on the system
 HAS_NVIDIA_GPU=false
 if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
     HAS_NVIDIA_GPU=true
 fi
 
-if [ "$CUDA_FOUND" = false ] && [ "$HAS_NVIDIA_GPU" = true ]; then
-    # NVIDIA GPU is present but toolkit is missing. Fail unless forced to compile for CPU.
-    if [ "${FORCE_CPU_FLAG}" = "true" ] || [ "${FORCE_CPU:-0}" = "1" ]; then
-        warn "NVIDIA GPU detected but CUDA Toolkit is missing. Forcing CPU-only compilation as requested."
+# Detect if CUDA toolkit is present (only used to warn/explain behavior to the user)
+CUDA_FOUND=false
+if [ -d "/opt/cuda" ] || [ -d "/usr/local/cuda" ]; then
+    CUDA_FOUND=true
+fi
+
+# Check if Vulkan development headers are installed (required to compile ggml-vulkan)
+HAS_VULKAN_HEADERS=false
+if echo "#include <vulkan/vulkan.h>" | cc -E - &>/dev/null; then
+    HAS_VULKAN_HEADERS=true
+fi
+
+detect_pkg_manager() {
+    if command -v pacman &>/dev/null;    then echo "pacman"
+    elif command -v apt-get &>/dev/null; then echo "apt"
+    elif command -v dnf &>/dev/null;     then echo "dnf"
+    elif command -v zypper &>/dev/null;  then echo "zypper"
+    else                                      echo "unknown"
+    fi
+}
+
+install_vulkan_deps() {
+    local PKG_MGR
+    PKG_MGR=$(detect_pkg_manager)
+    info "Installing Vulkan build dependencies (requires sudo)..."
+    case "$PKG_MGR" in
+        apt)
+            sudo apt-get update -y
+            sudo apt-get install -y libvulkan-dev shaderc
+            ;;
+        pacman)
+            sudo pacman -S --noconfirm --needed vulkan-headers shaderc
+            ;;
+        dnf)
+            sudo dnf install -y vulkan-headers shaderc
+            ;;
+        zypper)
+            sudo zypper install -y vulkan-headers shaderc
+            ;;
+        *)
+            fail "Unable to auto-install Vulkan dependencies for package manager: $PKG_MGR"
+            info "👉 Please install Vulkan headers (e.g. libvulkan-dev) and shaderc (glslc) manually."
+            exit 1
+            ;;
+    esac
+}
+
+# Determine build mode (vulkan or cpu)
+BUILD_MODE="cpu"
+if [ "$FORCE_CPU_FLAG" = "true" ] || [ "${FORCE_CPU:-0}" = "1" ]; then
+    BUILD_MODE="cpu"
+else
+    # Check if Vulkan is requested or if a GPU is present
+    if [ "$FORCE_VULKAN_FLAG" = "true" ] || [ "$HAS_NVIDIA_GPU" = true ] || command -v vulkaninfo &>/dev/null; then
+        BUILD_MODE="vulkan"
+        
+        # Check if we need to install dependencies
+        if ! command -v glslc &>/dev/null || [ "$HAS_VULKAN_HEADERS" = false ]; then
+            info "Vulkan compiler (glslc) or development headers (vulkan/vulkan.h) are missing."
+            install_vulkan_deps
+            
+            # Re-verify after installation attempt
+            HAS_VULKAN_HEADERS=false
+            if echo "#include <vulkan/vulkan.h>" | cc -E - &>/dev/null; then
+                HAS_VULKAN_HEADERS=true
+            fi
+            
+            if ! command -v glslc &>/dev/null || [ "$HAS_VULKAN_HEADERS" = false ]; then
+                fail "Vulkan build requirements (glslc and vulkan/vulkan.h) are still missing after package installation attempt."
+                exit 1
+            fi
+        fi
     else
-        fail "NVIDIA GPU detected, but the CUDA Toolkit (nvcc) was not found in standard paths (/opt/cuda or /usr/local/cuda)!"
-        info "Building with CUDA (GPU) support requires the CUDA Toolkit."
-        info "👉 Please install the CUDA Toolkit package for your distribution:"
-        info "   - Arch:   sudo pacman -S cuda"
-        info "   - Ubuntu: sudo apt install nvidia-cuda-toolkit"
-        info "   - Fedora: sudo dnf install cuda-toolkit"
-        echo ""
-        info "If you wish to bypass this check and compile for CPU-only instead, run:"
-        info "   FORCE_CPU=1 ./build_appimage.sh  or  ./build_appimage.sh --cpu"
-        echo ""
-        exit 1
+        BUILD_MODE="cpu"
     fi
 fi
 
-info "Running Tauri release compiler with headless PATH and CUDA injection..."
+info "Running Tauri release compiler with headless PATH..."
+# Set up a cleanup trap to restore /usr/lib/insync if it was hidden
+cleanup() {
+    if [ -d "/tmp/insync-build-temp" ]; then
+        info "Restoring /usr/lib/insync..."
+        sudo mv /tmp/insync-build-temp /usr/lib/insync || true
+    fi
+}
+trap cleanup EXIT
+
+# Temporarily hide /usr/lib/insync to prevent linuxdeploy from scanning it
+# by moving it completely outside of the /usr/lib directory
+if [ -d "/usr/lib/insync" ]; then
+    info "Temporarily hiding /usr/lib/insync during the build (requires sudo)..."
+    sudo mv /usr/lib/insync /tmp/insync-build-temp
+fi
+
 # The Moonshine ONNX backend is always compiled in so both speech engines
 # (whisper-cpp and Moonshine) are selectable in every AppImage. It links ONNX
 # Runtime, fetched at build time, so this step needs network access.
-if [ "$CUDA_FOUND" = true ]; then
-    info "CUDA detected. Compiling with GPU support (whisper-cpp + Moonshine)..."
-    npx tauri build -- --features cuda,moonshine
+if [ "$BUILD_MODE" = "vulkan" ]; then
+    info "Compiling with Vulkan GPU support (whisper-cpp + Moonshine)..."
+    if [ "$CUDA_FOUND" = true ]; then
+        warn "CUDA Toolkit was detected, but AppImages cannot bundle CUDA support"
+        warn "because linuxdeploy attempts to bundle the massive CUDA libraries, which fails."
+        warn "We are compiling with Vulkan GPU acceleration instead."
+    fi
+    npx tauri build --verbose -- --features vulkan,moonshine
 else
-    info "CUDA not detected. Compiling for CPU only (whisper-cpp + Moonshine)..."
-    npx tauri build -- --features moonshine
+    info "Compiling for CPU only (whisper-cpp + Moonshine)..."
+    npx tauri build --verbose -- --features moonshine
 fi
 
 ok "Compilation finished successfully."
@@ -240,11 +292,56 @@ if [ ${#FOUND_APPIMAGES[@]} -eq 0 ]; then
 fi
 
 LATEST_BUNDLE="${FOUND_APPIMAGES[0]}"
-PORTABLE_PATH="./${APP_NAME}-${APP_VERSION}-x86_64.AppImage"
+
+# Slim the AppImage by stripping graphics, Wayland, and input libraries so it falls through
+# to using the host system's native ones at runtime (resolves overlay UI and hotkey bugs).
+info "Found compiled bundle: $LATEST_BUNDLE"
+info "Slimming AppImage (stripping graphics, Wayland, and input libraries)..."
+
+# Extract the AppImage
+work=$(mktemp -d)
+cp "$LATEST_BUNDLE" "$work/in.AppImage"
+chmod +x "$work/in.AppImage"
+( cd "$work" && ./in.AppImage --appimage-extract >/dev/null )
+
+root="$work/squashfs-root"
+
+# Strip graphics, Wayland, input libraries, and host-dependent/security libraries
+# (like libglycin, libtinysparql, libtss2, libcanberra, and local GTK modules)
+# so the AppImage falls through to the host system's native versions at runtime.
+# This matches the clean build environment of the GitHub release.
+for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
+           'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
+           'libgbm.so*' 'libdrm.so*' \
+           'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
+           'libSvtAv1Enc.so*' 'libaom.so*' 'libavif.so*' 'libbrotlienc.so*' \
+           'libcanberra-gtk3.so*' 'libcanberra.so*' 'libcloudproviders.so*' \
+           'libdav1d.so*' 'libglycin-*.so*' 'libhwy.so*' 'libjson-glib-*.so*' \
+           'libjxl.so*' 'libjxl_cms.so*' 'libopenraw.so*' 'librav1e.so*' \
+           'libsharpyuv.so*' 'libtdb.so*' 'libtinysparql-*.so*' 'libtss2-*.so*' \
+           'libvorbis.so*' 'libvorbisfile.so*' 'libyuv.so*' \
+           'libleancrypto.so*' 'libopenraw_pixbuf.so*' \
+           'libcanberra-gtk-module.so' 'libcanberra-gtk3-module.so' \
+           'libcolorreload-gtk-module.so' 'libwindow-decorations-gtk-module.so'; do
+    find "$root" -name "$pat" -print -delete 2>/dev/null || true
+done
+
+# Repackage the AppImage
+rm -f "$LATEST_BUNDLE"
+ARCH=x86_64 ./appimagetool.bin "$root" "$LATEST_BUNDLE" >/dev/null
+
+rm -rf "$work"
+ok "AppImage successfully slimmed."
+
+if [ "$BUILD_MODE" = "vulkan" ]; then
+    PORTABLE_PATH="./${APP_NAME}_${APP_VERSION}_amd64-linux-x86_64-vulkan.appimage"
+else
+    PORTABLE_PATH="./${APP_NAME}_${APP_VERSION}_amd64-linux-x86_64.appimage"
+fi
 SYMLINK_PATH="./${APP_NAME}-latest-x86_64.AppImage"
 
-info "Found compiled bundle: $LATEST_BUNDLE"
 info "Moving and exposing portable versioned AppImage to root..."
+rm -f "$PORTABLE_PATH"
 cp "$LATEST_BUNDLE" "$PORTABLE_PATH"
 chmod +x "$PORTABLE_PATH"
 
