@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import type { AppConfig } from "../../stores/config";
-  import { configDirty } from "../../stores/config";
+  import { config, configDirty } from "../../stores/config";
 
   import CustomSelect from "./CustomSelect.svelte";
 
@@ -64,6 +64,7 @@
   });
 
   function markDirty() {
+    config.set(cfg);
     configDirty.set(true);
   }
 </script>

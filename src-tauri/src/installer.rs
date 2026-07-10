@@ -133,6 +133,7 @@ Terminal=false
 Type=Application
 Categories=Utility;AudioVideo;
 StartupNotify=false
+StartupWMClass=ai.voxctrl.app
 Keywords=whisper;voice;dictation;wayland;
 "#,
         abs_path.to_string_lossy()

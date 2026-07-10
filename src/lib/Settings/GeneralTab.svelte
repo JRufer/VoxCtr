@@ -1,10 +1,13 @@
 <script lang="ts">
   import type { AppConfig } from "../../stores/config";
-  import { configDirty } from "../../stores/config";
+  import { config, configDirty } from "../../stores/config";
 
   let { cfg = $bindable() } = $props<{ cfg: AppConfig }>();
 
-  function markDirty() { configDirty.set(true); }
+  function markDirty() {
+    config.set(cfg);
+    configDirty.set(true);
+  }
 </script>
 
 <section>

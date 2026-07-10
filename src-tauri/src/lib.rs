@@ -540,6 +540,18 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            // Set window icon programmatically on Linux/Wayland
+            #[cfg(target_os = "linux")]
+            {
+                let _ = crate::installer::setup_desktop_integration();
+                let icon_bytes = include_bytes!("../icons/128x128.png");
+                if let Ok(icon) = tauri::image::Image::from_bytes(icon_bytes) {
+                    for window in app.webview_windows().values() {
+                        let _ = window.set_icon(icon.clone());
+                    }
+                }
+            }
+
             // Re-initialize TTS worker with callback to emit tts-playback-start
             {
                 let app_handle = app.handle().clone();

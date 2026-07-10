@@ -3,12 +3,15 @@
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import type { AppConfig } from "../../stores/config";
-  import { configDirty } from "../../stores/config";
+  import { config, configDirty } from "../../stores/config";
 
   import CustomSelect from "./CustomSelect.svelte";
 
   let { cfg = $bindable() } = $props<{ cfg: AppConfig }>();
-  function markDirty() { configDirty.set(true); }
+  function markDirty() {
+    config.set(cfg);
+    configDirty.set(true);
+  }
 
   interface AudioDevice { index: number; name: string; }
   let devices = $state<AudioDevice[]>([]);

@@ -1,25 +1,49 @@
 <script lang="ts">
   import type { AppConfig } from "../../stores/config";
-  import { configDirty } from "../../stores/config";
+  import { config, configDirty } from "../../stores/config";
 
   let { cfg = $bindable() } = $props<{ cfg: AppConfig }>();
-  function markDirty() { configDirty.set(true); }
+  function markDirty() {
+    config.set(cfg);
+    configDirty.set(true);
+  }
 
   // Snippets editing
   let snippetList = $state<{key: string, val: string}[]>(
     Object.entries(cfg.features.snippets).map(([k, v]) => ({ key: k, val: v as string }))
   );
 
-  function syncSnippets() {
+  let isSnippetInitialized = false;
+  $effect(() => {
+    const list = snippetList;
     const newSnippets: Record<string, string> = {};
-    for (const {key, val} of snippetList) {
+    for (const {key, val} of list) {
       if (key.trim()) {
         newSnippets[key.trim()] = val.trim();
       }
     }
-    cfg.features.snippets = newSnippets;
-    markDirty();
-  }
+
+    const existing = cfg.features.snippets || {};
+    const existingKeys = Object.keys(existing);
+    const newKeys = Object.keys(newSnippets);
+    let changed = existingKeys.length !== newKeys.length;
+    if (!changed) {
+      for (const k of newKeys) {
+        if (existing[k] !== newSnippets[k]) {
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    if (changed) {
+      cfg.features.snippets = newSnippets;
+      if (isSnippetInitialized) {
+        markDirty();
+      }
+    }
+    isSnippetInitialized = true;
+  });
 
   function addEmptySnippetRow() {
     snippetList = [...snippetList, { key: "", val: "" }];
@@ -27,7 +51,6 @@
 
   function removeSnippetRow(index: number) {
     snippetList = snippetList.filter((_, i) => i !== index);
-    syncSnippets();
   }
 
   let customVocabString = $derived(
@@ -114,7 +137,6 @@
             type="text" 
             placeholder="Trigger word" 
             bind:value={snippetList[idx].key} 
-            oninput={syncSnippets} 
             style="flex: 0.4;"
           />
           <span style="color: var(--text-muted);">→</span>
@@ -122,7 +144,6 @@
             type="text" 
             placeholder="Expansion text" 
             bind:value={snippetList[idx].val} 
-            oninput={syncSnippets} 
             style="flex: 1;"
           />
           <button class="btn-remove-inline" type="button" onclick={() => removeSnippetRow(idx)}>✕</button>

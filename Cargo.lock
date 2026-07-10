@@ -9568,6 +9568,7 @@ dependencies = [
  "flate2",
  "hf-hub",
  "pocket-tts",
+ "regex",
  "reqwest 0.12.28",
  "rodio",
  "serde",

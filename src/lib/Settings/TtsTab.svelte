@@ -1,13 +1,16 @@
 <script lang="ts">
   import type { AppConfig } from "../../stores/config";
-  import { configDirty } from "../../stores/config";
+  import { config, configDirty, saveConfig } from "../../stores/config";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { onMount, onDestroy } from "svelte";
   import CustomSelect from "./CustomSelect.svelte";
 
   let { cfg = $bindable() } = $props<{ cfg: AppConfig }>();
-  function markDirty() { configDirty.set(true); }
+  function markDirty() {
+    config.set(cfg);
+    configDirty.set(true);
+  }
 
   // ── Run Speed Timer ────────────────────────────────────────────────────────
   let runSpeed = $state<number | null>(null);
@@ -119,6 +122,13 @@
 
   async function testTts() {
     if (testing) return;
+    
+    try {
+      await saveConfig(cfg);
+    } catch (err) {
+      ttsError = `Failed to save configuration: ${err}`;
+      return;
+    }
     
     if (voiceSpeaking) {
       voiceSpeaking = false;
@@ -415,6 +425,83 @@
     isRecordingStopKey = false;
   }
 
+  // TTS Snippets & Dictionary editing
+  let ttsSnippetList = $state<{key: string, val: string}[]>(
+    Object.entries(cfg.tts.snippets || {}).map(([k, v]) => ({ key: k, val: v as string }))
+  );
+
+  let isTtsSnippetInitialized = false;
+  $effect(() => {
+    const list = ttsSnippetList;
+    const newSnippets: Record<string, string> = {};
+    for (const {key, val} of list) {
+      if (key.trim()) {
+        newSnippets[key.trim()] = val.trim();
+      }
+    }
+
+    const existing = cfg.tts.snippets || {};
+    const existingKeys = Object.keys(existing);
+    const newKeys = Object.keys(newSnippets);
+    let changed = existingKeys.length !== newKeys.length;
+    if (!changed) {
+      for (const k of newKeys) {
+        if (existing[k] !== newSnippets[k]) {
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    if (changed) {
+      cfg.tts.snippets = newSnippets;
+      if (isTtsSnippetInitialized) {
+        markDirty();
+      }
+    }
+    isTtsSnippetInitialized = true;
+  });
+
+  function addEmptyTtsSnippetRow() {
+    ttsSnippetList = [...ttsSnippetList, { key: "", val: "" }];
+  }
+
+  function removeTtsSnippetRow(index: number) {
+    ttsSnippetList = ttsSnippetList.filter((_, i) => i !== index);
+  }
+
+  let ttsCustomVocabString = $derived(
+    cfg.tts.custom_vocabulary ? cfg.tts.custom_vocabulary.join(", ") : ""
+  );
+
+  function onTtsCustomVocabChange(e: Event) {
+    const target = e.target as HTMLTextAreaElement;
+    cfg.tts.custom_vocabulary = target.value
+      .split(",")
+      .map(w => w.trim())
+      .filter(w => w.length > 0);
+    markDirty();
+  }
+
+  function autoResize(node: HTMLTextAreaElement) {
+    function resize() {
+      node.style.height = "auto";
+      node.style.height = `${node.scrollHeight}px`;
+    }
+    node.addEventListener("input", resize);
+    const timer = setTimeout(resize, 0);
+
+    return {
+      update() {
+        resize();
+      },
+      destroy() {
+        clearTimeout(timer);
+        node.removeEventListener("input", resize);
+      }
+    };
+  }
+
 </script>
 
 <section>
@@ -623,6 +710,56 @@
       </div>
     </div>
   </div>
+
+  <div class="field-group mt-6">
+    <h3>TTS Custom Dictionary</h3>
+    <p class="hint">Provide a comma-separated list of words (e.g. jargon or names) that the TTS engine should try to correct phonetic spellings for when speaking.</p>
+    <textarea 
+      class="custom-vocab-input"
+      placeholder="e.g. Waylin, Rufer, Enola, Kenz"
+      value={ttsCustomVocabString}
+      oninput={onTtsCustomVocabChange}
+      use:autoResize
+    ></textarea>
+  </div>
+
+  <div class="field-group mt-6">
+    <div class="field-label-row">
+      <div style="display: flex; flex-direction: column;">
+        <h3 style="margin-bottom: 0;">TTS Snippets (Pronunciation Guide)</h3>
+        <p class="hint" style="margin-top: 4px;">Type a word (e.g. "voxctrl") ➔ its spoken expansion/pronunciation (e.g. "vox control"). Only affects speech playback.</p>
+      </div>
+      <button class="btn-add-inline" type="button" onclick={addEmptyTtsSnippetRow}>
+        ＋ Add Pronunciation
+      </button>
+    </div>
+
+    <div class="dynamic-list">
+      {#each ttsSnippetList as snippet, idx}
+        <div class="dynamic-list-row">
+          <input 
+            type="text" 
+            placeholder="Word / Abbreviation" 
+            bind:value={ttsSnippetList[idx].key} 
+            style="flex: 0.4;"
+          />
+          <span style="color: var(--text-muted);">→</span>
+          <input 
+            type="text" 
+            placeholder="Spoken pronunciation" 
+            bind:value={ttsSnippetList[idx].val} 
+            style="flex: 1;"
+          />
+          <button class="btn-remove-inline" type="button" onclick={() => removeTtsSnippetRow(idx)}>✕</button>
+        </div>
+      {/each}
+      {#if ttsSnippetList.length === 0}
+        <div class="empty-state" style="padding: 20px; grid-column: 1 / -1;">
+          <p>No pronunciation snippets defined.</p>
+        </div>
+      {/if}
+    </div>
+  </div>
 </section>
 
 <style>
@@ -715,6 +852,18 @@
   .run-speed-value.counting {
     color: var(--accent2);
     text-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+  }
+
+  .custom-vocab-input {
+    @apply w-full min-h-[80px] bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-[var(--radius)] p-2 px-3 text-[13px] resize-y mt-2 outline-none box-border transition-all duration-200 ease-out;
+  }
+
+  .custom-vocab-input:focus {
+    @apply border-[var(--accent2)] shadow-[0_0_0_2px_rgba(79,195,247,0.2)];
+  }
+
+  .custom-vocab-input::placeholder {
+    @apply text-[var(--text-muted)] opacity-50;
   }
 
 </style>

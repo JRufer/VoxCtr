@@ -208,51 +208,128 @@ pub fn correct_custom_vocabulary(text: &str, custom_vocab: &[String]) -> String 
         return text.to_string();
     }
 
-    let re_word = match Regex::new(r"[a-zA-Z0-9'\-]+") {
-        Ok(re) => re,
-        Err(_) => return text.to_string(),
-    };
+    let mut multi_word: Vec<&String> = Vec::new();
+    let mut single_word: Vec<&String> = Vec::new();
+    for vocab_word in custom_vocab {
+        if vocab_word.trim().is_empty() {
+            continue;
+        }
+        if vocab_word.contains(' ') {
+            multi_word.push(vocab_word);
+        } else {
+            single_word.push(vocab_word);
+        }
+    }
 
     let mut result = text.to_string();
-    result = re_word.replace_all(&result, |caps: &regex::Captures| {
-        let matched = caps.get(0).unwrap().as_str();
-        
-        let mut best_match: Option<&str> = None;
-        let mut best_dist = usize::MAX;
-        
-        let matched_lower = matched.to_lowercase();
-        
-        for vocab_word in custom_vocab {
-            let vocab_lower = vocab_word.to_lowercase();
-            let len = vocab_lower.chars().count();
-            
-            if matched_lower == vocab_lower {
-                best_match = Some(vocab_word.as_str());
-                break;
+
+    // 1. Process multi-word phrases first (longest first)
+    multi_word.sort_by(|a, b| b.len().cmp(&a.len()));
+
+    if !multi_word.is_empty() {
+        let re_word = Regex::new(r"[a-zA-Z0-9'\-]+").unwrap();
+        for phrase in multi_word {
+            let phrase_lower = phrase.to_lowercase();
+            let phrase_words: Vec<&str> = phrase_lower.split_whitespace().collect();
+            let n = phrase_words.len();
+            if n == 0 {
+                continue;
             }
-            
-            let dist = levenshtein_distance(&matched_lower, &vocab_lower);
-            
-            let max_allowed = if len <= 3 {
-                0
-            } else if len == 4 {
-                1
+
+            let mut replaced_any = true;
+            while replaced_any {
+                replaced_any = false;
+                let tokens: Vec<_> = re_word.find_iter(&result).collect();
+                if tokens.len() < n {
+                    break;
+                }
+
+                for i in 0..=(tokens.len() - n) {
+                    let start_tok = &tokens[i];
+                    let end_tok = &tokens[i + n - 1];
+                    let start_byte = start_tok.start();
+                    let end_byte = end_tok.end();
+
+                    let candidate_str = &result[start_byte..end_byte];
+                    let candidate_words: Vec<&str> = candidate_str
+                        .split_whitespace()
+                        .map(|w| w.trim_matches(|c: char| c.is_ascii_punctuation()))
+                        .filter(|w| !w.is_empty())
+                        .collect();
+
+                    if candidate_words.len() != n {
+                        continue;
+                    }
+
+                    let candidate_norm = candidate_words.join(" ").to_lowercase();
+                    let dist = levenshtein_distance(&candidate_norm, &phrase_lower);
+
+                    let phrase_len = phrase_lower.chars().count();
+                    let max_allowed = if phrase_len <= 4 {
+                        0
+                    } else if phrase_len <= 8 {
+                        1
+                    } else {
+                        2
+                    };
+
+                    if dist <= max_allowed {
+                        result.replace_range(start_byte..end_byte, phrase);
+                        replaced_any = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Process single-word corrections
+    if !single_word.is_empty() {
+        let re_word = match Regex::new(r"[a-zA-Z0-9'\-]+") {
+            Ok(re) => re,
+            Err(_) => return result,
+        };
+
+        result = re_word.replace_all(&result, |caps: &regex::Captures| {
+            let matched = caps.get(0).unwrap().as_str();
+
+            let mut best_match: Option<&str> = None;
+            let mut best_dist = usize::MAX;
+
+            let matched_lower = matched.to_lowercase();
+
+            for vocab_word in &single_word {
+                let vocab_lower = vocab_word.to_lowercase();
+                let len = vocab_lower.chars().count();
+
+                if matched_lower == vocab_lower {
+                    best_match = Some(vocab_word.as_str());
+                    break;
+                }
+
+                let dist = levenshtein_distance(&matched_lower, &vocab_lower);
+
+                let max_allowed = if len <= 3 {
+                    0
+                } else if len == 4 {
+                    1
+                } else {
+                    2
+                };
+
+                if dist <= max_allowed && dist < best_dist {
+                    best_dist = dist;
+                    best_match = Some(vocab_word.as_str());
+                }
+            }
+
+            if let Some(replacement) = best_match {
+                replacement.to_string()
             } else {
-                2
-            };
-            
-            if dist <= max_allowed && dist < best_dist {
-                best_dist = dist;
-                best_match = Some(vocab_word.as_str());
+                matched.to_string()
             }
-        }
-        
-        if let Some(replacement) = best_match {
-            replacement.to_string()
-        } else {
-            matched.to_string()
-        }
-    }).to_string();
+        }).to_string();
+    }
 
     result
 }
@@ -388,6 +465,7 @@ mod tests {
             "Rufer".to_string(),
             "Enola".to_string(),
             "Kenz".to_string(),
+            "Vox Ctrl".to_string(),
         ];
         
         // Exact case-insensitive matches should capitalize correctly
@@ -403,5 +481,10 @@ mod tests {
         // Short words and distant words should not trigger false positives
         assert_eq!(correct_custom_vocabulary("in", &vocab), "in");
         assert_eq!(correct_custom_vocabulary("hello world", &vocab), "hello world");
+
+        // Multi-word phrase corrections
+        assert_eq!(correct_custom_vocabulary("hello vox ctrl", &vocab), "hello Vox Ctrl");
+        assert_eq!(correct_custom_vocabulary("using vox control here", &vocab), "using Vox Ctrl here");
+        assert_eq!(correct_custom_vocabulary("welcome to vox crtl!", &vocab), "welcome to Vox Ctrl!");
     }
 }

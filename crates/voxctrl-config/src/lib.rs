@@ -198,7 +198,7 @@ impl Default for FeaturesConfig {
     fn default() -> Self {
         Self {
             remove_fillers: true,
-            custom_vocabulary: Vec::new(),
+            custom_vocabulary: vec!["VoxCtrl".into()],
             spoken_punctuation: true,
             auto_format_lists: true,
             quiet_mode: false,
@@ -351,6 +351,10 @@ pub struct TtsConfig {
     pub gpu: bool,
     #[serde(default)]
     pub pocket_tts: PocketTtsConfig,
+    #[serde(default)]
+    pub snippets: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub custom_vocabulary: Vec<String>,
 }
 
 impl Default for TtsConfig {
@@ -369,6 +373,12 @@ impl Default for TtsConfig {
             speed: 1.0,
             gpu: false,
             pocket_tts: PocketTtsConfig::default(),
+            snippets: {
+                let mut map = std::collections::HashMap::new();
+                map.insert("VoxCtrl".into(), "Vox Control".into());
+                map
+            },
+            custom_vocabulary: vec!["VoxCtrl".into()],
         }
     }
 }

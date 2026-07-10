@@ -90,6 +90,8 @@ export interface TtsConfig {
   speed: number;
   gpu: boolean;
   pocket_tts: PocketTtsConfig;
+  snippets: Record<string, string>;
+  custom_vocabulary: string[];
 }
 
 export interface McpConfig {
@@ -136,7 +138,7 @@ const defaultConfig: AppConfig = {
   },
   features: {
     remove_fillers: true,
-    custom_vocabulary: [],
+    custom_vocabulary: ["VoxCtrl"],
     spoken_punctuation: true,
     auto_format_lists: true,
     quiet_mode: false,
@@ -168,6 +170,10 @@ const defaultConfig: AppConfig = {
       hf_token: null,
       voice_dir: "",
     },
+    snippets: {
+      "VoxCtrl": "Vox Control"
+    },
+    custom_vocabulary: ["VoxCtrl"],
   },
   mcp: { server_enabled: false, record_timeout: 15.0, visual_feedback: true },
   atspi: { injection: true, context_prompt: true, auto_code_mode: true },
