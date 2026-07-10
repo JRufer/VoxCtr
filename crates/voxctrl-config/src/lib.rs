@@ -353,8 +353,6 @@ pub struct TtsConfig {
     pub pocket_tts: PocketTtsConfig,
     #[serde(default)]
     pub snippets: std::collections::HashMap<String, String>,
-    #[serde(default)]
-    pub custom_vocabulary: Vec<String>,
 }
 
 impl Default for TtsConfig {
@@ -378,7 +376,6 @@ impl Default for TtsConfig {
                 map.insert("VoxCtrl".into(), "Vox Control".into());
                 map
             },
-            custom_vocabulary: vec!["VoxCtrl".into()],
         }
     }
 }

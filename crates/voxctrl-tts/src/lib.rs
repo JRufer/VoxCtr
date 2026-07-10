@@ -373,6 +373,7 @@ pub type ErrorCallback = Arc<dyn Fn(String) + Send + Sync + 'static>;
 
 pub struct TtsEngineWorker {
     config: TtsConfig,
+    custom_vocabulary: Vec<String>,
     rx: Receiver<TtsCommand>,
     generation: Arc<std::sync::atomic::AtomicU32>,
     on_playback_start: Option<PlaybackCallback>,
@@ -383,6 +384,7 @@ pub struct TtsEngineWorker {
 impl TtsEngineWorker {
     pub fn start(
         config: TtsConfig,
+        custom_vocabulary: Vec<String>,
         on_playback_start: Option<PlaybackCallback>,
         on_playback_end: Option<PlaybackCallback>,
         on_error: Option<ErrorCallback>,
@@ -402,7 +404,15 @@ impl TtsEngineWorker {
             });
         }
 
-        let worker = Self { config, rx, generation, on_playback_start, on_playback_end, on_error };
+        let worker = Self {
+            config,
+            custom_vocabulary,
+            rx,
+            generation,
+            on_playback_start,
+            on_playback_end,
+            on_error,
+        };
         std::thread::Builder::new()
             .name("voxctrl-tts".into())
             .spawn(move || worker.run())
@@ -447,8 +457,8 @@ impl TtsEngineWorker {
                         if !self.config.snippets.is_empty() {
                             utterance.text = expand_snippets(&utterance.text, &self.config.snippets);
                         }
-                        if !self.config.custom_vocabulary.is_empty() {
-                            utterance.text = correct_custom_vocabulary(&utterance.text, &self.config.custom_vocabulary);
+                        if !self.custom_vocabulary.is_empty() {
+                            utterance.text = correct_custom_vocabulary(&utterance.text, &self.custom_vocabulary);
                         }
                     }
 
