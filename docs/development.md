@@ -285,7 +285,7 @@ mod tests {
 
 Frontend Svelte 5 components, settings views, and warning overlays are tested using **Vitest**, **JSDOM**, and **Svelte Testing Library**.
 
-* **Test Location**: `tests/svelte/` (files ending in `.test.ts`)
+* **Test Location**: `tests/svelte/` (files ending in `.test.ts`, including component tests and utility script tests like `prepare-sidecar.test.ts`)
 * **Framework Stack**: Vitest (runner), jsdom (DOM environment), `@testing-library/svelte` (rendering & selectors)
 
 #### Running Frontend Tests

@@ -253,7 +253,7 @@ pub fn run() {
 
     // ── TTS ───────────────────────────────────────────────────────────────────
     let _tts_handle = if cfg_data.tts.enabled {
-        Some(voxctrl_tts::TtsEngineWorker::start(cfg_data.tts.clone(), None, None, None))
+        Some(voxctrl_tts::TtsEngineWorker::start(cfg_data.tts.clone(), cfg_data.features.custom_vocabulary.clone(), None, None, None))
     } else {
         None
     };
@@ -575,6 +575,7 @@ pub fn run() {
                             let state_clone_end = state.clone();
                             let new_tts = voxctrl_tts::TtsEngineWorker::start(
                                 cfg.tts.clone(),
+                                cfg.features.custom_vocabulary.clone(),
                                 Some(std::sync::Arc::new(move || {
                                     state_clone.set_speaking(true);
                                     let _ = app_handle_clone.emit("tts-playback-start", ());

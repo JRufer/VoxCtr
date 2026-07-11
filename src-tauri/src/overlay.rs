@@ -15,7 +15,7 @@ slint::slint! {
         // Window properties
         always-on-top: true;
         no-frame: true;
-        background: transparent;
+        background: rgba(0, 0, 0, 0.01);
         width: 560px;
         height: 190px;
 
@@ -62,6 +62,16 @@ slint::slint! {
         in property <[float]> spectrum-bars: [];
         in property <string> ascii-meter: "";
         in property <string> vu-needle-path: "";
+
+        // A tiny 1x1 pixel rectangle that is always visible, but is transparent,
+        // to force Slint to present a non-empty buffer on startup.
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: 1px;
+            height: 1px;
+            background: rgba(0, 0, 0, 0.01);
+        }
 
         // ─────────────────────────────────────────────────────────────
         // 1. WAVEFORM — "OSC-01" green phosphor oscilloscope.
@@ -1440,9 +1450,32 @@ fn vu_needle_path(angle: f32) -> String {
 }
 
 fn main() {
+    let mut backend = i_slint_backend_winit::Backend::new().unwrap();
+    backend.window_attributes_hook = Some(Box::new(|builder| {
+        #[cfg(target_os = "windows")]
+        {
+            use i_slint_backend_winit::winit::platform::windows::WindowAttributesExtWindows;
+            builder.with_skip_taskbar(true)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use i_slint_backend_winit::winit::platform::x11::{WindowAttributesExtX11, WindowType};
+            builder.with_x11_window_type(vec![WindowType::Notification])
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        builder
+    }));
+    slint::platform::set_platform(Box::new(backend)).unwrap();
+
     let ui = OverlayWindow::new().unwrap();
 
-    // Start with the window hidden. We show()/hide() dynamically.
+    // Map/show the overlay window immediately on startup so that the window manager
+    // registers and anchors the window at launch. This prevents the window manager
+    // from stealing focus from the active text cursor during the first dictation.
+    if let Err(e) = ui.show() {
+        eprintln!("[overlay] Failed to show window on startup: {:?}", e);
+    }
+    apply_topmost(&ui, false);
 
     let shared_state = Arc::new(Mutex::new(AppState {
         recording: false,
@@ -1549,7 +1582,7 @@ fn main() {
     let mut vu_angle = VU_ANGLE_MIN;
     let mut vu_vel = 0.0_f32;
     let mut lcg_state = 12345_u32;
-    let mut shown = false;
+    let mut shown = true;
     let mut idle = false;
     // Counts render ticks while the overlay is visible, to re-assert the
     // always-on-top level on a slow heartbeat (see apply_topmost).
@@ -1618,7 +1651,7 @@ fn main() {
         let visible_needed = active_main || active_pill || reveal_main > 0.004 || reveal_pill > 0.004;
 
         let mut just_mapped = false;
-        if visible_needed && !shown {
+        if !shown {
             if let Err(e) = ui.show() {
                 eprintln!("[overlay] Failed to show window: {:?}", e);
             }
@@ -1652,6 +1685,25 @@ fn main() {
                 ui.set_level(0.0);
                 idle = true;
             }
+
+            // Recompute and apply target position even when idle, so that the window
+            // is positioned correctly immediately on launch/anchor changes, rather
+            // than waiting for the first active dictation.
+            if !anchor.is_empty() && (pos_dirty || computed_pos.is_none()) {
+                if let Some(p) = compute_overlay_position(&ui, &anchor, &monitor_pref) {
+                    computed_pos = Some(p);
+                    reposition_frames = reposition_frames.max(REPOSITION_FRAMES);
+                }
+            }
+            if reposition_frames > 0 {
+                reposition_frames -= 1;
+                if let Some((px, py)) = computed_pos {
+                    ui.window().with_winit_window(|w| {
+                        w.set_outer_position(i_slint_backend_winit::winit::dpi::PhysicalPosition::new(px, py));
+                    });
+                }
+            }
+
             ui.window().with_winit_window(|w| w.request_redraw());
             return;
         }
@@ -1661,13 +1713,13 @@ fn main() {
         // was idle, and keep re-asserting on a ~1s heartbeat so it can't linger
         // behind a window that came forward mid-dictation.
         if idle {
-            apply_topmost(&ui, true);
+            apply_topmost(&ui, false);
             reposition_frames = REPOSITION_FRAMES;
             topmost_tick = 0;
         } else {
             topmost_tick = topmost_tick.wrapping_add(1);
             if topmost_tick % 60 == 0 {
-                apply_topmost(&ui, true);
+                apply_topmost(&ui, false);
                 reposition_frames = REPOSITION_FRAMES;
             }
         }

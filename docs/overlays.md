@@ -6,14 +6,18 @@ VoxCtrl displays a visual overlay while the microphone is active, while TTS is s
 
 ## How the Overlay Works
 
-The main VoxCtrl process spawns the `voxctrl-overlay` helper binary at startup and streams newline-delimited JSON messages (`status`, `position`, `shutdown`) to its stdin — recording/processing/speaking state, the smoothed microphone level, the active routing target label, the configured style, and screen coordinates. The helper window has the following properties:
+The main VoxCtrl process spawns the `voxctrl-overlay` helper binary immediately at application startup. The parent process streams newline-delimited JSON messages (`status`, `position`, `shutdown`) to its stdin, which communicate recording/processing/speaking state, the smoothed microphone level, the active routing target label, the configured style, and screen coordinates.
 
-- **Transparent** — The window background is fully transparent; only the drawn pixels of the visualizer are visible.
-- **Always-on-Top** — Floats persistently above all other active desktop windows. The window level is re-asserted every time the overlay re-appears, since some window managers reset it across hide/show cycles.
+To avoid focus-stealing and window manager focus grabs during dictation, the helper window is configured with the following properties:
+
+- **Mapped on Startup** — The window is created and mapped immediately on launch. It commits a 1% opacity background buffer (`rgba(0, 0, 0, 0.01)`) and renders an invisible 1x1 pixel helper element. This forces the Wayland/X11 compositor to register, anchor, and place the window instantly on startup before dictation occurs.
+- **Non-Focusable & Taskbar Bypassing** — On Linux, the winit window is registered with the `WindowType::Notification` X11/XWayland attribute. On Windows, it is registered with `with_skip_taskbar(true)`. Consequently, the window is excluded from taskbar/app bar listings and is structurally incapable of taking keyboard focus or stealing focus from the user's cursor.
+- **Transparent** — The window background is visually transparent (1% opacity black, which is imperceptible to the human eye); only the active visualizer elements are rendered.
+- **Always-on-Top** — Floats persistently above all other active desktop windows. The window level is set to `AlwaysOnTop` on launch and is kept stable (rather than being toggled) to avoid triggering window manager focus-stealing events.
 - **Click-Through** — The window's cursor hit-test is disabled at the windowing-system level (winit `set_cursor_hittest(false)`), so mouse events pass cleanly through to the window beneath it, preventing any focus interruption.
 - **Borderless / Frameless** — No title bar or decorations.
 
-The overlay is shown automatically when recording starts and hidden when transcription completes (provided `ui.show_overlay` is enabled). The active style is determined by `config.ui.overlay_style` and is hot-switched without restarting the helper.
+The overlay visualizer animates and reveals itself automatically when recording starts and fades out when transcription completes (provided `ui.show_overlay` is enabled). The active style is determined by `config.ui.overlay_style` and is hot-switched without restarting the helper.
 
 ### Load & Unload Animations
 

@@ -111,6 +111,7 @@ pub async fn save_config(
             let state_clone_end = state.inner().clone();
             let new_tts = voxctrl_tts::TtsEngineWorker::start(
                 new_config.tts.clone(),
+                new_config.features.custom_vocabulary.clone(),
                 Some(std::sync::Arc::new(move || {
                     state_clone.set_speaking(true);
                     let _ = app_handle.emit("tts-playback-start", ());

@@ -35,28 +35,47 @@ const triple = hostTriple();
 const isWindows = process.platform === 'win32';
 const exeSuffix = isWindows ? '.exe' : '';
 
-// The overlay binary may live under either profile depending on how it was
-// built. Prefer release (what packaged builds use) but fall back to debug for
-// the dev flow.
-const candidates = [
-  join(repoRoot, 'target', 'release', `voxctrl-overlay${exeSuffix}`),
-  join(repoRoot, 'target', 'debug', `voxctrl-overlay${exeSuffix}`),
-];
-const srcBinary = candidates.find((p) => existsSync(p));
-if (!srcBinary) {
-  throw new Error(
-    `Overlay binary not found in ${candidates.join(' or ')}.\n` +
-      'Run `cargo build --bin voxctrl-overlay --release` before staging the sidecar.'
-  );
+import { statSync } from 'node:fs';
+
+export function selectBinary(candidates, existsSyncFn, statSyncFn) {
+  const existingCandidates = candidates.filter((p) => existsSyncFn(p));
+  if (existingCandidates.length === 0) {
+    throw new Error(
+      `Overlay binary not found in ${candidates.join(' or ')}.\n` +
+        'Run `cargo build --bin voxctrl-overlay` before staging the sidecar.'
+    );
+  }
+  let srcBinary = existingCandidates[0];
+  if (existingCandidates.length > 1) {
+    const stats = existingCandidates.map((p) => ({ path: p, mtime: statSyncFn(p).mtimeMs }));
+    stats.sort((a, b) => b.mtime - a.mtime);
+    srcBinary = stats[0].path;
+  }
+  return srcBinary;
 }
 
-const destDir = join(repoRoot, 'src-tauri', 'binaries');
-mkdirSync(destDir, { recursive: true });
-const destBinary = join(destDir, `voxctrl-overlay-${triple}${exeSuffix}`);
+const isDirectRun = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 
-copyFileSync(srcBinary, destBinary);
-if (!isWindows) {
-  chmodSync(destBinary, 0o755);
+if (isDirectRun) {
+  const triple = hostTriple();
+  const isWindows = process.platform === 'win32';
+  const exeSuffix = isWindows ? '.exe' : '';
+
+  const candidates = [
+    join(repoRoot, 'target', 'release', `voxctrl-overlay${exeSuffix}`),
+    join(repoRoot, 'target', 'debug', `voxctrl-overlay${exeSuffix}`),
+  ];
+
+  const srcBinary = selectBinary(candidates, existsSync, statSync);
+
+  const destDir = join(repoRoot, 'src-tauri', 'binaries');
+  mkdirSync(destDir, { recursive: true });
+  const destBinary = join(destDir, `voxctrl-overlay-${triple}${exeSuffix}`);
+
+  copyFileSync(srcBinary, destBinary);
+  if (!isWindows) {
+    chmodSync(destBinary, 0o755);
+  }
+
+  console.log(`[prepare-sidecar] staged ${srcBinary} -> ${destBinary}`);
 }
-
-console.log(`[prepare-sidecar] staged ${srcBinary} -> ${destBinary}`);
