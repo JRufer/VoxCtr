@@ -1,0 +1,7 @@
+[package]
+name = "voxctrl-text"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+regex = { workspace = true }

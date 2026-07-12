@@ -440,7 +440,9 @@ fn backup(filename: &str, config_dir: &Path) -> std::io::Result<()> {
     if !src.exists() {
         return Ok(());
     }
-    let ts = Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+    // NOTE: colons are illegal in Windows filenames, so the timestamp uses
+    // hyphens instead of the RFC 3339 `:` separators for the time component.
+    let ts = Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
     let backup_dir = config_dir.join("backups");
     std::fs::create_dir_all(&backup_dir)?;
     let dst = backup_dir.join(format!("{filename}.{ts}"));

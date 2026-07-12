@@ -72,7 +72,8 @@ VoxCtrl/
 │   ├── voxctrl-tts/
 │   ├── voxctrl-mcp/
 │   ├── voxctrl-dbus/
-│   └── voxctrl-llm/
+│   ├── voxctrl-llm/
+│   └── voxctrl-text/       # Shared text-processing (snippets, fuzzy vocab correction)
 │
 ├── Cargo.toml              # Workspace definition
 ├── package.json            # Frontend deps

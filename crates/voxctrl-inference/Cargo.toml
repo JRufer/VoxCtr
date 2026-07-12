@@ -7,6 +7,7 @@ edition.workspace = true
 voxctrl-config  = { workspace = true }
 voxctrl-routing = { workspace = true }
 voxctrl-llm    = { workspace = true }
+voxctrl-text   = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

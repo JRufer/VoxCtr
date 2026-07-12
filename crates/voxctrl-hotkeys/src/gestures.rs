@@ -84,7 +84,6 @@ pub struct DoubleTapMachine {
     pub state: DtState,
     deadline: Duration,
     last_up: Option<Instant>,
-    cancel: Option<CancellationToken>,
 }
 
 impl DoubleTapMachine {
@@ -93,7 +92,6 @@ impl DoubleTapMachine {
             state: DtState::Idle,
             deadline,
             last_up: None,
-            cancel: None,
         }
     }
 
@@ -113,7 +111,6 @@ impl DoubleTapMachine {
                     }
                     if elapsed <= self.deadline {
                         self.state = DtState::SecondDown;
-                        self.cancel_timer();
                         return true;
                     }
                 }
@@ -129,7 +126,6 @@ impl DoubleTapMachine {
             DtState::FirstDown => {
                 self.state = DtState::FirstUp;
                 self.last_up = Some(Instant::now());
-                self.arm_timer();
                 false
             }
             DtState::SecondDown => {
@@ -140,26 +136,7 @@ impl DoubleTapMachine {
         }
     }
 
-    fn arm_timer(&mut self) {
-        let token = CancellationToken::new();
-        self.cancel = Some(token.clone());
-        let deadline = self.deadline;
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = tokio::time::sleep(deadline) => {}
-                _ = token.cancelled() => {}
-            }
-        });
-    }
-
-    fn cancel_timer(&mut self) {
-        if let Some(t) = self.cancel.take() {
-            t.cancel();
-        }
-    }
-
     pub fn reset(&mut self) {
-        self.cancel_timer();
         self.state = DtState::Idle;
         self.last_up = None;
     }

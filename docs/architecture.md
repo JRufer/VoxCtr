@@ -40,13 +40,15 @@ VoxCtrl/
     ├── voxctrl-config/     # AppConfig struct, TOML/JSON persistence
     ├── voxctrl-audio/      # Microphone capture, resampling, VU meter
     ├── voxctrl-hotkeys/    # Global key listener (evdev / Win32)
-    ├── voxctrl-inference/  # Whisper transcription + post-processing
+    ├── voxctrl-inference/  # whisper.cpp/Moonshine transcription + post-processing
     ├── voxctrl-routing/    # OutputTarget + HotkeyBinding data models, router
     ├── voxctrl-inject/     # Text injection via wtype/xdotool/clipboard
-    ├── voxctrl-tts/        # Piper/Espeak TTS engine
+    ├── voxctrl-tts/        # Piper/Espeak/Pocket-TTS TTS engine
     ├── voxctrl-mcp/        # MCP JSON-RPC server (Unix socket / named pipe)
     ├── voxctrl-dbus/       # DBus service (Linux session bus)
-    └── voxctrl-llm/        # OpenAI-compatible LLM HTTP client
+    ├── voxctrl-llm/        # OpenAI-compatible LLM HTTP client
+    └── voxctrl-text/       # Shared snippet expansion + fuzzy vocab correction
+                             #   (used by both voxctrl-inference and voxctrl-tts)
 ```
 
 ---
