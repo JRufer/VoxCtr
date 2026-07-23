@@ -17,6 +17,7 @@ VoxCtrl is a high-performance, privacy-first voice-to-text dictation application
 | [Text-to-Speech](./tts.md) | TTS engines, voice packs, playback |
 | [Integrations](./integrations.md) | MCP server, DBus service, OpenAI-compatible LLM API, webhooks |
 | [UI & Windows](./ui.md) | Svelte frontend, overlay, history viewer, settings |
+| [Cross-Platform UI Testing](./cross_platform_ui_testing.md) | Testing strategy for non-KDE environments (Hyprland, Windows) and fix workflow |
 | [API Reference](./api.md) | Tauri IPC commands and frontend events |
 | [Configuration](./configuration.md) | All config files, schemas, and options |
 | [Installation & Setup](./installation.md) | Dependencies, building, running |
