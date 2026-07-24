@@ -102,6 +102,18 @@ jobs:
             artifact_label: windows-x86_64
             cuda: false
 
+          # ── macOS (Apple Silicon) ──────────────────────────────────────────
+          # Native arm64 build; whisper.cpp links Metal/Accelerate automatically.
+          # Moonshine is intentionally left off this row for now — validate it
+          # via the standalone "macOS Build (preview)" workflow first, then add
+          # `--features moonshine` here. fail-fast:false keeps the other
+          # platforms publishing even if this variant needs iteration.
+          - name: macos-arm64
+            os: macos-14
+            features: ""
+            artifact_label: macos-arm64
+            cuda: false
+
     steps:
       - uses: actions/checkout@v4
 
@@ -228,6 +240,15 @@ jobs:
         if: runner.os == 'Windows'
         run: npx tauri build --bundles nsis -- --features moonshine
 
+      # ── Tauri build (macOS) ─────────────────────────────────────────────────
+      # Native .app + .dmg on the Apple-Silicon runner. No system deps needed —
+      # whisper.cpp links Metal/Accelerate via the runner's Xcode toolchain.
+      # Builds unsigned/un-notarized for now; add signing env + entitlements once
+      # a Developer ID certificate is available in repo secrets.
+      - name: Build .app + .dmg (macOS)
+        if: runner.os == 'macOS'
+        run: npx tauri build --bundles app,dmg
+
       # ── Collect and rename Linux artifacts ──────────────────────────────────
       # Search the whole workspace so the path is correct regardless of whether
       # cargo uses a workspace-level or package-level target directory.
@@ -271,6 +292,25 @@ jobs:
               Select-Object -ExpandProperty FullName
             exit 1
           }
+
+      # ── Collect and rename macOS artifacts ──────────────────────────────────
+      - name: Collect macOS artifacts
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          found=0
+          while IFS= read -r f; do
+            cp "$f" "upload/VoxCtrl-${{ matrix.artifact_label }}.dmg"
+            echo "Collected: upload/VoxCtrl-${{ matrix.artifact_label }}.dmg ($(du -sh "$f" | cut -f1))"
+            found=1
+            break
+          done < <(find . -path '*/bundle/dmg/*.dmg' ! -path '*/.cargo/*')
+          if [ "$found" -eq 0 ]; then
+            echo "::error::No .dmg found under bundle/dmg"
+            exit 1
+          fi
+          ls -lh upload/
 
       # ── Upload to Actions (picked up by publish job) ─────────────────────────
       - uses: actions/upload-artifact@v4
@@ -332,6 +372,7 @@ jobs:
             | Linux | `-linux-x86_64.AppImage` | None |
             | Linux (GPU) | `-linux-x86_64-vulkan.AppImage` | Any Vulkan GPU |
             | Windows | `-windows-x86_64-setup.exe` | None |
+            | macOS (Apple Silicon) | `-macos-arm64.dmg` | None (uses Metal) |
 
             **The Vulkan AppImage** is a portable GPU build: it accelerates any
             NVIDIA/AMD/Intel GPU via the host Vulkan driver, and falls back to
@@ -347,3 +388,14 @@ jobs:
             # Launch the application
             ./VoxCtrl_*-linux-x86_64*.AppImage
             ```
+
+            ### macOS (Apple Silicon) — first run
+            The macOS build is currently **unsigned / un-notarized**, so
+            Gatekeeper blocks it on first launch. Open the `.dmg`, drag VoxCtrl
+            to Applications, then either right-click the app → **Open**, or run:
+            ```bash
+            xattr -dr com.apple.quarantine /Applications/VoxCtrl.app
+            ```
+            On first use, grant VoxCtrl **Microphone**, **Accessibility**, and
+            **Input Monitoring** under System Settings → Privacy & Security so
+            dictation and global hotkeys work.

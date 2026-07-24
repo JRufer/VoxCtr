@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Merged into the generated macOS Info.plist at bundle time (Tauri reads
+    src-tauri/Info.plist). These usage-description strings are mandatory on
+    macOS: the OS terminates the app the first time it touches the microphone
+    or drives another app via Apple Events if the corresponding key is absent.
+  -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>VoxCtrl records from your microphone to transcribe speech to text on-device. Audio never leaves your machine.</string>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>VoxCtrl sends a paste keystroke to the focused app to insert your dictated text.</string>
+</dict>
+</plist>

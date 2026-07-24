@@ -18,7 +18,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest]
+        # macos-14 = Apple Silicon (arm64). It runs the full-workspace check
+        # (same branch as Linux, since runner.os != 'Windows'), so macOS-specific
+        # platform code and the whisper.cpp/C++ crates are compile-checked here.
+        os: [ubuntu-22.04, windows-latest, macos-14]
 
     steps:
       - uses: actions/checkout@v4

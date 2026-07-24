@@ -10,7 +10,10 @@ pub async fn inject_text(text: &str) -> Result<()> {
     #[cfg(target_os = "windows")]
     return inject_windows(text).await;
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    return inject_macos(text).await;
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     anyhow::bail!("Text injection not supported on this platform");
 }
 
@@ -68,6 +71,35 @@ async fn clipboard_paste(text: &str) -> Result<()> {
         run_cmd("wtype", &["-M", "ctrl", "v", "-m", "ctrl"]).await;
     } else if voxctrl_config::find_in_path("xdotool").is_some() {
         run_cmd("xdotool", &["key", "--clearmodifiers", "ctrl+v"]).await;
+    }
+    Ok(())
+}
+
+// ── macOS ─────────────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+async fn inject_macos(text: &str) -> Result<()> {
+    // Copy to the pasteboard, then synthesize Cmd+V via AppleScript. Requires
+    // the Accessibility permission (System Settings → Privacy & Security).
+    let t = text.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut cb = arboard::Clipboard::new()?;
+        cb.set_text(&t)?;
+        anyhow::Ok(())
+    })
+    .await??;
+
+    let ok = tokio::process::Command::new("osascript")
+        .args([
+            "-e",
+            "tell application \"System Events\" to keystroke \"v\" using command down",
+        ])
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        warn!("osascript paste failed; grant Accessibility permission to VoxCtrl");
     }
     Ok(())
 }

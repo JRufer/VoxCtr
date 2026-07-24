@@ -21,6 +21,7 @@ VoxCtrl is a high-performance, privacy-first voice-to-text dictation application
 | [Configuration](./configuration.md) | All config files, schemas, and options |
 | [Installation & Setup](./installation.md) | Dependencies, building, running |
 | [Development Guide](./development.md) | Dev environment, build system, crate structure |
+| [Building on macOS](./macos_build.md) | macOS (Apple Silicon) build, permissions, signing, CI |
 
 ---
 

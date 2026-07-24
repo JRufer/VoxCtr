@@ -1,0 +1,115 @@
+name: macOS Build (preview)
+
+# Standalone macOS build used to validate the macOS port BEFORE it is merged to
+# master. It intentionally does not touch the release workflow: it just builds
+# the .app/.dmg on an Apple-Silicon runner and uploads them as workflow
+# artifacts you can download and run.
+#
+# How to test the port without merging:
+#   * Push to the `claude/macos-port-build` branch (or any `macos-**` branch) —
+#     this workflow runs automatically on that push.
+#   * Or open a PR targeting `development`/`master` that changes macOS-relevant
+#     files — it runs on the PR.
+#   * Once this file is on the default branch, you can also trigger it manually
+#     from the Actions tab ("Run workflow"), optionally enabling Moonshine.
+#
+# Download the built app from the run's "Artifacts" section. Unsigned builds
+# require a right-click → Open (or `xattr -dr com.apple.quarantine VoxCtrl.app`)
+# the first time, since they are not notarized.
+
+on:
+  push:
+    branches:
+      - "claude/macos-port-build"
+      - "macos-**"
+  pull_request:
+    branches: [development, master]
+    paths:
+      - ".github/workflows/macos-build.yml"
+      - "src-tauri/**"
+      - "crates/**"
+      - "src/**"
+      - "scripts/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+    inputs:
+      moonshine:
+        description: "Also bundle the Moonshine ONNX backend (fetches ONNX Runtime at build time)"
+        type: boolean
+        default: false
+
+env:
+  CARGO_HTTP_MULTIPLEXING: false
+  CARGO_HTTP_HTTP2: false
+
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    name: Build macOS .app + .dmg (Apple Silicon)
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm install
+
+      # whisper.cpp links Metal/Accelerate automatically on macOS — no extra
+      # system dependencies are needed beyond the Xcode toolchain that ships on
+      # the runner. beforeBuildCommand (in tauri.conf.json) builds the overlay
+      # sidecar, stages it for the host triple, and runs the Vite build.
+      - name: Build .app + .dmg (macOS)
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.moonshine }}" = "true" ]; then
+            echo "Building with Moonshine backend"
+            npx tauri build --bundles app,dmg -- --features moonshine
+          else
+            echo "Building CPU/Metal build (no Moonshine)"
+            npx tauri build --bundles app,dmg
+          fi
+
+      - name: Collect macOS artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+
+          # DMG(s)
+          find . -path '*/bundle/dmg/*.dmg' ! -path '*/.cargo/*' -exec cp {} upload/ \; || true
+
+          # .app bundle — zip it so the artifact preserves the bundle structure
+          appdir=$(find . -path '*/bundle/macos/*.app' -type d ! -path '*/.cargo/*' | head -1)
+          if [ -n "${appdir:-}" ]; then
+            ( cd "$(dirname "$appdir")" && ditto -c -k --sequesterRsrc --keepParent \
+              "$(basename "$appdir")" "$OLDPWD/upload/$(basename "${appdir%.app}")-macos-arm64.app.zip" )
+          fi
+
+          echo "Collected:"
+          ls -lh upload/
+          if [ -z "$(ls -A upload/)" ]; then
+            echo "::error::No macOS bundle artifacts were produced"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxctrl-macos-arm64
+          path: upload/*
+          if-no-files-found: error
+          retention-days: 7
