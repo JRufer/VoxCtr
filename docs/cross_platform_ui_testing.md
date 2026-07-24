@@ -176,3 +176,158 @@ validating a platform and check off each row.
    broke another; assume the same risk applies to any change here.
 5. **Update this doc's checklist** if a new class of bug is found, so the
    next release's manual pass catches it too.
+
+---
+
+## macOS Port & Build
+
+Porting to macOS is **feasible but not free** — it is a real port, not just a
+new build target. Much of the stack is already macOS-friendly, but three
+pieces of core functionality have no macOS code path today and will fail (or
+fail to compile) until they're written. Read this before promising a Mac
+build to anyone.
+
+### What already works on macOS (no changes needed)
+
+These dependencies and code paths are macOS-native or already have a macOS
+branch:
+
+- **Whisper inference** (`whisper-rs`) — builds with Apple **Metal**
+  acceleration by default on macOS (or CPU).
+- **Audio capture** (`cpal`) — uses CoreAudio.
+- **Clipboard** (`arboard`) — native macOS support.
+- **WebView UI** (Settings/History) — Tauri uses `WKWebView` on macOS.
+- **Tray icon** — Tauri's `tray-icon` renders in the macOS menu bar.
+- **Notifications** — `voxctrl-inject/src/lib.rs:114` already gates
+  `notify-rust` with `#[cfg(any(target_os = "linux", target_os = "macos"))]`.
+- **Overlay window** — the winit backend has a
+  `#[cfg(not(any(windows, linux)))]` fallback (`overlay.rs:1465`), so it
+  compiles on macOS; the always-on-top HUD will need the same real-device
+  testing as Hyprland (macOS `WindowLevel` and Spaces/full-screen behavior
+  differ from both X11 and Wayland).
+- **App icon** — `src-tauri/icons/icon.icns` already exists.
+
+### What must be written before a Mac build is usable
+
+1. **Text injection** (`voxctrl-inject/src/lib.rs`). The current code
+   `bail!`s on any non-Linux/Windows OS (`lib.rs:13-14`). macOS needs its own
+   `#[cfg(target_os = "macos")]` path — the pragmatic approach mirrors
+   Windows: write to the clipboard via `arboard`, then synthesize **Cmd+V**
+   with a `CGEvent` (or via the `enigo` crate). Requires the **Accessibility**
+   TCC permission (see below).
+2. **Global hotkeys** (`voxctrl-hotkeys`). Only `linux` (evdev) and `windows`
+   (rdev) branches exist (`lib.rs:33-41`); macOS currently falls through to a
+   "not supported" warning. `rdev` (already a dependency for Windows) **also
+   supports macOS** via `CGEventTap`, so the cleanest first cut is to widen
+   the Windows branch to `#[cfg(any(target_os = "windows", target_os = "macos"))]`
+   and reuse `windows.rs`'s rdev logic. Requires the **Input Monitoring** and
+   **Accessibility** TCC permissions.
+3. **MCP server socket** (`voxctrl-mcp/src/lib.rs:84-149`). The Unix-socket
+   path is gated `#[cfg(target_os = "linux")]` and the Windows path uses named
+   pipes — macOS matches **neither**, so the crate won't compile on macOS as
+   written. macOS is Unix, so the fix is small: change the Unix-socket gate
+   from `target_os = "linux"` to `unix` (or `any(linux, macos)`) so macOS
+   reuses the Unix-domain-socket implementation.
+4. **DBus target** (`voxctrl-dbus`, and the `dbus` delivery type in routing).
+   Already stubbed out on non-Linux (`lib.rs:141`), so it compiles — but the
+   `dbus` output target simply won't function on macOS. That's acceptable
+   (document it as Linux-only); don't try to emulate it.
+
+### macOS permissions (TCC)
+
+macOS gates the exact capabilities VoxCtrl relies on behind per-app user
+consent (TCC). Distribution builds need usage-description strings in the
+app's `Info.plist` (Tauri injects these via `bundle.macOS` config) and users
+must grant, under **System Settings → Privacy & Security**:
+
+- **Microphone** — recording (`NSMicrophoneUsageDescription`).
+- **Accessibility** — synthesizing Cmd+V keystrokes for injection.
+- **Input Monitoring** — the global hotkey event tap.
+
+Unsigned/un-notarized builds make this worse: macOS **Gatekeeper** will
+refuse to open the app normally, and TCC permission grants are keyed to the
+app's code signature, so an unsigned app can have its granted permissions
+silently invalidated on rebuild. For anything beyond local dev, plan on an
+Apple **Developer ID** certificate ($99/yr) plus **notarization**.
+
+### Building on GitHub Actions
+
+GitHub-hosted macOS runners make a Mac build possible **without owning a
+Mac** for the compile step (you'll still want real hardware for the UI
+testing in the matrix above). Runner images:
+
+- `macos-14` → **Apple Silicon (arm64)** — the primary target for modern
+  Macs.
+- `macos-13` → **Intel (x86_64)** — for older Macs, if you want to ship both.
+
+Unlike the Linux job, macOS needs **no `apt` system dependencies** — the
+SDK, Metal, and CoreAudio ship with the runner. A minimal job to add to the
+`build` matrix in `.github/workflows/release.yml`:
+
+```yaml
+# ── macOS (Apple Silicon) ────────────────────────────────────────────
+- name: macos-arm64
+  os: macos-14
+  features: ""
+  artifact_label: macos-arm64
+  target: aarch64-apple-darwin
+
+# ── macOS (Intel), optional ──────────────────────────────────────────
+- name: macos-x86_64
+  os: macos-13
+  features: ""
+  artifact_label: macos-x86_64
+  target: x86_64-apple-darwin
+```
+
+with matching steps (guarded by `runner.os == 'macOS'`):
+
+```yaml
+- name: Add Rust target (macOS)
+  if: runner.os == 'macOS'
+  run: rustup target add ${{ matrix.target }}
+
+- name: Build .app + .dmg (macOS)
+  if: runner.os == 'macOS'
+  run: npx tauri build --target ${{ matrix.target }} -- --features moonshine
+
+- name: Collect macOS artifacts
+  if: runner.os == 'macOS'
+  run: |
+    mkdir -p upload
+    find . -path '*/bundle/dmg/*.dmg' -exec cp {} \
+      "upload/VoxCtrl-${{ matrix.artifact_label }}.dmg" \;
+    ls -lh upload/
+```
+
+Notes for whoever wires this up:
+
+- **Order of operations matters.** Do the code work (injection, hotkeys, the
+  MCP `#[cfg(unix)]` fix) *first* and get it compiling locally or via a
+  throwaway `cargo check` job on a macOS runner. Adding the release-matrix
+  rows before the crate compiles on macOS just turns the release build red.
+- **Prove it compiles before you bundle it.** Mirror the existing CI pattern:
+  add `macos-14` to the `cargo-check` matrix in `.github/workflows/ci.yml`
+  (it currently only checks `ubuntu-22.04` and `windows-latest`) so macOS
+  build breakage is caught on every PR, not only at release time.
+- **Signing/notarization in CI** needs the Developer ID cert (base64) and an
+  App Store Connect API key stored as repo secrets, consumed via Tauri's
+  `APPLE_CERTIFICATE`, `APPLE_SIGNING_IDENTITY`, and notarization env vars.
+  Ship **unsigned** first to validate the port, then layer signing on once
+  the build itself is green. Don't put certificates or keys in the workflow
+  file — repo secrets only.
+- **Version-sync gate.** The release workflow already fails fast if
+  `package.json` / `tauri.conf.json` / `Cargo.toml` versions disagree; adding
+  macOS rows doesn't change that, but remember to update the "Downloads"
+  table in the `publish` job so the `.dmg` files are listed for users.
+
+### Where macOS fits the testing matrix
+
+Treat macOS as a **second first-class desktop target alongside Windows**, and
+run the same manual QA checklist above against it — with extra attention to:
+the overlay's always-on-top behavior across Spaces and full-screen apps; the
+TCC permission prompts appearing (and the app degrading gracefully if the
+user denies them); and the injection path working in Terminal, a browser, and
+a native Cocoa app. A `macos-14` runner is enough to catch **compile and
+bundle** regressions in CI; **behavioral** UI testing still needs a real Mac,
+exactly as Hyprland needs a real (or virtualized) wlroots session.
