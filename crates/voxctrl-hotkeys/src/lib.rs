@@ -2,8 +2,10 @@ pub mod gestures;
 
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(target_os = "windows")]
-mod windows;
+// rdev-based listener shared by Windows and macOS (both lack a raw evdev
+// equivalent; rdev taps the OS input event stream on each).
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+mod rdev_backend;
 
 use tokio::sync::mpsc;
 use voxctrl_routing::HotkeyBinding;
@@ -34,11 +36,11 @@ pub fn start_listener(
     {
         linux::start(bindings, tx, device_path, reloader_rx);
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     {
-        windows::start(bindings, tx, reloader_rx);
+        rdev_backend::start(bindings, tx, reloader_rx);
     }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
         tracing::warn!("Hotkey listener not supported on this platform");
     }

@@ -144,6 +144,41 @@ impl DeliveryTarget for InjectTarget {
             };
         }
 
+        #[cfg(target_os = "macos")]
+        {
+            // macOS has no direct "type this string" primitive comparable to
+            // wtype/xdotool without extra native APIs. Mirror the clipboard-paste
+            // fallback: put the text on the pasteboard, then synthesize Cmd+V via
+            // AppleScript (System Events). This requires the app to have been
+            // granted the Accessibility permission in
+            // System Settings → Privacy & Security → Accessibility.
+            let p = payload.clone();
+            let set = tokio::task::spawn_blocking(move || {
+                arboard::Clipboard::new()
+                    .context("open clipboard")?
+                    .set_text(&p)
+                    .context("set text")
+            })
+            .await;
+            if !matches!(set, Ok(Ok(()))) {
+                return DeliveryResult::err("Failed to set clipboard for macOS paste injection");
+            }
+            let ok = tokio::process::Command::new("osascript")
+                .args(["-e", "tell application \"System Events\" to keystroke \"v\" using command down"])
+                .status()
+                .await
+                .map(|s| s.success())
+                .unwrap_or(false);
+            return if ok {
+                DeliveryResult::ok(payload)
+            } else {
+                DeliveryResult::err(
+                    "osascript paste failed — grant VoxCtrl the Accessibility permission \
+                     in System Settings → Privacy & Security → Accessibility",
+                )
+            };
+        }
+
         #[allow(unreachable_code)]
         DeliveryResult::err("Text injection not supported on this platform")
     }
@@ -164,6 +199,11 @@ impl DeliveryTarget for InjectTarget {
         }
         #[cfg(target_os = "windows")]
         return TestResult { reachable: true, detail: "PowerShell SendKeys available".into() };
+        #[cfg(target_os = "macos")]
+        return TestResult {
+            reachable: which("osascript"),
+            detail: "macOS paste via osascript (Accessibility permission required)".into(),
+        };
         #[allow(unreachable_code)]
         TestResult { reachable: false, detail: "Platform not supported".into() }
     }
@@ -624,7 +664,7 @@ impl DeliveryTarget for McpTarget {
         let tool = self.0.mcp_tool.as_deref().unwrap_or("speak_text");
         let args = build_json_payload(&self.0.mcp_args, text);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         let s = {
             let path = self.0.mcp_path.as_deref().unwrap_or("/tmp/voxctrl-mcp.sock");
             match UnixStream::connect(path).await {
@@ -643,7 +683,7 @@ impl DeliveryTarget for McpTarget {
             }
         };
 
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(unix, target_os = "windows")))]
         return DeliveryResult::err("MCP target not supported on this platform");
 
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -741,7 +781,7 @@ impl DeliveryTarget for McpTarget {
     }
 
     async fn test(&self) -> TestResult {
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         {
             let path = self.0.mcp_path.as_deref().unwrap_or("/tmp/voxctrl-mcp.sock");
             match UnixStream::connect(path).await {
@@ -758,7 +798,7 @@ impl DeliveryTarget for McpTarget {
                 Err(e) => TestResult { reachable: false, detail: e.to_string() },
             }
         }
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(unix, target_os = "windows")))]
         TestResult { reachable: false, detail: "Platform not supported".into() }
     }
 }

@@ -79,6 +79,9 @@
       "webviewInstallMode": {
         "type": "embedBootstrapper"
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
     }
   }
 }

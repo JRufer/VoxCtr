@@ -16,7 +16,7 @@ pub fn start(bindings: Vec<HotkeyBinding>, tx: GestureSender, rx_reload: crate::
 }
 
 fn run(bindings: Vec<HotkeyBinding>, tx: GestureSender, rx_reload: crate::ReloaderReceiver) {
-    info!("rdev hotkey listener active (Windows)");
+    info!("rdev hotkey listener active");
 
     let mut states: Vec<BindingState> =
         bindings.into_iter().map(BindingState::new).collect();

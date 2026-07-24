@@ -1,4 +1,4 @@
-//! JSON-RPC 2.0 MCP server over a Unix domain socket (Linux) or a named pipe (Windows).
+//! JSON-RPC 2.0 MCP server over a Unix domain socket (Linux/macOS) or a named pipe (Windows).
 //!
 //! Exposed tools:
 //!   - transcribe_voice(timeout_seconds) → {text}
@@ -81,18 +81,24 @@ pub trait McpCallbacks: Send + Sync + 'static {
 // ── Server ────────────────────────────────────────────────────────────────────
 
 pub async fn run_server<C: McpCallbacks>(callbacks: Arc<C>) -> Result<()> {
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     run_unix_server(callbacks).await?;
 
     #[cfg(target_os = "windows")]
     run_named_pipe_server(callbacks).await?;
 
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        let _ = callbacks;
+        warn!("MCP server not supported on this platform");
+    }
+
     Ok(())
 }
 
-// ── Unix socket server (Linux) ────────────────────────────────────────────────
+// ── Unix socket server (Linux/macOS) ──────────────────────────────────────────
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 async fn run_unix_server<C: McpCallbacks>(callbacks: Arc<C>) -> Result<()> {
     use tokio::net::UnixListener;
 
