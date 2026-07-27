@@ -82,6 +82,13 @@ Full schema with defaults:
       "prewarm": false,
       "hf_token": null,
       "voice_dir": ""
+    },
+    "inflect_micro": {
+      "model_dir": "",
+      "seed": 0,
+      "noise_scale": 0.667,
+      "noise_scale_w": 0.8,
+      "prewarm": false
     }
   },
   "mcp": {
@@ -222,7 +229,7 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Enable TTS subsystem |
-| `engine` | string | `"piper"` | Synthesis engine: `"piper"`, `"pocket_tts"`, or `"espeak"` |
+| `engine` | string | `"piper"` | Synthesis engine: `"piper"`, `"pocket_tts"`, `"inflect_micro"`, or `"espeak"` |
 | `voice` | string | `"en-us-lessac-medium"` | Active Piper voice name (hyphen-delimited, e.g. `"en-us-ryan-high"`) |
 | `voice_dir` | string | `""` | Directory for Piper voice files; empty = `~/.local/share/voxctrl/piper-voices/`. Supports `~` expansion. |
 | `stop_key` | string[] | `["KEY_ESCAPE"]` | Keys that cancel current TTS playback |
@@ -230,6 +237,7 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 | `speed` | float | `1.0` | Speech synthesis speed multiplier (0.5 – 2.0); not used by Pocket-TTS |
 | `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Piper |
 | `pocket_tts` | object | | Pocket-TTS engine sub-configuration (see below) |
+| `inflect_micro` | object | | Inflect-Micro-v2 engine sub-configuration (see below) |
 
 **`pocket_tts` sub-object:**
 
@@ -244,6 +252,21 @@ license on HuggingFace and supply a personal access token via `hf_token`.
 | `prewarm` | bool | `false` | Pre-warm model on startup so first speech is instantaneous |
 | `hf_token` | string or null | `null` | HuggingFace access token used to download the gated model weights |
 | `voice_dir` | string | `""` | Directory scanned for custom `.wav` voice clips; empty = `~/.local/share/voxctrl/pocket-tts-voices/`. Drop a `<id>.wav` file in to add it to the voice list — naming it after a built-in voice (e.g. `alba.wav`) overrides that voice's clip. Supports `~` expansion. |
+
+**`inflect_micro` sub-object:**
+
+[Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2) is a ~9.4M-parameter VITS-family
+ONNX model with a single fixed English voice at 24 kHz, so it has no voice setting. Requires the
+`inflect-micro` cargo feature at build time and `espeak-ng` at runtime; speaking rate comes from the
+shared `tts.speed`. See [tts.md](tts.md) for the full engine notes.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `model_dir` | string | `""` | Directory holding the ONNX graphs and phoneme vocabulary; empty = `~/.local/share/voxctrl/models/inflect-micro/`. Point at an existing copy to skip downloading. Supports `~` expansion. |
+| `seed` | int | `0` | Sampling seed. The model is deterministic for a fixed seed, so repeated synthesis of the same text is identical. |
+| `noise_scale` | float | `0.667` | VITS latent sampling temperature — higher is more varied, lower is flatter |
+| `noise_scale_w` | float | `0.8` | VITS stochastic duration-predictor noise, controlling rhythm variability |
+| `prewarm` | bool | `false` | Load the ONNX graphs on startup so the first synthesis has no load delay |
 
 
 ### `mcp` section

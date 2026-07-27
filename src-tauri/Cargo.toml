@@ -69,6 +69,11 @@ vulkan = ["voxctrl-inference/vulkan"]
 # cuda/vulkan: it pulls in ONNX Runtime (fetched at build time). Without it, a
 # "moonshine" backend selection transparently falls back to whisper-cpp.
 moonshine = ["voxctrl-inference/moonshine"]
+# Compiles the Inflect-Micro-v2 ONNX text-to-speech engine into the app. Opt-in
+# for the same reason as moonshine: it pulls in ONNX Runtime. Without it,
+# selecting the engine reports that the build lacks it instead of failing
+# obscurely. Also needs `espeak-ng` installed at runtime for phonemization.
+inflect-micro = ["voxctrl-tts/inflect-micro"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -21,3 +21,15 @@ crossbeam-channel = { workspace = true }
 rodio = { workspace = true }
 pocket-tts = { workspace = true }
 hf-hub = { workspace = true }
+ort = { workspace = true, optional = true }
+
+[features]
+default = []
+# Inflect-Micro-v2 neural TTS via ONNX Runtime. Uses the workspace `ort`, which
+# is configured with `load-dynamic`: ONNX Runtime is resolved at runtime rather
+# than downloaded at build time, so this feature builds offline. The eSpeak-NG
+# phoneme frontend is a runtime dependency and is checked for before synthesis.
+inflect-micro = ["dep:ort"]
+
+[dev-dependencies]
+tempfile = { workspace = true }

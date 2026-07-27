@@ -287,6 +287,7 @@ pub enum TtsEngine {
     Piper,
     Espeak,
     PocketTts,
+    InflectMicro,
 }
 
 impl Default for TtsEngine {
@@ -332,6 +333,57 @@ impl Default for PocketTtsConfig {
     }
 }
 
+fn default_inflect_micro_seed() -> u64 {
+    0
+}
+
+fn default_inflect_micro_noise_scale() -> f32 {
+    0.667
+}
+
+fn default_inflect_micro_noise_scale_w() -> f32 {
+    0.8
+}
+
+/// Inflect-Micro-v2 (<https://huggingface.co/owensong/Inflect-Micro-v2>) — a
+/// ~9.4M-parameter VITS-family model with a single fixed English voice, so
+/// unlike Piper and Pocket-TTS there is no voice to pick. Speaking rate comes
+/// from the shared [`TtsConfig::speed`]; what remains model-specific is the
+/// sampling seed and the two VITS noise scales.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InflectMicroConfig {
+    /// Directory holding the ONNX graphs and phoneme vocabulary. Empty = platform
+    /// default (`~/.local/share/voxctrl/models/inflect-micro/`).
+    #[serde(default)]
+    pub model_dir: String,
+    /// Seed for the stochastic duration predictor and latent sampling. The model
+    /// is deterministic for a fixed seed, so a stable value keeps repeated
+    /// synthesis of the same text identical.
+    #[serde(default = "default_inflect_micro_seed")]
+    pub seed: u64,
+    /// VITS latent sampling temperature. Higher is more varied, lower is flatter.
+    #[serde(default = "default_inflect_micro_noise_scale")]
+    pub noise_scale: f32,
+    /// VITS stochastic duration-predictor noise. Controls rhythm variability.
+    #[serde(default = "default_inflect_micro_noise_scale_w")]
+    pub noise_scale_w: f32,
+    /// Pre-warm the ONNX sessions on startup so the first synthesis is instant.
+    #[serde(default)]
+    pub prewarm: bool,
+}
+
+impl Default for InflectMicroConfig {
+    fn default() -> Self {
+        Self {
+            model_dir: String::new(),
+            seed: default_inflect_micro_seed(),
+            noise_scale: default_inflect_micro_noise_scale(),
+            noise_scale_w: default_inflect_micro_noise_scale_w(),
+            prewarm: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TtsConfig {
     pub enabled: bool,
@@ -352,6 +404,8 @@ pub struct TtsConfig {
     #[serde(default)]
     pub pocket_tts: PocketTtsConfig,
     #[serde(default)]
+    pub inflect_micro: InflectMicroConfig,
+    #[serde(default)]
     pub snippets: std::collections::HashMap<String, String>,
 }
 
@@ -371,6 +425,7 @@ impl Default for TtsConfig {
             speed: 1.0,
             gpu: false,
             pocket_tts: PocketTtsConfig::default(),
+            inflect_micro: InflectMicroConfig::default(),
             snippets: {
                 let mut map = std::collections::HashMap::new();
                 map.insert("VoxCtrl".into(), "Vox Control".into());

@@ -152,6 +152,9 @@
     } else if (cfg.tts.engine === "pocket_tts") {
       engineName = "Pocket-TTS";
       voice = cfg.tts.pocket_tts.voice;
+    } else if (cfg.tts.engine === "inflect_micro") {
+      engineName = "Inflect Micro";
+      voice = null;
     } else if (cfg.tts.engine === "espeak") {
       engineName = "eSpeak-NG";
       voice = null;
@@ -184,6 +187,9 @@
     }
     if (cfg.tts.engine === "pocket_tts") {
       return pocketTtsChecking || pocketTtsDownloading || !pocketTtsReady;
+    }
+    if (cfg.tts.engine === "inflect_micro") {
+      return inflectChecking || inflectDownloading || !inflectReady || !inflectAvailable;
     }
     return false;
   }
@@ -242,8 +248,82 @@
   const engineOptions = [
     { value: "pocket_tts", label: "Pocket-TTS (neural, voice cloning)" },
     { value: "piper", label: "Piper (neural, high quality)" },
+    { value: "inflect_micro", label: "Inflect Micro (neural, 38 MB)" },
     { value: "espeak", label: "eSpeak-NG (lightweight)" }
   ];
+
+  // ── Inflect-Micro-v2 ───────────────────────────────────────────────────────
+  //
+  // A fixed-voice model, so there is no voice picker here — the knobs are the
+  // sampling seed and the two VITS noise scales. `inflectAvailable` reports
+  // whether the app was built with the `inflect-micro` feature; without it the
+  // engine can be selected but never synthesizes, so the UI says so up front.
+
+  let inflectAvailable = $state(true);
+  let inflectReady = $state(false);
+  let inflectChecking = $state(false);
+  let inflectDownloading = $state(false);
+  let inflectSignature = $state<string | null>(null);
+  let inflectInspecting = $state(false);
+
+  async function checkInflectAvailable() {
+    try {
+      inflectAvailable = await invoke<boolean>("inflect_micro_available");
+    } catch (e) {
+      console.error("inflect_micro_available:", e);
+      inflectAvailable = false;
+    }
+  }
+
+  async function checkInflectReady() {
+    inflectChecking = true;
+    try {
+      inflectReady = await invoke<boolean>("check_inflect_micro_downloaded", {
+        modelDir: cfg.tts.inflect_micro.model_dir,
+      });
+    } catch (e) {
+      console.error("check_inflect_micro_downloaded:", e);
+      inflectReady = false;
+    } finally {
+      inflectChecking = false;
+    }
+  }
+
+  async function downloadInflect() {
+    if (inflectDownloading) return;
+    inflectDownloading = true;
+    try {
+      await invoke("download_inflect_micro", {
+        modelDir: cfg.tts.inflect_micro.model_dir,
+      });
+      inflectReady = true;
+    } catch (e) {
+      alert(`Failed to download Inflect-Micro-v2: ${e}`);
+    } finally {
+      inflectDownloading = false;
+    }
+  }
+
+  // Diagnostic: report the tensor names the downloaded export actually declares.
+  // Useful when synthesis fails because the graph's naming doesn't match what
+  // the Rust side binds against.
+  async function inspectInflect() {
+    if (inflectInspecting) return;
+    inflectInspecting = true;
+    inflectSignature = null;
+    try {
+      const sig = await invoke<unknown>("inflect_micro_inspect", {
+        modelDir: cfg.tts.inflect_micro.model_dir,
+      });
+      inflectSignature = JSON.stringify(sig, null, 2);
+    } catch (e) {
+      inflectSignature = `${e}`;
+    } finally {
+      inflectInspecting = false;
+    }
+  }
+
+  function onInflectSettingChanged() { markDirty(); }
 
   let pocketTtsReady = $state(false);
   let pocketTtsChecking = $state(false);
@@ -297,6 +377,10 @@
         pocketTtsReady = false;
         await loadPocketTtsVoices();
         await checkPocketTtsReady();
+      } else if (cfg.tts.engine === "inflect_micro") {
+        inflectReady = false;
+        await checkInflectAvailable();
+        await checkInflectReady();
       } else if (cfg.tts.engine === "piper") {
         if (cfg.tts.voice_dir) {
           await validateVoiceDir();
@@ -322,6 +406,11 @@
     if (cfg.tts.engine === "pocket_tts") {
       await loadPocketTtsVoices();
       checkPocketTtsReady();
+    }
+
+    if (cfg.tts.engine === "inflect_micro") {
+      await checkInflectAvailable();
+      checkInflectReady();
     }
 
     unlistenTtsStart = await listen<void>("tts-playback-start", () => {
@@ -655,6 +744,121 @@
       "Narrator (Custom)". Naming a clip after a built-in voice (e.g. <code>alba.wav</code>) replaces
       that voice's reference clip. Default: <code>~/.local/share/voxctrl/pocket-tts-voices/</code>
     </p>
+  </div>
+  {/if}
+
+  {#if cfg.tts.engine === "inflect_micro"}
+  <div class="field-group">
+    <h3>Inflect Micro</h3>
+    <p class="hint" style="margin-top: 0;">
+      A 9.4M-parameter VITS model (38 MB) with a single fixed English voice at 24 kHz, so
+      there is no voice to choose. Needs <code>espeak-ng</code> installed for phonemization.
+    </p>
+
+    {#if !inflectAvailable}
+      <p class="field-error-msg">
+        This build was compiled without the <code>inflect-micro</code> feature, so this engine
+        cannot synthesize. Rebuild with <code>--features inflect-micro</code>, or pick another engine.
+      </p>
+    {/if}
+
+    <div class="voice-status-container">
+      {#if inflectChecking}
+        <span class="status-checking">⏳ Checking local model files...</span>
+      {:else if inflectDownloading}
+        <span class="status-downloading">⏳ Downloading Inflect-Micro-v2 model (~38 MB)...</span>
+      {:else}
+        <div class="status-missing-wrapper">
+          <span class={inflectReady ? "status-downloaded" : "status-missing"}>
+            {inflectReady ? "✔ Model downloaded and ready" : "❌ Model files missing"}
+          </span>
+          <button class="btn-download" onclick={downloadInflect} disabled={inflectReady || inflectDownloading}>
+            {inflectReady ? "Downloaded" : "📥 Download"}
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    <label class="field">
+      <span>Sampling seed</span>
+      <input
+        type="number"
+        min="0"
+        step="1"
+        bind:value={cfg.tts.inflect_micro.seed}
+        onchange={onInflectSettingChanged}
+      />
+    </label>
+    <p class="hint">
+      The model is deterministic for a fixed seed, so the same text always produces identical
+      audio. Change it to resample the prosody.
+    </p>
+
+    <label class="field">
+      <span>Variation (noise scale)</span>
+      <input
+        type="number"
+        min="0"
+        max="1.5"
+        step="0.01"
+        bind:value={cfg.tts.inflect_micro.noise_scale}
+        onchange={onInflectSettingChanged}
+      />
+    </label>
+
+    <label class="field">
+      <span>Rhythm variation (duration noise)</span>
+      <input
+        type="number"
+        min="0"
+        max="1.5"
+        step="0.01"
+        bind:value={cfg.tts.inflect_micro.noise_scale_w}
+        onchange={onInflectSettingChanged}
+      />
+    </label>
+    <p class="hint">
+      Higher values give more expressive but less predictable delivery. Defaults are 0.667 and 0.8.
+    </p>
+
+    <label class="field">
+      <span>Pre-warm on startup</span>
+      <input
+        type="checkbox"
+        bind:checked={cfg.tts.inflect_micro.prewarm}
+        onchange={onInflectSettingChanged}
+      />
+    </label>
+    <p class="hint">
+      Loads the ONNX graphs at launch so the first spoken response has no load delay.
+    </p>
+
+    <div class="field">
+      <span>Model directory (leave blank for default)</span>
+      <input
+        type="text"
+        bind:value={cfg.tts.inflect_micro.model_dir}
+        onchange={onInflectSettingChanged}
+      />
+    </div>
+    <p class="hint">
+      Point this at an existing copy of the model to skip downloading. Default:
+      <code>~/.local/share/voxctrl/models/inflect-micro/</code>
+    </p>
+
+    <div class="field">
+      <span>Model diagnostics</span>
+      <button class="btn-download" onclick={inspectInflect} disabled={!inflectReady || inflectInspecting}>
+        {inflectInspecting ? "Inspecting..." : "🔍 Inspect graphs"}
+      </button>
+    </div>
+    <p class="hint">
+      Reports the tensor names the downloaded export declares. Useful if synthesis fails with a
+      message about an input that could not be mapped.
+    </p>
+    {#if inflectSignature}
+      <pre class="hint" style="white-space: pre-wrap; overflow-x: auto;">{inflectSignature}</pre>
+    {/if}
   </div>
   {/if}
 
