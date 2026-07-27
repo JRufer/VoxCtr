@@ -92,6 +92,19 @@ impl Layout {
     }
 }
 
+/// Where the ordered symbol list lives.
+///
+/// The ONNX export imports it as `text/symbols.py` from its parent package, and
+/// that package is published in the PyTorch repository rather than beside the
+/// graphs — so it is not in the listing the graphs come from and has to be
+/// fetched separately. Ids are positions in this list, so nothing else will do.
+const SYMBOL_LIST_URLS: [&str; 4] = [
+    "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main/text/symbols.py",
+    "https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main/text/symbols.py",
+    "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main/symbols.py",
+    "https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main/symbols.py",
+];
+
 /// Upper bound on an auxiliary file fetched alongside the graphs. The phoneme
 /// table is a few kilobytes; this only exists to stop a stray large asset from
 /// being pulled in by the "fetch every small text file" rule.
@@ -182,6 +195,25 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
         }
     }
 
+    // The symbol list is not published with the graphs, so fetch it separately
+    // when nothing already on disk parses as a table.
+    if phonemes::PhonemeVocab::load(&dir)?.is_none() {
+        let target = dir.join("symbols.py");
+        for url in SYMBOL_LIST_URLS {
+            match download_to(url, &target).await {
+                Ok(()) => {
+                    info!("Downloaded Inflect-Micro-v2 symbol list from {url}");
+                    break;
+                }
+                // Not published at this location; try the next.
+                Err(e) => {
+                    warn!("No symbol list at {url}: {e:#}");
+                    let _ = tokio::fs::remove_file(&target).await;
+                }
+            }
+        }
+    }
+
     if phonemes::PhonemeVocab::load(&dir)?.is_none() {
         let names: Vec<&str> = listing.iter().map(|e| e.name.as_str()).collect();
         anyhow::bail!(
@@ -189,9 +221,10 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
              parse as a phoneme table. The table maps eSpeak IPA to the model's \
              phoneme ids and synthesis cannot be correct without it.\n\
              Files published there: {}\n\
-             This export ships the symbol list inside its reference script rather \
-             than as a standalone file; the scripts are downloaded to {} so the \
-             table can be recovered from them.",
+             Phoneme ids are positions in the ordered `symbols` list from the \
+             model's text frontend (`text/symbols.py`), which is published in the \
+             PyTorch repository rather than with the graphs. Fetching it \
+             automatically failed; download it by hand and drop it in {}.",
             layout.file_url("").trim_end_matches('/'),
             if names.is_empty() { "(none listed)".to_string() } else { names.join(", ") },
             dir.display()

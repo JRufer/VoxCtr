@@ -334,39 +334,113 @@ pub struct Encoded {
 
 /// Parse an ordered symbol list out of a Python source file.
 ///
-/// The export defines its inventory as `symbols = [...]` in `text/symbols.py`
-/// and derives ids by position (`{symbol: index for index, symbol in
-/// enumerate(symbols)}`), so position is the id. This reads that list literal
-/// without executing anything.
+/// The export defines its inventory in `text/symbols.py` the way the tacotron
+/// lineage does — named string constants combined into one list:
+///
+/// ```text
+/// _pad = '_'
+/// _punctuation = ';:,.!?… '
+/// symbols = [_pad] + list(_punctuation) + list(_letters) + list(_letters_ipa)
+/// ```
+///
+/// so this resolves the constants and expands the concatenation. `[name]`
+/// contributes the constant as a single symbol; `list(name)` contributes one
+/// symbol per character. A plain list literal (`symbols = ['a', 'b']`) is also
+/// accepted, since other exports write it that way. Nothing is executed.
 fn parse_python_symbols(raw: &str) -> Result<Vec<String>> {
-    // Find `symbols` bound to a list literal, then take the bracketed body.
-    let start = raw
-        .find("symbols")
-        .and_then(|i| raw[i..].find('[').map(|j| i + j + 1))
-        .context("no `symbols = [...]` list found")?;
-    let end = raw[start..]
-        .find(']')
-        .map(|i| start + i)
-        .context("unterminated symbols list")?;
+    let constants = python_string_constants(raw);
+
+    let expr = raw
+        .lines()
+        .map(str::trim)
+        .find_map(|line| {
+            let rest = line.strip_prefix("symbols")?.trim_start();
+            // Guards against `symbols_other = ...` and `symbols.index(...)`.
+            rest.strip_prefix('=').map(str::trim)
+        })
+        .context("no `symbols = ...` assignment found")?;
 
     let mut out = Vec::new();
-    for token in split_python_list(&raw[start..end]) {
-        out.push(unquote_python_string(&token)?);
+    for term in split_top_level(expr, '+') {
+        expand_symbol_term(&term, &constants, &mut out)
+            .with_context(|| format!("in term {term:?}"))?;
     }
     if out.is_empty() {
-        bail!("`symbols` list is empty");
+        bail!("`symbols` resolved to an empty list");
     }
     Ok(out)
 }
 
-/// Split a list body on commas that sit outside quotes.
-fn split_python_list(body: &str) -> Vec<String> {
+/// Collect every `NAME = "..."` string constant in the file.
+fn python_string_constants(raw: &str) -> HashMap<String, String> {
+    let mut constants = HashMap::new();
+    for line in raw.lines() {
+        let Some((lhs, rhs)) = line.split_once('=') else { continue };
+        let name = lhs.trim();
+        if name.is_empty() || name.contains(char::is_whitespace) {
+            continue;
+        }
+        let rhs = rhs.trim();
+        if !rhs.starts_with('\'') && !rhs.starts_with('"') {
+            continue;
+        }
+        if let Ok(value) = unquote_python_string(rhs) {
+            constants.insert(name.to_string(), value);
+        }
+    }
+    constants
+}
+
+/// Expand one `+`-separated term of the `symbols` expression.
+fn expand_symbol_term(
+    term: &str,
+    constants: &HashMap<String, String>,
+    out: &mut Vec<String>,
+) -> Result<()> {
+    let term = term.trim();
+
+    // `list(X)` — one symbol per character of X.
+    if let Some(inner) = term.strip_prefix("list(").and_then(|t| t.strip_suffix(')')) {
+        let value = resolve_string(inner.trim(), constants)?;
+        out.extend(value.chars().map(|c| c.to_string()));
+        return Ok(());
+    }
+
+    // `[...]` — either a single wrapped constant, or a literal list.
+    if let Some(inner) = term.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+        for item in split_top_level(inner, ',') {
+            out.push(resolve_string(item.trim(), constants)?);
+        }
+        return Ok(());
+    }
+
+    bail!("unsupported term (expected `[...]` or `list(...)`)")
+}
+
+/// Resolve a token that is either a string literal or the name of one.
+fn resolve_string(token: &str, constants: &HashMap<String, String>) -> Result<String> {
+    if token.starts_with('\'') || token.starts_with('"') {
+        return unquote_python_string(token);
+    }
+    constants
+        .get(token)
+        .cloned()
+        .with_context(|| format!("unknown name {token:?}"))
+}
+
+/// Split on `separator` at bracket depth zero and outside quotes.
+///
+/// Quote tracking matters here: the inventory's punctuation constant contains a
+/// `"` inside single quotes, and the IPA constant contains `'` inside double
+/// quotes, so a naive split would tear those strings apart.
+fn split_top_level(text: &str, separator: char) -> Vec<String> {
     let mut items = Vec::new();
     let mut current = String::new();
     let mut quote: Option<char> = None;
+    let mut depth = 0usize;
     let mut escaped = false;
 
-    for c in body.chars() {
+    for c in text.chars() {
         match quote {
             Some(q) => {
                 current.push(c);
@@ -383,14 +457,22 @@ fn split_python_list(body: &str) -> Vec<String> {
                     quote = Some(c);
                     current.push(c);
                 }
-                ',' => {
+                '(' | '[' => {
+                    depth += 1;
+                    current.push(c);
+                }
+                ')' | ']' => {
+                    depth = depth.saturating_sub(1);
+                    current.push(c);
+                }
+                // A comment ends the expression.
+                '#' if depth == 0 => break,
+                c if c == separator && depth == 0 => {
                     if !current.trim().is_empty() {
                         items.push(current.trim().to_string());
                     }
                     current.clear();
                 }
-                // Comments and whitespace between items carry no value.
-                '#' => break,
                 _ => current.push(c),
             },
         }
@@ -570,6 +652,114 @@ mod tests {
         assert_eq!(clauses.len(), 3);
         assert_eq!(clauses[0].terminator, ",");
         assert_eq!(clauses[2].terminator, ".");
+    }
+
+    // ── Python symbol-list parsing ───────────────────────────────────────────
+    //
+    // The export's text/symbols.py builds its inventory from named constants
+    // rather than a literal list, in the tacotron style.
+
+    const TACOTRON_SYMBOLS_PY: &str = r#"
+_pad        = '_'
+_punctuation = ';:,.!?\u00a1\u00bf\u2014\u2026"\u00ab\u00bb\u201c\u201d '
+_letters = 'ABC'
+_letters_ipa = "\u0251\u0250'\u0329'\u1d7b"
+
+# Export all symbols:
+symbols = [_pad] + list(_punctuation) + list(_letters) + list(_letters_ipa)
+
+# Special symbol ids
+SPACE_ID = symbols.index(" ")
+"#;
+
+    #[test]
+    fn test_parse_python_symbols_expands_constant_concatenation() {
+        let symbols = parse_python_symbols(TACOTRON_SYMBOLS_PY).unwrap();
+        assert_eq!(symbols[0], "_", "the pad constant comes first, as one symbol");
+        assert_eq!(symbols[1], ";");
+        // 1 pad + 16 punctuation + 3 letters + 6 ipa (the ipa fixture is
+        // ɑ, ɐ, ', U+0329, ', ᵻ — the quotes are literal characters).
+        assert_eq!(symbols.len(), 1 + 16 + 3 + 6);
+    }
+
+    #[test]
+    fn test_parse_python_symbols_ids_match_position() {
+        let map = map_from_ordered(parse_python_symbols(TACOTRON_SYMBOLS_PY).unwrap());
+        assert_eq!(map.get("_"), Some(&0), "pad is id 0");
+        // The space is the last of the 16 punctuation characters.
+        assert_eq!(map.get(" "), Some(&16), "matches the export's SPACE_ID");
+    }
+
+    #[test]
+    fn test_parse_python_symbols_keeps_quotes_inside_strings() {
+        // _punctuation is single-quoted but contains a double quote, and
+        // _letters_ipa is double-quoted but contains single quotes. A splitter
+        // that ignored quoting would tear both apart.
+        let symbols = parse_python_symbols(TACOTRON_SYMBOLS_PY).unwrap();
+        assert!(symbols.contains(&"\"".to_string()), "kept the double quote");
+        assert!(symbols.contains(&"'".to_string()), "kept the single quotes");
+    }
+
+    #[test]
+    fn test_parse_python_symbols_duplicate_takes_last_id() {
+        // The real inventory lists `'` twice; Python's dict comprehension keeps
+        // the later index, and so must this.
+        let symbols = parse_python_symbols(TACOTRON_SYMBOLS_PY).unwrap();
+        let positions: Vec<usize> = symbols
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.as_str() == "'")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(positions.len(), 2, "the fixture has the duplicate");
+        let map = map_from_ordered(symbols);
+        assert_eq!(map.get("'"), Some(&(*positions.last().unwrap() as i64)));
+    }
+
+    #[test]
+    fn test_parse_python_symbols_accepts_a_plain_list_literal() {
+        let symbols = parse_python_symbols("symbols = ['a', 'b', 'c']").unwrap();
+        assert_eq!(symbols, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_parse_python_symbols_ignores_the_symbols_index_line() {
+        // `SPACE_ID = symbols.index(" ")` must not be mistaken for the assignment.
+        let symbols = parse_python_symbols("symbols = ['a']\nSPACE_ID = symbols.index(\" \")\n").unwrap();
+        assert_eq!(symbols, vec!["a"]);
+    }
+
+    #[test]
+    fn test_parse_python_symbols_rejects_missing_assignment() {
+        assert!(parse_python_symbols("_pad = '_'\n").is_err());
+    }
+
+    #[test]
+    fn test_parse_python_symbols_rejects_unknown_name() {
+        assert!(parse_python_symbols("symbols = list(_never_defined)").is_err());
+    }
+
+    #[test]
+    fn test_split_top_level_respects_quotes_and_depth() {
+        let parts = split_top_level("[_a] + list(_b) + list(_c)", '+');
+        assert_eq!(parts, vec!["[_a]", "list(_b)", "list(_c)"]);
+        // A separator inside quotes is not a separator.
+        assert_eq!(split_top_level("'a+b' + _c", '+'), vec!["'a+b'", "_c"]);
+    }
+
+    #[test]
+    fn test_unquote_python_string_resolves_unicode_escapes() {
+        assert_eq!(unquote_python_string(r"'\u0251'").unwrap(), "ɑ");
+        assert_eq!(unquote_python_string("\"a'b\"").unwrap(), "a'b");
+    }
+
+    #[test]
+    fn test_vocab_load_reads_symbols_py() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("symbols.py"), TACOTRON_SYMBOLS_PY).unwrap();
+        let vocab = PhonemeVocab::load(dir.path()).unwrap().unwrap();
+        assert_eq!(vocab.id("_"), Some(0));
+        assert!(vocab.source.unwrap().ends_with("symbols.py"));
     }
 
     // ── Vocabulary parsing ───────────────────────────────────────────────────
@@ -826,3 +1016,5 @@ mod tests {
         assert!(phonemize("").unwrap().is_empty());
     }
 }
+
+

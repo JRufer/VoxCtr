@@ -38,7 +38,9 @@ The verified FP32 export is published separately as [`Inflect-Micro-v2-ONNX`](ht
 
 `length_scale` is `1.0 / speed`; `noise_scale` is the variation setting (0.0–1.0, default 0.667).
 
-**Tokenization.** Phoneme ids are positions in the ordered `symbols` list from the model's text frontend. Ids are interleaved with blanks into `[0, s₀, 0, s₁, …, 0]` (length `2n+1`); there is no BOS/EOS wrapper. The symbol list is discovered by parsing — any `.json`/`.txt`/`.csv`/`.tsv`/`.py` in the model directory that yields a plausible symbol table is accepted, so it does not depend on a fixed filename.
+**Tokenization.** Phoneme ids are positions in the ordered 178-entry `symbols` list from the model's text frontend (`text/symbols.py`), which follows the tacotron layout: a pad, then punctuation, ASCII letters, and the IPA inventory. Ids are interleaved with blanks into `[0, s₀, 0, s₁, …, 0]` (length `2n+1`); there is no BOS/EOS wrapper. `'` appears twice in the list and, as in Python's dict comprehension, the later index wins.
+
+That list is published in the PyTorch repository rather than with the graphs, so VoxCtrl fetches it separately after the download. The loader parses the tacotron form (`symbols = [_pad] + list(_punctuation) + ...`, resolving the named constants) as well as plain list literals, JSON arrays, and symbol→id maps — and identifies the table by parsing rather than by filename, so it does not depend on a fixed name. eSpeak-NG's `en-us --ipa` output is fully covered by this inventory; any symbol that ever falls outside it is skipped with a warning rather than failing the utterance.
 
 **Chunking.** Text is normalised, split after `.!?;:` followed by whitespace, and any sentence over 280 characters is split again at the last `,`/`;`/`:` in range (or the last space). Each sentence is its own chunk — they are not packed together — so the per-chunk boundary pause (0.28 s after `?`, 0.22 s after `.`, down to 0.08 s with no terminator) lands correctly. Every chunk gets a 5 ms edge fade, and the seed advances per chunk. Playback of each chunk overlaps generation of the next.
 
