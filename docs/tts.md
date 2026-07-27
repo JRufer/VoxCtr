@@ -52,6 +52,20 @@ That list is published in the PyTorch repository rather than with the graphs, so
 
 Graph signatures are verified at load, and a missing input is a hard error reporting what the graph actually declares. Settings → TTS → Inspect graphs (or the `inflect_micro_inspect` command) reports that signature for a downloaded model.
 
+**Debugging.** When synthesis misbehaves, run the pipeline outside the app:
+
+```bash
+cargo run -p voxctrl-tts --features inflect-micro --example inflect_probe
+cargo run -p voxctrl-tts --features inflect-micro --example inflect_probe -- "custom text"
+```
+
+It runs phonemization → tokenization → both graphs and writes `inflect_probe.wav`
+to the temp directory, with no Tauri, no event plumbing and no audio device. Each
+stage prints before and after it runs, so a stall or crash leaves the responsible
+stage as the last line on screen. Because it writes a WAV instead of playing it,
+it also separates a synthesis fault from a playback one — something the app's
+Test button cannot distinguish.
+
 ### Espeak-ng (Lightweight)
 If Piper is unavailable or no voice is downloaded, VoxCtrl can use `espeak-ng`. It is invoked as a subprocess with the text as an argument. Quality is lower but espeak-ng is always available as a system package.
 
