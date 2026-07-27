@@ -265,6 +265,7 @@
   let inflectDownloading = $state(false);
   let inflectSignature = $state<string | null>(null);
   let inflectInspecting = $state(false);
+  let inflectError = $state<string | null>(null);
 
   async function checkInflectAvailable() {
     try {
@@ -292,13 +293,17 @@
   async function downloadInflect() {
     if (inflectDownloading) return;
     inflectDownloading = true;
+    inflectError = null;
     try {
       await invoke("download_inflect_micro", {
         modelDir: cfg.tts.inflect_micro.model_dir,
       });
       inflectReady = true;
     } catch (e) {
-      alert(`Failed to download Inflect-Micro-v2: ${e}`);
+      // Reported inline rather than through alert(): the backend lists every URL
+      // it tried, which is far too long for a modal, and a blocking dialog here
+      // leaves the user with no way to copy the detail out.
+      inflectError = `${e}`;
     } finally {
       inflectDownloading = false;
     }
@@ -778,6 +783,10 @@
         </div>
       {/if}
     </div>
+
+    {#if inflectError}
+      <pre class="field-error-msg" style="white-space: pre-wrap; overflow-x: auto;">❌ {inflectError}</pre>
+    {/if}
 
     <label class="field">
       <span>Sampling seed</span>

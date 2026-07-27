@@ -56,10 +56,20 @@ pub const MODEL_FILES: [&str; 2] = [DURATION_FILE, DECODE_FILE];
 /// Whether this build includes the ONNX Runtime half of the engine.
 pub const INFLECT_MICRO_COMPILED: bool = cfg!(feature = "inflect-micro");
 
-/// Upstream weights on the Hugging Face hub. Kept as one constant so a hosting
-/// change is a single edit; users can also point `model_dir` at a local copy and
-/// never download anything.
-const HF_BASE_URL: &str = "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main/onnx";
+/// Candidate upstream locations for the ONNX export, tried in order.
+///
+/// The publisher ships the verified FP32 export in a separate `-ONNX` repository
+/// alongside the PyTorch release, and repositories that carry both tend to keep
+/// the graphs under `onnx/`. Rather than hard-coding one guess, the download
+/// probes each layout for [`DURATION_FILE`] and uses the first that has it —
+/// and if none do, reports every URL tried with the status it returned, so a
+/// hosting change is diagnosable from the error alone.
+const HF_BASE_URLS: [&str; 4] = [
+    "https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main",
+    "https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main/onnx",
+    "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main/onnx",
+    "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main",
+];
 
 // ── Filesystem layout ─────────────────────────────────────────────────────────
 
@@ -112,12 +122,14 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
 
     let _guard = DOWNLOAD_LOCK.lock().await;
 
+    let base = resolve_base_url().await?;
+
     for file in MODEL_FILES {
         let path = dir.join(file);
         if path.exists() {
             continue;
         }
-        let url = format!("{HF_BASE_URL}/{file}");
+        let url = format!("{base}/{file}");
         info!("Downloading Inflect-Micro-v2 graph: {url}");
         download_to(&url, &path)
             .await
@@ -127,7 +139,7 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
     if !phonemes::VOCAB_FILES.iter().any(|f| dir.join(f).exists()) {
         let mut fetched = false;
         for candidate in phonemes::VOCAB_FILES {
-            let url = format!("{HF_BASE_URL}/{candidate}");
+            let url = format!("{base}/{candidate}");
             match download_to(&url, &dir.join(candidate)).await {
                 Ok(()) => {
                     info!("Downloaded Inflect-Micro-v2 phoneme vocabulary: {candidate}");
@@ -140,8 +152,10 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
         }
         if !fetched {
             anyhow::bail!(
-                "Downloaded the ONNX graphs but found no phoneme vocabulary upstream \
-                 (tried {}). Place the model's phoneme table in {} manually.",
+                "Downloaded the ONNX graphs from {base} but found no phoneme vocabulary \
+                 there (tried {}). The vocabulary maps eSpeak IPA to the model's phoneme \
+                 ids and synthesis cannot be correct without it — place the model's \
+                 phoneme table in {} manually.",
                 phonemes::VOCAB_FILES.join(", "),
                 dir.display()
             );
@@ -150,6 +164,40 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
 
     info!("Inflect-Micro-v2 ready in {}", dir.display());
     Ok(())
+}
+
+/// Find which candidate layout in [`HF_BASE_URLS`] actually hosts the export, by
+/// probing each for [`DURATION_FILE`].
+///
+/// On failure the error names every URL tried and what it returned, so a wrong
+/// guess or a moved repository is diagnosable without reading the source.
+async fn resolve_base_url() -> Result<&'static str> {
+    let client = reqwest::Client::new();
+    let mut attempts = Vec::with_capacity(HF_BASE_URLS.len());
+
+    for base in HF_BASE_URLS {
+        let url = format!("{base}/{DURATION_FILE}");
+        // HEAD avoids pulling the body just to test existence. Hugging Face
+        // redirects file requests to a CDN; reqwest follows those by default.
+        match client.head(&url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                info!("Inflect-Micro-v2 export found at {base}");
+                return Ok(base);
+            }
+            Ok(resp) => attempts.push(format!("  {url} → HTTP {}", resp.status())),
+            Err(e) => attempts.push(format!("  {url} → {e}")),
+        }
+    }
+
+    anyhow::bail!(
+        "Could not find the Inflect-Micro-v2 ONNX export at any known location.\n\
+         Tried:\n{}\n\
+         If the model has moved, download {} and a phoneme vocabulary ({}) by hand \
+         and point the model directory at them in TTS settings.",
+        attempts.join("\n"),
+        MODEL_FILES.join(" + "),
+        phonemes::VOCAB_FILES.join(" / ")
+    )
 }
 
 /// Download one URL to `path`, writing via a `.part` temp file so an interrupted
