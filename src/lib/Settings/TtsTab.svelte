@@ -448,8 +448,17 @@
       voiceSpeaking = true;
     });
 
+    // Playback-end also clears `testing`. Otherwise an utterance that completes
+    // without ever starting playback — a run that produces no audio but also no
+    // error — leaves the button stuck on "Speaking..." indefinitely, since only
+    // playback-start cleared it.
     unlistenTtsEnd = await listen<void>("tts-playback-end", () => {
       voiceSpeaking = false;
+      if (testing) {
+        clearInterval(timerId);
+        isCounting = false;
+        testing = false;
+      }
     });
 
     // Speak errors happen asynchronously in the TTS worker thread (missing

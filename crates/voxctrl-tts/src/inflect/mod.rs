@@ -620,7 +620,25 @@ pub(crate) fn speak_inflect_micro(
             }
         }
 
+        info!(
+            "Inflect-Micro-v2 chunk {}/{}: {} samples",
+            index + 1,
+            chunks.len(),
+            audio.len()
+        );
         sink.append(rodio::buffer::SamplesBuffer::new(1, SAMPLE_RATE, audio));
+    }
+
+    // Reaching here having produced nothing would return Ok with no audio and
+    // no error, which reads to the user as a hang rather than a failure. Say
+    // what happened instead.
+    if !callback_fired && generation_counter.load(Ordering::SeqCst) == generation {
+        anyhow::bail!(
+            "Inflect-Micro-v2 produced no audio for {} chunk(s) of text. The \
+             phoneme frontend or the symbol table yielded an empty sequence — \
+             check the log (RUST_LOG=voxctrl_tts=info) for skipped symbols.",
+            chunks.len()
+        );
     }
 
     sink.sleep_until_end();
