@@ -177,6 +177,26 @@
 
   let engineSwitching = $state(false);
 
+  // Why the Test button is unavailable, or null when it is usable. Returning a
+  // reason rather than a bare boolean means a greyed-out button can say what is
+  // wrong instead of leaving the user to guess.
+  function testTtsDisabledReason(): string | null {
+    if (!cfg.tts.enabled) return "Enable text-to-speech above first.";
+    if (engineSwitching) return "Switching engine...";
+    if (voiceSpeaking) return null;
+    if (testing) return "Already speaking.";
+
+    if (cfg.tts.engine === "inflect_micro") {
+      if (!inflectAvailable) {
+        return "This build was compiled without the `inflect-micro` feature, so this engine cannot synthesize. Rebuild with --features inflect-micro.";
+      }
+      if (inflectChecking) return "Checking local model files...";
+      if (inflectDownloading) return "Downloading the model...";
+      if (!inflectReady) return "Download the model first.";
+    }
+    return null;
+  }
+
   function isTestTtsDisabled() {
     if (!cfg.tts.enabled || engineSwitching) return true;
     if (voiceSpeaking) return false;
@@ -628,7 +648,7 @@
       />
     </label>
     <div class="row tts-test-row">
-      <button class="btn-preview" onclick={testTts} disabled={isTestTtsDisabled()}>
+      <button class="btn-preview" onclick={testTts} disabled={isTestTtsDisabled()} title={testTtsDisabledReason() ?? "Speak a test phrase"}>
         {testing ? "Speaking..." : voiceSpeaking ? "⏹ Stop & Test" : "Test TTS"}
       </button>
       {#if isCounting || runSpeed !== null}
@@ -642,6 +662,9 @@
     </div>
     {#if ttsError}
       <p class="field-error-msg tts-error-msg">❌ {ttsError}</p>
+    {/if}
+    {#if !ttsError && isTestTtsDisabled() && testTtsDisabledReason()}
+      <p class="hint">Test TTS unavailable: {testTtsDisabledReason()}</p>
     {/if}
   </div>
 
@@ -762,8 +785,11 @@
 
     {#if !inflectAvailable}
       <p class="field-error-msg">
-        This build was compiled without the <code>inflect-micro</code> feature, so this engine
-        cannot synthesize. Rebuild with <code>--features inflect-micro</code>, or pick another engine.
+        <strong>This build cannot run this engine.</strong> The ONNX half is behind an opt-in
+        cargo feature, so Test TTS stays disabled until the app is rebuilt with it:
+        <br /><code>cargo tauri build --features inflect-micro</code>
+        <br />(or <code>cargo tauri dev --features inflect-micro</code>). Downloading the model
+        works either way — only synthesis needs the feature.
       </p>
     {/if}
 
