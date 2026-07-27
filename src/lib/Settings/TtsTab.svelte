@@ -188,7 +188,7 @@
 
     if (cfg.tts.engine === "inflect_micro") {
       if (!inflectAvailable) {
-        return "This build was compiled without the `inflect-micro` feature, so this engine cannot synthesize. Rebuild with --features inflect-micro.";
+        return "This build was compiled without the `inflect-micro` feature, so this engine cannot synthesize. Rebuild with: npm run tauri dev -- --features inflect-micro";
       }
       if (inflectChecking) return "Checking local model files...";
       if (inflectDownloading) return "Downloading the model...";
@@ -787,9 +787,10 @@
       <p class="field-error-msg">
         <strong>This build cannot run this engine.</strong> The ONNX half is behind an opt-in
         cargo feature, so Test TTS stays disabled until the app is rebuilt with it:
-        <br /><code>cargo tauri build --features inflect-micro</code>
-        <br />(or <code>cargo tauri dev --features inflect-micro</code>). Downloading the model
-        works either way — only synthesis needs the feature.
+        <br /><code>npm run tauri dev -- --features inflect-micro</code>
+        <br /><code>npm run tauri build -- --features inflect-micro</code>
+        <br />The <code>--</code> is required, or npm consumes the flag itself. Downloading the
+        model works either way — only synthesis needs the feature.
       </p>
     {/if}
 

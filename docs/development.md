@@ -154,6 +154,19 @@ npm run tauri build -- --features cuda
 
 # Windows (PowerShell)
 npm run tauri build -- --features cuda
+
+Other opt-in features follow the same form. The Inflect-Micro-v2 TTS engine is
+behind `inflect-micro` (it pulls in ONNX Runtime):
+
+```bash
+npm run tauri dev -- --features inflect-micro
+npm run tauri build -- --features inflect-micro
+```
+
+The `--` is required — without it npm treats `--features` as its own flag and
+fails with `EUNKNOWNCONFIG`. Note that the model **downloads** fine in a build
+without the feature; only synthesis needs it, so Settings will show the engine
+as ready while Test TTS stays disabled.
 # Or use the helper script:
 .\scripts\build_windows.ps1 -Cuda
 ```
