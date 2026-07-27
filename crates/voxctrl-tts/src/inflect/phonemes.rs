@@ -163,15 +163,61 @@ pub struct PhonemeVocab {
     map: HashMap<String, i64>,
     /// Whether this table came from the model directory rather than the fallback.
     pub from_file: bool,
+    /// Which file it was read from, for logs and diagnostics.
+    pub source: Option<std::path::PathBuf>,
 }
 
-/// File names checked, in order, for the phoneme table inside the model dir.
+/// File names checked first for the phoneme table. Not exhaustive — [`PhonemeVocab::load`]
+/// falls back to scanning every text file in the directory.
 pub const VOCAB_FILES: [&str; 4] = [
     "phonemes.json",
     "tokens.json",
     "vocab.json",
     "tokens.txt",
 ];
+
+/// Extensions considered when scanning for an unnamed phoneme table.
+const VOCAB_EXTENSIONS: [&str; 4] = ["json", "txt", "csv", "tsv"];
+
+/// A phoneme table has to be big enough to cover an IPA inventory and made
+/// mostly of short symbols. This is what separates a real table from a
+/// `config.json` of hyperparameters, whose keys are long words.
+const MIN_VOCAB_ENTRIES: usize = 16;
+
+fn is_plausible_vocab(map: &HashMap<String, i64>) -> bool {
+    if map.len() < MIN_VOCAB_ENTRIES {
+        return false;
+    }
+    let short = map.keys().filter(|k| k.chars().count() <= 3).count();
+    short * 2 >= map.len()
+}
+
+/// Well-known names first, then any other text file in the directory, so a table
+/// under an unexpected name is still found.
+fn candidate_vocab_paths(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut paths: Vec<std::path::PathBuf> = VOCAB_FILES
+        .iter()
+        .map(|n| dir.join(n))
+        .filter(|p| p.exists())
+        .collect();
+
+    let Ok(entries) = std::fs::read_dir(dir) else { return paths };
+    let mut extra: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_file()
+                && p.extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| VOCAB_EXTENSIONS.iter().any(|v| e.eq_ignore_ascii_case(v)))
+                && !paths.contains(p)
+        })
+        .collect();
+    // Deterministic order so the chosen table doesn't depend on directory iteration.
+    extra.sort();
+    paths.append(&mut extra);
+    paths
+}
 
 impl PhonemeVocab {
     /// Load the phoneme table from `dir`, trying each name in [`VOCAB_FILES`].
@@ -183,26 +229,35 @@ impl PhonemeVocab {
     /// * `{"a": 1, "b": 2, ...}` — a flat symbol→id object
     /// * `a 1\nb 2\n` — whitespace-separated `tokens.txt`
     ///
-    /// Returns `Ok(None)` when no vocabulary file is present.
+    /// Returns `Ok(None)` when no file in `dir` parses as a phoneme table.
+    ///
+    /// The export's table is not reliably named, so rather than requiring a
+    /// specific filename this tries the well-known names first and then every
+    /// other text file in the directory, accepting the first whose contents
+    /// actually look like a phoneme table (see [`is_plausible_vocab`]). That
+    /// keeps a `config.json` full of model hyperparameters from being mistaken
+    /// for the vocabulary.
     pub fn load(dir: &Path) -> Result<Option<Self>> {
-        for name in VOCAB_FILES {
-            let path = dir.join(name);
-            if !path.exists() {
-                continue;
-            }
-            let raw = std::fs::read_to_string(&path)
-                .with_context(|| format!("read phoneme vocabulary {}", path.display()))?;
-            let map = if name.ends_with(".json") {
+        for path in candidate_vocab_paths(dir) {
+            let Ok(raw) = std::fs::read_to_string(&path) else { continue };
+            let parsed = if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+            {
                 parse_json_vocab(&raw)
-                    .with_context(|| format!("parse phoneme vocabulary {}", path.display()))?
             } else {
                 parse_text_vocab(&raw)
-                    .with_context(|| format!("parse phoneme vocabulary {}", path.display()))?
             };
-            if map.is_empty() {
-                bail!("phoneme vocabulary {} is empty", path.display());
+            let Ok(map) = parsed else { continue };
+            if !is_plausible_vocab(&map) {
+                continue;
             }
-            return Ok(Some(Self { map, from_file: true }));
+            return Ok(Some(Self {
+                map,
+                from_file: true,
+                source: Some(path),
+            }));
         }
         Ok(None)
     }
@@ -225,7 +280,7 @@ impl PhonemeVocab {
         for (i, c) in SYMBOLS.chars().enumerate() {
             map.insert(c.to_string(), (i + 3) as i64);
         }
-        Self { map, from_file: false }
+        Self { map, from_file: false, source: None }
     }
 
     pub fn len(&self) -> usize {
@@ -435,29 +490,122 @@ mod tests {
         assert!(PhonemeVocab::load(dir.path()).unwrap().is_none());
     }
 
-    #[test]
-    fn test_vocab_load_reads_phonemes_json() {
-        let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("phonemes.json"), r#"{"_":0,"^":1,"$":2,"a":3}"#).unwrap();
-        let vocab = PhonemeVocab::load(dir.path()).unwrap().unwrap();
-        assert!(vocab.from_file);
-        assert_eq!(vocab.len(), 4);
+    /// A table with enough short symbols to pass the plausibility check.
+    fn vocab_text() -> String {
+        "_^$abdefhijklmnopqrstuvwxyzəɪˈː"
+            .chars()
+            .enumerate()
+            .map(|(i, c)| format!("{c} {i}\n"))
+            .collect()
     }
 
     #[test]
-    fn test_vocab_load_reads_tokens_txt() {
+    fn test_vocab_load_reads_phonemes_json() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("tokens.txt"), "_ 0\n^ 1\n$ 2\na 3\n").unwrap();
+        let entries: Vec<String> = vocab_text()
+            .lines()
+            .map(|l| {
+                let (s, i) = l.rsplit_once(' ').unwrap();
+                format!("{}: {i}", serde_json::to_string(s).unwrap())
+            })
+            .collect();
+        std::fs::write(
+            dir.path().join("phonemes.json"),
+            format!("{{{}}}", entries.join(",")),
+        )
+        .unwrap();
         let vocab = PhonemeVocab::load(dir.path()).unwrap().unwrap();
         assert!(vocab.from_file);
         assert_eq!(vocab.id("a"), Some(3));
     }
 
     #[test]
-    fn test_vocab_load_rejects_empty_file() {
+    fn test_vocab_load_reads_tokens_txt() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("tokens.txt"), vocab_text()).unwrap();
+        let vocab = PhonemeVocab::load(dir.path()).unwrap().unwrap();
+        assert!(vocab.from_file);
+        assert_eq!(vocab.id("a"), Some(3));
+    }
+
+    #[test]
+    fn test_vocab_load_finds_table_under_unexpected_name() {
+        // The published export does not use any of the well-known names, so the
+        // table has to be found by parsing rather than by filename.
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("inflect_symbols.txt"), vocab_text()).unwrap();
+        let vocab = PhonemeVocab::load(dir.path()).unwrap().unwrap();
+        assert_eq!(vocab.id("a"), Some(3));
+        assert!(vocab.source.unwrap().ends_with("inflect_symbols.txt"));
+    }
+
+    #[test]
+    fn test_vocab_load_prefers_well_known_name_over_scanned_file() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("aaa_other.txt"), vocab_text()).unwrap();
+        std::fs::write(dir.path().join("tokens.txt"), vocab_text()).unwrap();
+        let vocab = PhonemeVocab::load(dir.path()).unwrap().unwrap();
+        assert!(vocab.source.unwrap().ends_with("tokens.txt"));
+    }
+
+    #[test]
+    fn test_vocab_load_skips_hyperparameter_config() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"sample_rate":24000,"hidden_channels":192,"n_layers":6,"filter_channels":768}"#,
+        )
+        .unwrap();
+        assert!(
+            PhonemeVocab::load(dir.path()).unwrap().is_none(),
+            "long hyperparameter keys must not look like a phoneme table"
+        );
+    }
+
+    #[test]
+    fn test_vocab_load_skips_empty_and_unparseable_files() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("phonemes.json"), "{}").unwrap();
-        assert!(PhonemeVocab::load(dir.path()).is_err());
+        std::fs::write(dir.path().join("notes.txt"), "just some prose, not a table").unwrap();
+        assert!(PhonemeVocab::load(dir.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_vocab_load_recovers_when_first_candidate_is_junk() {
+        // An unparseable well-known name must not stop a valid table elsewhere
+        // from being found.
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("phonemes.json"), "not json at all").unwrap();
+        std::fs::write(dir.path().join("symbols.txt"), vocab_text()).unwrap();
+        let vocab = PhonemeVocab::load(dir.path()).unwrap().unwrap();
+        assert!(vocab.source.unwrap().ends_with("symbols.txt"));
+    }
+
+    // ── Plausibility heuristic ───────────────────────────────────────────────
+
+    #[test]
+    fn test_is_plausible_vocab_rejects_small_tables() {
+        let map: HashMap<String, i64> =
+            (0..4).map(|i| (i.to_string(), i as i64)).collect();
+        assert!(!is_plausible_vocab(&map));
+    }
+
+    #[test]
+    fn test_is_plausible_vocab_rejects_long_keys() {
+        let map: HashMap<String, i64> = (0..40)
+            .map(|i| (format!("some_long_config_key_{i}"), i as i64))
+            .collect();
+        assert!(!is_plausible_vocab(&map));
+    }
+
+    #[test]
+    fn test_is_plausible_vocab_accepts_short_symbol_table() {
+        let map: HashMap<String, i64> = "_^$abdefhijklmnopqrstuvwxyz"
+            .chars()
+            .enumerate()
+            .map(|(i, c)| (c.to_string(), i as i64))
+            .collect();
+        assert!(is_plausible_vocab(&map));
     }
 
     // ── Encoding ─────────────────────────────────────────────────────────────

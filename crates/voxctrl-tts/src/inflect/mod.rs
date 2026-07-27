@@ -36,7 +36,7 @@ pub mod model;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::piper::expand_tilde;
 
@@ -56,20 +56,48 @@ pub const MODEL_FILES: [&str; 2] = [DURATION_FILE, DECODE_FILE];
 /// Whether this build includes the ONNX Runtime half of the engine.
 pub const INFLECT_MICRO_COMPILED: bool = cfg!(feature = "inflect-micro");
 
-/// Candidate upstream locations for the ONNX export, tried in order.
-///
-/// The publisher ships the verified FP32 export in a separate `-ONNX` repository
-/// alongside the PyTorch release, and repositories that carry both tend to keep
-/// the graphs under `onnx/`. Rather than hard-coding one guess, the download
-/// probes each layout for [`DURATION_FILE`] and uses the first that has it —
-/// and if none do, reports every URL tried with the status it returned, so a
-/// hosting change is diagnosable from the error alone.
-const HF_BASE_URLS: [&str; 4] = [
-    "https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main",
-    "https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main/onnx",
-    "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main/onnx",
-    "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main",
+/// A repository plus the subdirectory the export lives in.
+#[derive(Debug, Clone, Copy)]
+struct Layout {
+    repo: &'static str,
+    /// Subdirectory within the repo; empty for the repo root.
+    subdir: &'static str,
+}
+
+/// Candidate upstream locations, tried in order. The publisher ships the
+/// verified FP32 export in a separate `-ONNX` repository alongside the PyTorch
+/// release, keeping the graphs under `onnx/`.
+const CANDIDATE_LAYOUTS: [Layout; 4] = [
+    Layout { repo: "owensong/Inflect-Micro-v2-ONNX", subdir: "onnx" },
+    Layout { repo: "owensong/Inflect-Micro-v2-ONNX", subdir: "" },
+    Layout { repo: "owensong/Inflect-Micro-v2", subdir: "onnx" },
+    Layout { repo: "owensong/Inflect-Micro-v2", subdir: "" },
 ];
+
+impl Layout {
+    /// The hub API endpoint listing this layout's files.
+    fn tree_url(&self) -> String {
+        if self.subdir.is_empty() {
+            format!("https://huggingface.co/api/models/{}/tree/main", self.repo)
+        } else {
+            format!("https://huggingface.co/api/models/{}/tree/main/{}", self.repo, self.subdir)
+        }
+    }
+
+    /// The download URL for one file in this layout.
+    fn file_url(&self, file: &str) -> String {
+        if self.subdir.is_empty() {
+            format!("https://huggingface.co/{}/resolve/main/{file}", self.repo)
+        } else {
+            format!("https://huggingface.co/{}/resolve/main/{}/{file}", self.repo, self.subdir)
+        }
+    }
+}
+
+/// Upper bound on an auxiliary file fetched alongside the graphs. The phoneme
+/// table is a few kilobytes; this only exists to stop a stray large asset from
+/// being pulled in by the "fetch every small text file" rule.
+const MAX_AUX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 // ── Filesystem layout ─────────────────────────────────────────────────────────
 
@@ -98,9 +126,12 @@ pub fn resolve_model_dir(model_dir: &str) -> PathBuf {
 /// without it — see [`phonemes::PhonemeVocab::load`].
 pub fn is_inflect_micro_downloaded(model_dir: &str) -> bool {
     let dir = resolve_model_dir(model_dir);
-    let graphs = MODEL_FILES.iter().all(|f| dir.join(f).exists());
-    let vocab = phonemes::VOCAB_FILES.iter().any(|f| dir.join(f).exists());
-    graphs && vocab
+    if !MODEL_FILES.iter().all(|f| dir.join(f).exists()) {
+        return false;
+    }
+    // Detected by parsing rather than by filename, so this agrees with what
+    // `InflectModel::load` will actually accept.
+    matches!(phonemes::PhonemeVocab::load(&dir), Ok(Some(_)))
 }
 
 // ── Download ──────────────────────────────────────────────────────────────────
@@ -122,69 +153,98 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
 
     let _guard = DOWNLOAD_LOCK.lock().await;
 
-    let base = resolve_base_url().await?;
+    let (layout, listing) = resolve_layout().await?;
 
     for file in MODEL_FILES {
         let path = dir.join(file);
         if path.exists() {
             continue;
         }
-        let url = format!("{base}/{file}");
+        let url = layout.file_url(file);
         info!("Downloading Inflect-Micro-v2 graph: {url}");
         download_to(&url, &path)
             .await
             .with_context(|| format!("download {file}"))?;
     }
 
-    if !phonemes::VOCAB_FILES.iter().any(|f| dir.join(f).exists()) {
-        let mut fetched = false;
-        for candidate in phonemes::VOCAB_FILES {
-            let url = format!("{base}/{candidate}");
-            match download_to(&url, &dir.join(candidate)).await {
-                Ok(()) => {
-                    info!("Downloaded Inflect-Micro-v2 phoneme vocabulary: {candidate}");
-                    fetched = true;
-                    break;
-                }
-                // A candidate that isn't published is expected; try the next.
-                Err(_) => continue,
-            }
+    // Fetch every small text-ish file alongside the graphs rather than guessing
+    // what the phoneme table is called. Which one actually *is* the table is
+    // decided by parsing it — see `PhonemeVocab::load`.
+    for entry in listing.iter().filter(|e| e.is_auxiliary()) {
+        let path = dir.join(&entry.name);
+        if path.exists() {
+            continue;
         }
-        if !fetched {
-            anyhow::bail!(
-                "Downloaded the ONNX graphs from {base} but found no phoneme vocabulary \
-                 there (tried {}). The vocabulary maps eSpeak IPA to the model's phoneme \
-                 ids and synthesis cannot be correct without it — place the model's \
-                 phoneme table in {} manually.",
-                phonemes::VOCAB_FILES.join(", "),
-                dir.display()
-            );
+        let url = layout.file_url(&entry.name);
+        match download_to(&url, &path).await {
+            Ok(()) => info!("Downloaded Inflect-Micro-v2 auxiliary file: {}", entry.name),
+            // Auxiliary files are best-effort; the vocabulary check below is
+            // what decides whether the download actually succeeded.
+            Err(e) => warn!("Could not fetch {}: {e:#}", entry.name),
         }
+    }
+
+    if phonemes::PhonemeVocab::load(&dir)?.is_none() {
+        let names: Vec<&str> = listing.iter().map(|e| e.name.as_str()).collect();
+        anyhow::bail!(
+            "Downloaded the ONNX graphs from {}, but none of the accompanying files \
+             parse as a phoneme table. The vocabulary maps eSpeak IPA to the model's \
+             phoneme ids and synthesis cannot be correct without it.\n\
+             Files published there: {}\n\
+             If the table is one of these, place it in {} and report the name so it \
+             can be recognised automatically.",
+            layout.file_url("").trim_end_matches('/'),
+            if names.is_empty() { "(none listed)".to_string() } else { names.join(", ") },
+            dir.display()
+        );
     }
 
     info!("Inflect-Micro-v2 ready in {}", dir.display());
     Ok(())
 }
 
-/// Find which candidate layout in [`HF_BASE_URLS`] actually hosts the export, by
-/// probing each for [`DURATION_FILE`].
-///
-/// On failure the error names every URL tried and what it returned, so a wrong
-/// guess or a moved repository is diagnosable without reading the source.
-async fn resolve_base_url() -> Result<&'static str> {
-    let client = reqwest::Client::new();
-    let mut attempts = Vec::with_capacity(HF_BASE_URLS.len());
+/// One file entry from the hub's tree listing.
+#[derive(Debug, Clone)]
+struct RepoFile {
+    name: String,
+    size: u64,
+}
 
-    for base in HF_BASE_URLS {
-        let url = format!("{base}/{DURATION_FILE}");
-        // HEAD avoids pulling the body just to test existence. Hugging Face
-        // redirects file requests to a CDN; reqwest follows those by default.
-        match client.head(&url).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                info!("Inflect-Micro-v2 export found at {base}");
-                return Ok(base);
+impl RepoFile {
+    /// Whether this is a small non-graph file worth fetching alongside the
+    /// graphs — the phoneme table is one of these, whatever it is called.
+    fn is_auxiliary(&self) -> bool {
+        if self.size > MAX_AUX_FILE_BYTES {
+            return false;
+        }
+        let lower = self.name.to_ascii_lowercase();
+        if lower.ends_with(".onnx") || lower.ends_with(".onnx_data") {
+            return false;
+        }
+        [".json", ".txt", ".csv", ".tsv"].iter().any(|e| lower.ends_with(e))
+    }
+}
+
+/// Find which candidate layout actually hosts the export by listing each through
+/// the hub API and looking for [`DURATION_FILE`].
+///
+/// Listing rather than probing a guessed filename means the phoneme table is
+/// discovered instead of assumed. On failure the error names every endpoint
+/// tried and what it returned.
+async fn resolve_layout() -> Result<(Layout, Vec<RepoFile>)> {
+    let client = reqwest::Client::new();
+    let mut attempts = Vec::with_capacity(CANDIDATE_LAYOUTS.len());
+
+    for layout in CANDIDATE_LAYOUTS {
+        let url = layout.tree_url();
+        match fetch_listing(&client, &url).await {
+            Ok(files) => {
+                if files.iter().any(|f| f.name == DURATION_FILE) {
+                    info!("Inflect-Micro-v2 export found in {} ({} files)", url, files.len());
+                    return Ok((layout, files));
+                }
+                attempts.push(format!("  {url} → listed, but no {DURATION_FILE}"));
             }
-            Ok(resp) => attempts.push(format!("  {url} → HTTP {}", resp.status())),
             Err(e) => attempts.push(format!("  {url} → {e}")),
         }
     }
@@ -192,12 +252,50 @@ async fn resolve_base_url() -> Result<&'static str> {
     anyhow::bail!(
         "Could not find the Inflect-Micro-v2 ONNX export at any known location.\n\
          Tried:\n{}\n\
-         If the model has moved, download {} and a phoneme vocabulary ({}) by hand \
-         and point the model directory at them in TTS settings.",
+         If the model has moved, download {} plus its phoneme table by hand and \
+         point the model directory at them in TTS settings.",
         attempts.join("\n"),
-        MODEL_FILES.join(" + "),
-        phonemes::VOCAB_FILES.join(" / ")
+        MODEL_FILES.join(" + ")
     )
+}
+
+/// Fetch and parse one hub tree listing into its file entries (directories and
+/// anything without a usable path are skipped).
+async fn fetch_listing(client: &reqwest::Client, url: &str) -> Result<Vec<RepoFile>> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("request {url}"))?
+        .error_for_status()
+        .with_context(|| format!("fetch {url}"))?;
+    let body = response.text().await.with_context(|| format!("read {url}"))?;
+    parse_listing(&body).with_context(|| format!("parse listing from {url}"))
+}
+
+/// Parse the hub's tree JSON: an array of `{type, path, size}` objects, where
+/// `path` is repo-relative and so carries the subdirectory prefix.
+fn parse_listing(body: &str) -> Result<Vec<RepoFile>> {
+    let value: serde_json::Value = serde_json::from_str(body).context("invalid JSON")?;
+    let array = value.as_array().context("expected a JSON array")?;
+
+    let mut files = Vec::with_capacity(array.len());
+    for entry in array {
+        if entry.get("type").and_then(|t| t.as_str()) != Some("file") {
+            continue;
+        }
+        let Some(path) = entry.get("path").and_then(|p| p.as_str()) else { continue };
+        // Keep only the basename; downloads are addressed relative to the subdir.
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        if name.is_empty() {
+            continue;
+        }
+        files.push(RepoFile {
+            name,
+            size: entry.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
+        });
+    }
+    Ok(files)
 }
 
 /// Download one URL to `path`, writing via a `.part` temp file so an interrupted
@@ -421,7 +519,7 @@ mod tests {
     fn test_not_downloaded_when_one_graph_missing() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join(DURATION_FILE), b"x").unwrap();
-        std::fs::write(dir.path().join("phonemes.json"), b"{}").unwrap();
+        write_vocab(dir.path(), "phonemes.json");
         assert!(!is_inflect_micro_downloaded(dir.path().to_str().unwrap()));
     }
 
@@ -431,8 +529,125 @@ mod tests {
         for f in MODEL_FILES {
             std::fs::write(dir.path().join(f), b"x").unwrap();
         }
-        std::fs::write(dir.path().join("tokens.txt"), b"_ 0\n").unwrap();
+        write_vocab(dir.path(), "tokens.txt");
         assert!(is_inflect_micro_downloaded(dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_downloaded_recognises_vocab_under_an_unexpected_name() {
+        // The export's table is not reliably named; readiness must agree with
+        // what `PhonemeVocab::load` accepts, which is decided by parsing.
+        let dir = tempdir().unwrap();
+        for f in MODEL_FILES {
+            std::fs::write(dir.path().join(f), b"x").unwrap();
+        }
+        write_vocab(dir.path(), "inflect_symbols.txt");
+        assert!(is_inflect_micro_downloaded(dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_not_downloaded_when_only_a_hyperparameter_config_is_present() {
+        // A config.json of model hyperparameters must not be mistaken for a table.
+        let dir = tempdir().unwrap();
+        for f in MODEL_FILES {
+            std::fs::write(dir.path().join(f), b"x").unwrap();
+        }
+        std::fs::write(
+            dir.path().join("config.json"),
+            br#"{"sample_rate": 24000, "hidden_channels": 192, "n_layers": 6}"#,
+        )
+        .unwrap();
+        assert!(!is_inflect_micro_downloaded(dir.path().to_str().unwrap()));
+    }
+
+    /// Write a table with enough short symbols to pass the plausibility check.
+    fn write_vocab(dir: &std::path::Path, name: &str) {
+        let mut body = String::new();
+        for (i, c) in "_^$abdefhijklmnopqrstuvwxyzəɪˈː".chars().enumerate() {
+            body.push_str(&format!("{c} {i}\n"));
+        }
+        if name.ends_with(".json") {
+            let entries: Vec<String> = body
+                .lines()
+                .map(|l| {
+                    let (s, i) = l.rsplit_once(' ').unwrap();
+                    format!("{}: {i}", serde_json::to_string(s).unwrap())
+                })
+                .collect();
+            std::fs::write(dir.join(name), format!("{{{}}}", entries.join(","))).unwrap();
+        } else {
+            std::fs::write(dir.join(name), body).unwrap();
+        }
+    }
+
+    // ── Repository listing ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_listing_extracts_basenames_and_sizes() {
+        let body = r#"[
+            {"type":"file","path":"onnx/duration.onnx","size":1234},
+            {"type":"file","path":"onnx/tokens.txt","size":56},
+            {"type":"directory","path":"onnx/nested"}
+        ]"#;
+        let files = parse_listing(body).unwrap();
+        assert_eq!(files.len(), 2, "directories are skipped");
+        assert_eq!(files[0].name, DURATION_FILE, "subdir prefix is stripped");
+        assert_eq!(files[0].size, 1234);
+    }
+
+    #[test]
+    fn test_parse_listing_rejects_non_array() {
+        assert!(parse_listing(r#"{"error":"not found"}"#).is_err());
+    }
+
+    #[test]
+    fn test_parse_listing_tolerates_missing_size() {
+        let files = parse_listing(r#"[{"type":"file","path":"tokens.txt"}]"#).unwrap();
+        assert_eq!(files[0].size, 0);
+    }
+
+    // ── Auxiliary file selection ─────────────────────────────────────────────
+
+    #[test]
+    fn test_auxiliary_selects_small_text_files() {
+        for name in ["tokens.txt", "phonemes.json", "symbols.csv"] {
+            let f = RepoFile { name: name.into(), size: 4096 };
+            assert!(f.is_auxiliary(), "{name} should be fetched");
+        }
+    }
+
+    #[test]
+    fn test_auxiliary_skips_graphs_and_large_files() {
+        assert!(!RepoFile { name: "decode.onnx".into(), size: 100 }.is_auxiliary());
+        assert!(!RepoFile { name: "model.onnx_data".into(), size: 100 }.is_auxiliary());
+        assert!(
+            !RepoFile { name: "huge.json".into(), size: MAX_AUX_FILE_BYTES + 1 }.is_auxiliary(),
+            "oversized files are not auxiliary"
+        );
+        assert!(!RepoFile { name: "README.md".into(), size: 100 }.is_auxiliary());
+    }
+
+    // ── Layout URLs ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_layout_urls_with_subdir() {
+        let l = Layout { repo: "owner/repo", subdir: "onnx" };
+        assert_eq!(l.tree_url(), "https://huggingface.co/api/models/owner/repo/tree/main/onnx");
+        assert_eq!(l.file_url("a.onnx"), "https://huggingface.co/owner/repo/resolve/main/onnx/a.onnx");
+    }
+
+    #[test]
+    fn test_layout_urls_at_repo_root() {
+        let l = Layout { repo: "owner/repo", subdir: "" };
+        assert_eq!(l.tree_url(), "https://huggingface.co/api/models/owner/repo/tree/main");
+        assert_eq!(l.file_url("a.onnx"), "https://huggingface.co/owner/repo/resolve/main/a.onnx");
+    }
+
+    #[test]
+    fn test_known_good_layout_is_tried_first() {
+        // Confirmed working against the published export.
+        assert_eq!(CANDIDATE_LAYOUTS[0].repo, "owensong/Inflect-Micro-v2-ONNX");
+        assert_eq!(CANDIDATE_LAYOUTS[0].subdir, "onnx");
     }
 
     // ── Sentence splitting ───────────────────────────────────────────────────

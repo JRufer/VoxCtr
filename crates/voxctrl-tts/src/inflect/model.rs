@@ -211,11 +211,12 @@ impl InflectModel {
 
         let vocab = PhonemeVocab::load(dir)?.ok_or_else(|| {
             anyhow!(
-                "No phoneme vocabulary found in {}. Expected one of: {}. The \
-                 vocabulary ships with the ONNX export and maps eSpeak IPA to the \
-                 model's phoneme ids; synthesis cannot be correct without it.",
-                dir.display(),
-                phonemes::VOCAB_FILES.join(", ")
+                "No phoneme table found in {}. The table ships with the ONNX export \
+                 and maps eSpeak IPA to the model's phoneme ids; synthesis cannot be \
+                 correct without it. Any .json/.txt/.csv/.tsv file there that parses \
+                 as a symbol→id table is accepted — re-run the download from TTS \
+                 settings, or place the table there by hand.",
+                dir.display()
             )
         })?;
 
@@ -223,6 +224,15 @@ impl InflectModel {
         let decode_plan = plan_decode(&duration_sig, &decode_sig)?;
 
         let vocab_len = vocab.len();
+        info!(
+            "Inflect-Micro-v2 phoneme table: {} entries from {}",
+            vocab_len,
+            vocab
+                .source
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "built-in fallback".into())
+        );
         info!(
             "Inflect-Micro-v2 ready: {} phonemes in vocabulary, {} duration inputs, {} decode inputs",
             vocab_len,
