@@ -26,26 +26,29 @@ Instead of fixed precomputed voice embeddings, Pocket-TTS clones a voice from a 
 Model weights and the per-voice reference clips are downloaded on demand via `pocket_tts::weights::download_if_necessary`, which resolves `hf://owner/repo/filename[@revision]` URIs through the standard HuggingFace cache (`~/.cache/huggingface/hub/`). Subsequent loads are read straight from the local cache — no network access required once downloaded.
 
 ### Inflect-Micro-v2 (Neural, ONNX)
-[Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2) is a ~9.4M-parameter VITS-family text-to-waveform model (37.5 MB FP32, Apache 2.0) producing 24 kHz mono audio from a single fixed English voice. It is the smallest neural option VoxCtrl offers — roughly a tenth the download of a Piper voice pack — and runs in-process through ONNX Runtime with no subprocess.
+[Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2) is a ~9.4M-parameter VITS-family text-to-waveform model (37.5 MB FP32, Apache 2.0) producing 24 kHz mono audio from a single fixed English voice. It is the smallest neural option VoxCtrl offers and runs in-process through ONNX Runtime with no subprocess.
 
-The ONNX release splits the learned path across two graphs, which VoxCtrl runs in sequence:
+The verified FP32 export is published separately as [`Inflect-Micro-v2-ONNX`](https://huggingface.co/owensong/Inflect-Micro-v2-ONNX), with the graphs under `onnx/`. VoxCtrl lists the repository through the Hugging Face API and downloads the graphs plus their accompanying files into `~/.local/share/voxctrl/models/inflect-micro/`. Point `model_dir` at an existing copy to skip downloading.
 
-1. `duration.onnx` — phoneme ids → aligned latent sequence (stochastic duration predictor + monotonic alignment)
-2. `decode.onnx` — latent sequence → waveform (residual coupling flow + alias-reduced neural vocoder)
+**Pipeline**, following the export's own `inference_onnx.py`:
 
-Grapheme-to-phoneme conversion stays outside the graphs: the export starts at phoneme ids, so `crates/voxctrl-tts/src/inflect/phonemes.rs` reproduces the training-time frontend by shelling out to eSpeak-NG's `en-us` voice in IPA mode. Clause punctuation is preserved (each clause is phonemized separately and its terminator re-attached) because VITS models carry prosody in `,`/`.`/`?`/`!`.
+1. `duration.onnx` — `tokens` (int64 `[1, N]`), `lengths` (int64 `[1]`), `length_scale` (float32 scalar) → `m_p_exp`, `logs_p_exp`, `y_mask`
+2. Latent noise `zp_noise` is drawn **host-side** with `m_p_exp`'s shape
+3. `decode.onnx` — `m_p_exp`, `logs_p_exp`, `y_mask`, `zp_noise`, `noise_scale` (float32 scalar) → `waveform`
 
-Because the model is fixed-voice, there is no voice picker. The tunables are the sampling seed — the model is deterministic for a fixed seed — and the two VITS noise scales.
+`length_scale` is `1.0 / speed`; `noise_scale` is the variation setting (0.0–1.0, default 0.667).
+
+**Tokenization.** Phoneme ids are positions in the ordered `symbols` list from the model's text frontend. Ids are interleaved with blanks into `[0, s₀, 0, s₁, …, 0]` (length `2n+1`); there is no BOS/EOS wrapper. The symbol list is discovered by parsing — any `.json`/`.txt`/`.csv`/`.tsv`/`.py` in the model directory that yields a plausible symbol table is accepted, so it does not depend on a fixed filename.
+
+**Chunking.** Text is normalised, split after `.!?;:` followed by whitespace, and any sentence over 280 characters is split again at the last `,`/`;`/`:` in range (or the last space). Each sentence is its own chunk — they are not packed together — so the per-chunk boundary pause (0.28 s after `?`, 0.22 s after `.`, down to 0.08 s with no terminator) lands correctly. Every chunk gets a 5 ms edge fade, and the seed advances per chunk. Playback of each chunk overlaps generation of the next.
+
+**Seed reproducibility.** The reference draws `zp_noise` with NumPy's PCG64. VoxCtrl uses its own PCG64 with Box–Muller instead, so output is fully deterministic for a given seed *within VoxCtrl*, but a seed does not select the same sample as the same seed in the Python reference. Any correctly-distributed noise produces valid audio; the seed only chooses which sample you get.
 
 **Prerequisites:**
 - Built with the `inflect-micro` cargo feature (`cargo build --features inflect-micro`). It is opt-in because it pulls in ONNX Runtime. Without it, selecting the engine reports that the build lacks it rather than failing silently; Settings → TTS surfaces the same warning.
-- `espeak-ng` installed on the system, used for phonemization.
+- `espeak-ng` installed on the system, used for grapheme-to-phoneme conversion.
 
-The graphs and the phoneme vocabulary are downloaded on demand from the Hugging Face hub into `~/.local/share/voxctrl/models/inflect-micro/`. Point `model_dir` at an existing copy to skip downloading entirely.
-
-Long text is split at sentence boundaries into ~220-character chunks and played chunk by chunk, so playback of the first sentence overlaps generation of the rest — the graphs synthesize a whole utterance per call with no streaming API.
-
-**Tensor naming:** inputs are bound to the graphs *by name* at load time. If a name cannot be mapped, loading fails with the signature the export actually declares rather than producing garbled audio. Settings → TTS → Inspect graphs (or the `inflect_micro_inspect` command) reports that signature for a downloaded model; the alias tables live in `crates/voxctrl-tts/src/inflect/model.rs`.
+Graph signatures are verified at load, and a missing input is a hard error reporting what the graph actually declares. Settings → TTS → Inspect graphs (or the `inflect_micro_inspect` command) reports that signature for a downloaded model.
 
 ### Espeak-ng (Lightweight)
 If Piper is unavailable or no voice is downloaded, VoxCtrl can use `espeak-ng`. It is invoked as a subprocess with the text as an argument. Quality is lower but espeak-ng is always available as a system package.

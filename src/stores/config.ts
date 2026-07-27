@@ -84,7 +84,6 @@ export interface InflectMicroConfig {
   model_dir: string;
   seed: number;
   noise_scale: number;
-  noise_scale_w: number;
   prewarm: boolean;
 }
 
@@ -183,7 +182,6 @@ const defaultConfig: AppConfig = {
       model_dir: "",
       seed: 0,
       noise_scale: 0.667,
-      noise_scale_w: 0.8,
       prewarm: false,
     },
     snippets: {

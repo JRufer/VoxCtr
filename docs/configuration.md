@@ -87,7 +87,6 @@ Full schema with defaults:
       "model_dir": "",
       "seed": 0,
       "noise_scale": 0.667,
-      "noise_scale_w": 0.8,
       "prewarm": false
     }
   },
@@ -264,8 +263,7 @@ shared `tts.speed`. See [tts.md](tts.md) for the full engine notes.
 |---|---|---|---|
 | `model_dir` | string | `""` | Directory holding the ONNX graphs and phoneme vocabulary; empty = `~/.local/share/voxctrl/models/inflect-micro/`. Point at an existing copy to skip downloading. Supports `~` expansion. |
 | `seed` | int | `0` | Sampling seed. The model is deterministic for a fixed seed, so repeated synthesis of the same text is identical. |
-| `noise_scale` | float | `0.667` | VITS latent sampling temperature — higher is more varied, lower is flatter |
-| `noise_scale_w` | float | `0.8` | VITS stochastic duration-predictor noise, controlling rhythm variability |
+| `noise_scale` | float | `0.667` | Latent sampling temperature (0.0 – 1.0) — higher is more varied, lower is flatter |
 | `prewarm` | bool | `false` | Load the ONNX graphs on startup so the first synthesis has no load delay |
 
 

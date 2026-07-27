@@ -147,17 +147,11 @@ pub fn phonemize(text: &str) -> Result<String> {
 
 // ── Phoneme vocabulary ────────────────────────────────────────────────────────
 
-/// Reserved symbol names used by VITS phoneme vocabularies.
-const PAD: &str = "_";
-const BOS: &str = "^";
-const EOS: &str = "$";
-
 /// Maps IPA characters to the model's phoneme ids.
 ///
-/// The vocabulary ships with the ONNX export, so it is always read from disk when
-/// present — see [`PhonemeVocab::load`] for the file names and formats accepted.
-/// [`PhonemeVocab::conventional`] exists only as a documented fallback and is not
-/// a substitute for the real table.
+/// Ids come from the symbol's position in the export's ordered `symbols` list,
+/// so the list itself is the vocabulary — see [`PhonemeVocab::load`] for the
+/// file names and formats accepted.
 #[derive(Debug, Clone)]
 pub struct PhonemeVocab {
     map: HashMap<String, i64>,
@@ -169,7 +163,10 @@ pub struct PhonemeVocab {
 
 /// File names checked first for the phoneme table. Not exhaustive — [`PhonemeVocab::load`]
 /// falls back to scanning every text file in the directory.
-pub const VOCAB_FILES: [&str; 4] = [
+pub const VOCAB_FILES: [&str; 6] = [
+    // The export derives ids from the ordered list in `text/symbols.py`.
+    "symbols.py",
+    "symbols.json",
     "phonemes.json",
     "tokens.json",
     "vocab.json",
@@ -177,7 +174,7 @@ pub const VOCAB_FILES: [&str; 4] = [
 ];
 
 /// Extensions considered when scanning for an unnamed phoneme table.
-const VOCAB_EXTENSIONS: [&str; 4] = ["json", "txt", "csv", "tsv"];
+const VOCAB_EXTENSIONS: [&str; 5] = ["json", "txt", "csv", "tsv", "py"];
 
 /// A phoneme table has to be big enough to cover an IPA inventory and made
 /// mostly of short symbols. This is what separates a real table from a
@@ -240,14 +237,15 @@ impl PhonemeVocab {
     pub fn load(dir: &Path) -> Result<Option<Self>> {
         for path in candidate_vocab_paths(dir) {
             let Ok(raw) = std::fs::read_to_string(&path) else { continue };
-            let parsed = if path
+            let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("json"))
-            {
-                parse_json_vocab(&raw)
-            } else {
-                parse_text_vocab(&raw)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let parsed = match ext.as_str() {
+                "json" => parse_json_vocab(&raw),
+                "py" => parse_python_symbols(&raw).map(map_from_ordered),
+                _ => parse_text_vocab(&raw),
             };
             let Ok(map) = parsed else { continue };
             if !is_plausible_vocab(&map) {
@@ -262,24 +260,19 @@ impl PhonemeVocab {
         Ok(None)
     }
 
-    /// The conventional VITS phoneme table: pad/BOS/EOS at ids 0/1/2 followed by
-    /// the IPA inventory eSpeak-NG emits for `en-us`.
-    ///
-    /// **This is a fallback, not the model's real table.** Ids assigned here are
-    /// almost certainly not Inflect's, so audio produced through it would be
-    /// wrong. [`super::model::InflectModel`] only reaches for this when the model
-    /// directory ships no vocabulary file, and refuses to synthesize with it
-    /// unless explicitly permitted.
-    pub fn conventional() -> Self {
-        let mut map = HashMap::new();
-        for (i, sym) in [PAD, BOS, EOS].iter().enumerate() {
-            map.insert((*sym).to_string(), i as i64);
-        }
-        // eSpeak-NG `en-us` IPA inventory plus the punctuation VITS keeps.
-        const SYMBOLS: &str = " !\",-.:;?abdefhijklmnopqrstuvwxyzæðŋɐɑɔəɚɛɜɡɪɫɬɹɾʃʊʌʒʔθˈˌːᵻ‍";
-        for (i, c) in SYMBOLS.chars().enumerate() {
-            map.insert(c.to_string(), (i + 3) as i64);
-        }
+    /// Build a table from an ordered symbol list, where a symbol's id is its
+    /// position — the same rule the export uses (`{symbol: index for index,
+    /// symbol in enumerate(symbols)}`).
+    pub fn from_symbols<I, S>(symbols: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let map = symbols
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| (s.into(), i as i64))
+            .collect();
         Self { map, from_file: false, source: None }
     }
 
@@ -293,35 +286,24 @@ impl PhonemeVocab {
 
     /// Encode an IPA string into model input ids.
     ///
-    /// Follows the VITS convention the architecture implies: a BOS, then every
-    /// phoneme separated by a pad ("blank") symbol, then an EOS. The interleaved
-    /// pad is what the monotonic alignment attends over, so dropping it would
-    /// change the alignment length the duration predictor sees.
+    /// Mirrors `phonemes_to_tokens` in the export's reference script exactly:
+    /// each symbol maps to its index in the ordered symbol list, and the result
+    /// is interleaved with blanks into `[0, s₀, 0, s₁, …, sₙ₋₁, 0]` — length
+    /// `2n+1`. The blank is the literal id `0`, and there is **no** BOS/EOS
+    /// wrapper; the interleaved blanks are what the monotonic alignment attends
+    /// over, so the length has to come out exactly right.
     ///
     /// Characters absent from the vocabulary are skipped and reported in the
     /// returned `skipped` list rather than failing the utterance — an unknown
     /// symbol should cost one phoneme, not the whole sentence.
     pub fn encode(&self, ipa: &str) -> Encoded {
-        let pad = self.id(PAD);
-        let mut ids = Vec::new();
+        let mut sequence = Vec::new();
         let mut skipped = Vec::new();
-
-        if let Some(bos) = self.id(BOS) {
-            ids.push(bos);
-        }
-        if let Some(p) = pad {
-            ids.push(p);
-        }
 
         for c in ipa.chars() {
             let sym = c.to_string();
             match self.id(&sym) {
-                Some(id) => {
-                    ids.push(id);
-                    if let Some(p) = pad {
-                        ids.push(p);
-                    }
-                }
+                Some(id) => sequence.push(id),
                 None => {
                     if !skipped.contains(&sym) {
                         skipped.push(sym);
@@ -330,8 +312,13 @@ impl PhonemeVocab {
             }
         }
 
-        if let Some(eos) = self.id(EOS) {
-            ids.push(eos);
+        if sequence.is_empty() {
+            return Encoded { ids: Vec::new(), skipped };
+        }
+
+        let mut ids = vec![0i64; sequence.len() * 2 + 1];
+        for (i, id) in sequence.iter().enumerate() {
+            ids[i * 2 + 1] = *id;
         }
 
         Encoded { ids, skipped }
@@ -345,14 +332,152 @@ pub struct Encoded {
     pub skipped: Vec<String>,
 }
 
+/// Parse an ordered symbol list out of a Python source file.
+///
+/// The export defines its inventory as `symbols = [...]` in `text/symbols.py`
+/// and derives ids by position (`{symbol: index for index, symbol in
+/// enumerate(symbols)}`), so position is the id. This reads that list literal
+/// without executing anything.
+fn parse_python_symbols(raw: &str) -> Result<Vec<String>> {
+    // Find `symbols` bound to a list literal, then take the bracketed body.
+    let start = raw
+        .find("symbols")
+        .and_then(|i| raw[i..].find('[').map(|j| i + j + 1))
+        .context("no `symbols = [...]` list found")?;
+    let end = raw[start..]
+        .find(']')
+        .map(|i| start + i)
+        .context("unterminated symbols list")?;
+
+    let mut out = Vec::new();
+    for token in split_python_list(&raw[start..end]) {
+        out.push(unquote_python_string(&token)?);
+    }
+    if out.is_empty() {
+        bail!("`symbols` list is empty");
+    }
+    Ok(out)
+}
+
+/// Split a list body on commas that sit outside quotes.
+fn split_python_list(body: &str) -> Vec<String> {
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+
+    for c in body.chars() {
+        match quote {
+            Some(q) => {
+                current.push(c);
+                if escaped {
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '\'' | '"' => {
+                    quote = Some(c);
+                    current.push(c);
+                }
+                ',' => {
+                    if !current.trim().is_empty() {
+                        items.push(current.trim().to_string());
+                    }
+                    current.clear();
+                }
+                // Comments and whitespace between items carry no value.
+                '#' => break,
+                _ => current.push(c),
+            },
+        }
+    }
+    if !current.trim().is_empty() {
+        items.push(current.trim().to_string());
+    }
+    items
+}
+
+/// Strip the quotes from a Python string literal and resolve its escapes.
+fn unquote_python_string(token: &str) -> Result<String> {
+    let token = token.trim();
+    let mut chars = token.chars();
+    let open = chars.next().context("empty list item")?;
+    if open != '\'' && open != '"' {
+        bail!("list item {token:?} is not a string literal");
+    }
+    let body = token
+        .strip_prefix(open)
+        .and_then(|s| s.strip_suffix(open))
+        .with_context(|| format!("unterminated string literal {token:?}"))?;
+
+    let mut out = String::new();
+    let mut chars = body.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('u') => {
+                // \uXXXX — IPA symbols are commonly written this way.
+                let hex: String = chars.by_ref().take(4).collect();
+                let code = u32::from_str_radix(&hex, 16)
+                    .with_context(|| format!("bad \\u escape in {token:?}"))?;
+                out.push(char::from_u32(code).context("invalid code point")?);
+            }
+            Some(other) => out.push(other),
+            None => bail!("trailing backslash in {token:?}"),
+        }
+    }
+    Ok(out)
+}
+
+/// Turn an ordered symbol list into a symbol→id map, where id is the position.
+fn map_from_ordered(symbols: Vec<String>) -> HashMap<String, i64> {
+    symbols
+        .into_iter()
+        .enumerate()
+        .map(|(i, s)| (s, i as i64))
+        .collect()
+}
+
 fn parse_json_vocab(raw: &str) -> Result<HashMap<String, i64>> {
     let value: serde_json::Value = serde_json::from_str(raw).context("invalid JSON")?;
+
+    // An ordered array is the same shape as `text/symbols.py`: id is position.
+    if let Some(array) = value.as_array() {
+        let symbols: Vec<String> = array
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        if symbols.len() == array.len() && !symbols.is_empty() {
+            return Ok(map_from_ordered(symbols));
+        }
+    }
 
     // Piper-style config: the table lives under `phoneme_id_map`.
     let table = value
         .get("phoneme_id_map")
         .or_else(|| value.get("vocab"))
+        .or_else(|| value.get("symbols"))
         .unwrap_or(&value);
+
+    if let Some(array) = table.as_array() {
+        let symbols: Vec<String> = array
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        if symbols.len() == array.len() && !symbols.is_empty() {
+            return Ok(map_from_ordered(symbols));
+        }
+    }
 
     let obj = table
         .as_object()
@@ -610,53 +735,60 @@ mod tests {
 
     // ── Encoding ─────────────────────────────────────────────────────────────
 
+    /// A small ordered inventory: ids are positions, so `_`=0, `a`=1, `b`=2.
+    fn test_vocab() -> PhonemeVocab {
+        PhonemeVocab::from_symbols(["_", "a", "b", "c", "ˈ", "ː", " ", "."])
+    }
+
     #[test]
-    fn test_encode_interleaves_pad_and_wraps_with_bos_eos() {
-        let vocab = PhonemeVocab::conventional();
-        let encoded = vocab.encode("ab");
-        // ^ _ a _ b _ $
-        assert_eq!(encoded.ids.first(), Some(&1), "starts with BOS");
-        assert_eq!(encoded.ids.last(), Some(&2), "ends with EOS");
-        assert_eq!(encoded.ids[1], 0, "pad follows BOS");
-        assert_eq!(encoded.ids.len(), 7);
+    fn test_encode_interleaves_blanks_without_bos_or_eos() {
+        // Reference: with_blanks[1::2] = sequence, length 2n+1, blank id 0.
+        let encoded = test_vocab().encode("ab");
+        assert_eq!(encoded.ids, vec![0, 1, 0, 2, 0]);
         assert!(encoded.skipped.is_empty());
     }
 
     #[test]
+    fn test_encode_length_is_two_n_plus_one() {
+        let encoded = test_vocab().encode("abc");
+        assert_eq!(encoded.ids.len(), 3 * 2 + 1);
+        assert_eq!(encoded.ids[0], 0, "starts with a blank");
+        assert_eq!(*encoded.ids.last().unwrap(), 0, "ends with a blank");
+    }
+
+    #[test]
     fn test_encode_reports_unknown_symbols_without_failing() {
-        let vocab = PhonemeVocab::conventional();
-        // `%` is not a phoneme and is not in the inventory.
-        let encoded = vocab.encode("a%b");
+        // `%` is not in the inventory; it contributes no id and no blank.
+        let encoded = test_vocab().encode("a%b");
         assert_eq!(encoded.skipped, vec!["%".to_string()]);
-        assert_eq!(encoded.ids.len(), 7, "unknown symbol contributes no ids");
+        assert_eq!(encoded.ids, vec![0, 1, 0, 2, 0]);
     }
 
     #[test]
     fn test_encode_dedupes_skipped_symbols() {
-        let vocab = PhonemeVocab::conventional();
-        let encoded = vocab.encode("%%%");
+        let encoded = test_vocab().encode("%%%");
         assert_eq!(encoded.skipped.len(), 1);
     }
 
     #[test]
-    fn test_encode_empty_input_is_bos_pad_eos() {
-        let vocab = PhonemeVocab::conventional();
-        let encoded = vocab.encode("");
-        assert_eq!(encoded.ids, vec![1, 0, 2]);
+    fn test_encode_empty_input_yields_no_ids() {
+        // The reference raises on an empty sequence; returning empty lets the
+        // caller skip the chunk instead of failing the whole utterance.
+        assert!(test_vocab().encode("").ids.is_empty());
+        assert!(test_vocab().encode("%%%").ids.is_empty());
     }
 
     #[test]
-    fn test_conventional_vocab_marks_itself_as_not_from_file() {
-        assert!(!PhonemeVocab::conventional().from_file);
+    fn test_from_symbols_assigns_ids_by_position() {
+        let v = PhonemeVocab::from_symbols(["_", "x", "y"]);
+        assert_eq!(v.id("_"), Some(0));
+        assert_eq!(v.id("x"), Some(1));
+        assert_eq!(v.id("y"), Some(2));
     }
 
     #[test]
-    fn test_conventional_vocab_covers_common_espeak_ipa() {
-        let vocab = PhonemeVocab::conventional();
-        // Stress and length marks are real phonemes in eSpeak IPA output.
-        for sym in ["ˈ", "ː", "ɹ", "ə", "ŋ", " ", ".", ","] {
-            assert!(vocab.id(sym).is_some(), "missing {sym:?} from inventory");
-        }
+    fn test_from_symbols_is_not_marked_as_from_file() {
+        assert!(!PhonemeVocab::from_symbols(["_"]).from_file);
     }
 
     // ── eSpeak-backed phonemization ──────────────────────────────────────────
@@ -677,12 +809,12 @@ mod tests {
     }
 
     #[test]
-    fn test_phonemize_encodes_through_conventional_vocab() {
+    fn test_phonemize_encodes_through_a_symbol_table() {
         if !espeak_available() {
             return;
         }
         let ipa = phonemize("Testing one two three.").unwrap();
-        let encoded = PhonemeVocab::conventional().encode(&ipa);
+        let encoded = test_vocab().encode(&ipa);
         assert!(encoded.ids.len() > 10);
     }
 

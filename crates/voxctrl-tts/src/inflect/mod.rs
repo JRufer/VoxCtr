@@ -5,7 +5,7 @@
 //! Unlike Piper (which shells out to a separate binary) and Pocket-TTS (which
 //! clones a voice from a reference clip), Inflect runs in-process through ONNX
 //! Runtime and has no voice to select — so its settings are the sampling seed and
-//! the two VITS noise scales rather than a voice picker.
+//! the latent sampling temperature rather than a voice picker.
 //!
 //! Split by concern:
 //! - [`phonemes`] — eSpeak-NG IPA frontend and the phoneme→id vocabulary
@@ -18,15 +18,13 @@
 //! it was built in, which the settings UI surfaces so choosing the engine in a
 //! build without it fails loudly rather than silently doing nothing.
 //!
-//! # Status of the tensor contract
+//! # Tensor contract
 //!
-//! The tensor names in [`model`] were written without access to the published
-//! export — `huggingface.co` was blocked by network policy at the time — so they
-//! follow conventional VITS export naming. Inputs are bound **by name** at load
-//! time and any unresolved name is a hard error listing the real signature, so a
-//! mismatch shows up as an actionable message instead of broken audio. The
-//! `inflect_micro_inspect` Tauri command prints that signature for a downloaded
-//! model; correcting the alias tables in `model.rs` is then a one-place edit.
+//! The graph signatures, tokenization, chunking, boundary pauses and edge fade
+//! all follow the export's own `inference_onnx.py`. The one deliberate
+//! divergence is the latent-noise RNG: the reference draws it with NumPy, which
+//! this cannot reproduce stream-for-stream, so a given seed does not select the
+//! same sample here as it does there. See `model::StandardNormal`.
 
 pub mod phonemes;
 
@@ -330,55 +328,125 @@ async fn download_to(url: &str, path: &std::path::Path) -> Result<()> {
 
 // ── Text chunking ─────────────────────────────────────────────────────────────
 
-/// Roughly how many characters to synthesize per ONNX call.
-///
-/// The graphs produce a whole utterance in one shot with no streaming API, so
-/// long text is split and played chunk by chunk: playback of the first chunk
-/// overlaps generation of the rest, which cuts perceived latency from "generate
-/// the whole response" to "generate the first sentence". It also bounds peak
-/// memory, since VITS activations scale with sequence length.
-pub const CHUNK_TARGET_CHARS: usize = 220;
+/// Maximum characters per synthesis call, matching `split_text`'s default in the
+/// export's reference script.
+pub const CHUNK_LIMIT_CHARS: usize = 280;
 
-/// Split `text` into synthesis chunks at sentence boundaries, packing sentences
-/// up to [`CHUNK_TARGET_CHARS`]. A single sentence longer than the target is left
-/// whole rather than cut mid-phrase — prosody matters more than the bound.
-pub fn chunk_text(text: &str) -> Vec<String> {
-    let sentences = split_sentences(text);
-    let mut chunks: Vec<String> = Vec::new();
-    let mut current = String::new();
+/// Length of the taper applied to each end of a chunk, matching `edge_fade`.
+pub const EDGE_FADE_MS: f32 = 5.0;
 
-    for sentence in sentences {
-        if current.is_empty() {
-            current = sentence;
-        } else if current.len() + 1 + sentence.len() <= CHUNK_TARGET_CHARS {
-            current.push(' ');
-            current.push_str(&sentence);
-        } else {
-            chunks.push(std::mem::take(&mut current));
-            current = sentence;
-        }
+/// Silence inserted after a chunk, keyed by the punctuation that ended it.
+/// Values are the reference script's `boundary_pause_seconds`.
+pub fn boundary_pause_seconds(chunk: &str) -> f32 {
+    match chunk.trim_end().chars().last() {
+        Some('?') => 0.28,
+        Some('!') => 0.24,
+        Some('.') => 0.22,
+        Some(';') => 0.16,
+        Some(':') => 0.13,
+        Some(',') => 0.09,
+        _ => 0.08,
     }
-    if !current.is_empty() {
-        chunks.push(current);
+}
+
+/// Taper the first and last 5 ms of a chunk so concatenation doesn't click.
+/// Mirrors the reference script's `edge_fade`.
+pub fn edge_fade(waveform: &mut [f32], sample_rate: u32, milliseconds: f32) {
+    let frames = ((sample_rate as f32 * milliseconds / 1000.0).round() as usize)
+        .min(waveform.len() / 2);
+    if frames == 0 {
+        return;
+    }
+    let last = frames.saturating_sub(1).max(1) as f32;
+    for i in 0..frames {
+        let ramp = i as f32 / last;
+        waveform[i] *= ramp;
+        let end = waveform.len() - 1 - i;
+        waveform[end] *= ramp;
+    }
+}
+
+/// Split `text` into synthesis chunks, following the reference `split_text`.
+///
+/// Whitespace is normalised, the text is broken after sentence-ending
+/// punctuation, and any sentence still over [`CHUNK_LIMIT_CHARS`] is split again
+/// at the last comma/semicolon/colon in range (or the last space, or hard at the
+/// limit). Sentences are *not* packed together — each is its own chunk, which is
+/// what makes the per-chunk boundary pauses land in the right places.
+pub fn chunk_text(text: &str) -> Vec<String> {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return Vec::new();
+    }
+
+    let mut chunks = Vec::new();
+    for sentence in split_sentences(&normalized) {
+        let mut sentence = sentence;
+        // `.len()` is bytes; the reference counts characters, so work in chars.
+        while sentence.chars().count() > CHUNK_LIMIT_CHARS {
+            let split_at = pick_split_point(&sentence, CHUNK_LIMIT_CHARS);
+            let head: String = sentence.chars().take(split_at).collect();
+            let tail: String = sentence.chars().skip(split_at).collect();
+            let head = head.trim().to_string();
+            if !head.is_empty() {
+                chunks.push(head);
+            }
+            sentence = tail.trim().to_string();
+            if sentence.is_empty() {
+                break;
+            }
+        }
+        if !sentence.is_empty() {
+            chunks.push(sentence);
+        }
     }
     chunks
 }
 
-/// Split into sentences, keeping terminal punctuation attached.
+/// Choose where to cut an over-long sentence: the last `,`/`;`/`:` within the
+/// limit if it is past the halfway point, else the last space, else hard.
+fn pick_split_point(sentence: &str, limit: usize) -> usize {
+    let chars: Vec<char> = sentence.chars().collect();
+    let search_end = (limit + 1).min(chars.len());
+    let window = &chars[..search_end];
+
+    let punctuation = window
+        .iter()
+        .rposition(|c| matches!(c, ',' | ';' | ':'))
+        .map(|i| i + 1);
+
+    match punctuation {
+        Some(p) if p >= limit / 2 => p,
+        _ => match window.iter().rposition(|c| *c == ' ') {
+            Some(space) if space >= limit / 2 => space,
+            _ => limit,
+        },
+    }
+}
+
+/// Break after `.`/`!`/`?`/`;`/`:` followed by whitespace. The `regex` crate has
+/// no lookbehind, and this is the whole of what the reference pattern does.
 fn split_sentences(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut current = String::new();
+    let mut i = 0;
 
-    for c in text.chars() {
-        current.push(c);
-        if matches!(c, '.' | '!' | '?' | '\n') {
+    while i < chars.len() {
+        current.push(chars[i]);
+        let is_terminator = matches!(chars[i], '.' | '!' | '?' | ';' | ':');
+        let next_is_space = chars.get(i + 1).is_some_and(|c| c.is_whitespace());
+        if is_terminator && next_is_space {
             let trimmed = current.trim();
             if !trimmed.is_empty() {
                 out.push(trimmed.to_string());
             }
             current.clear();
+            i += 1; // consume the separating space
         }
+        i += 1;
     }
+
     let trimmed = current.trim();
     if !trimmed.is_empty() {
         out.push(trimmed.to_string());
@@ -424,21 +492,27 @@ pub(crate) fn speak_inflect_micro(
     let model = model.as_mut().unwrap();
 
     if is_prewarm {
-        // Run one short synthesis to warm the sessions; nothing is played.
-        let _ = model.synthesize("warm up", cfg, config.speed)?;
+        // One short synthesis to warm the sessions; nothing is played.
+        let _ = model.synthesize("warm up", cfg, config.speed, cfg.seed)?;
         return Ok(());
     }
 
+    let chunks = chunk_text(&u.text);
     let mut callback_fired = false;
-    for chunk in chunk_text(&u.text) {
+
+    for (index, chunk) in chunks.iter().enumerate() {
         if generation_counter.load(Ordering::SeqCst) != generation {
             break; // stop() was called — abandon the rest of the utterance
         }
 
-        let audio = model.synthesize(&chunk, cfg, config.speed)?;
+        // The reference advances the seed per chunk so consecutive sentences
+        // don't draw identical latent noise.
+        let seed = cfg.seed.wrapping_add(index as u64);
+        let mut audio = model.synthesize(chunk, cfg, config.speed, seed)?;
         if audio.is_empty() {
             continue;
         }
+        edge_fade(&mut audio, SAMPLE_RATE, EDGE_FADE_MS);
 
         // Re-check after synthesis: a chunk can take long enough that stop()
         // lands mid-generation, and appending would restart a stopped sink.
@@ -450,6 +524,19 @@ pub(crate) fn speak_inflect_micro(
             callback_fired = true;
             if let Some(ref cb) = on_playback_start {
                 cb();
+            }
+        }
+
+        // Silence between chunks, sized by how the previous one ended.
+        if index > 0 {
+            let pause = boundary_pause_seconds(&chunks[index - 1]);
+            let frames = (SAMPLE_RATE as f32 * pause).round() as usize;
+            if frames > 0 {
+                sink.append(rodio::buffer::SamplesBuffer::new(
+                    1,
+                    SAMPLE_RATE,
+                    vec![0.0f32; frames],
+                ));
             }
         }
 
@@ -682,9 +769,41 @@ mod tests {
     }
 
     #[test]
-    fn test_split_sentences_breaks_on_newline() {
-        let s = split_sentences("Line one\nLine two");
-        assert_eq!(s, vec!["Line one", "Line two"]);
+    fn test_split_sentences_requires_whitespace_after_terminator() {
+        // "3.5" must not split — the period is not followed by whitespace.
+        assert_eq!(split_sentences("pi is 3.14 exactly"), vec!["pi is 3.14 exactly"]);
+    }
+
+    // ── Boundary pauses and fade ─────────────────────────────────────────────
+
+    #[test]
+    fn test_boundary_pause_varies_by_terminator() {
+        assert!(boundary_pause_seconds("what?") > boundary_pause_seconds("stop."));
+        assert!(boundary_pause_seconds("stop.") > boundary_pause_seconds("and,"));
+    }
+
+    #[test]
+    fn test_boundary_pause_defaults_for_unpunctuated_text() {
+        assert_eq!(boundary_pause_seconds("no terminator"), 0.08);
+        assert_eq!(boundary_pause_seconds(""), 0.08);
+    }
+
+    #[test]
+    fn test_edge_fade_tapers_both_ends() {
+        let mut wave = vec![1.0f32; 4800];
+        edge_fade(&mut wave, SAMPLE_RATE, EDGE_FADE_MS);
+        assert_eq!(wave[0], 0.0, "starts silent");
+        assert_eq!(*wave.last().unwrap(), 0.0, "ends silent");
+        assert_eq!(wave[2400], 1.0, "middle is untouched");
+    }
+
+    #[test]
+    fn test_edge_fade_handles_short_buffers() {
+        let mut wave = vec![1.0f32; 3];
+        edge_fade(&mut wave, SAMPLE_RATE, EDGE_FADE_MS);
+        assert!(wave.iter().all(|s| s.is_finite()));
+        let mut empty: Vec<f32> = Vec::new();
+        edge_fade(&mut empty, SAMPLE_RATE, EDGE_FADE_MS);
     }
 
     #[test]
@@ -696,27 +815,45 @@ mod tests {
     // ── Chunking ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_chunk_text_packs_short_sentences_together() {
+    fn test_chunk_text_gives_each_sentence_its_own_chunk() {
+        // Sentences are not packed together — one chunk each is what makes the
+        // per-chunk boundary pauses land in the right places.
         let chunks = chunk_text("One. Two. Three.");
-        assert_eq!(chunks.len(), 1, "short sentences share a chunk");
-        assert_eq!(chunks[0], "One. Two. Three.");
+        assert_eq!(chunks, vec!["One.", "Two.", "Three."]);
     }
 
     #[test]
-    fn test_chunk_text_splits_once_over_target() {
-        let sentence = "a".repeat(150) + ".";
-        let text = format!("{sentence} {sentence}");
-        let chunks = chunk_text(&text);
-        assert_eq!(chunks.len(), 2, "two 151-char sentences exceed the 220 target");
+    fn test_chunk_text_normalises_whitespace() {
+        let chunks = chunk_text("  One.\n\n  Two.  ");
+        assert_eq!(chunks, vec!["One.", "Two."]);
     }
 
     #[test]
-    fn test_chunk_text_keeps_overlong_sentence_whole() {
-        // Splitting mid-phrase would wreck prosody, so an overlong sentence stays intact.
-        let long = "b".repeat(CHUNK_TARGET_CHARS * 2) + ".";
-        let chunks = chunk_text(&long);
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].len(), long.len());
+    fn test_chunk_text_splits_sentence_over_the_limit() {
+        let long = "word ".repeat(100);
+        let chunks = chunk_text(&format!("{long}end."));
+        assert!(chunks.len() > 1, "a 500-char sentence must be split");
+        for c in &chunks {
+            assert!(
+                c.chars().count() <= CHUNK_LIMIT_CHARS,
+                "chunk of {} chars exceeds the limit",
+                c.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn test_chunk_text_splits_on_inner_punctuation_when_available() {
+        // A comma past the halfway point is preferred over a hard cut.
+        let head = "a".repeat(200);
+        let tail = "b".repeat(200);
+        let chunks = chunk_text(&format!("{head}, {tail}"));
+        assert!(chunks[0].ends_with(','), "should break at the comma: {:?}", chunks[0]);
+    }
+
+    #[test]
+    fn test_chunk_text_breaks_on_semicolon_and_colon() {
+        assert_eq!(chunk_text("one; two: three"), vec!["one;", "two:", "three"]);
     }
 
     #[test]

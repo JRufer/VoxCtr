@@ -9,17 +9,15 @@
 //!
 //! # Binding to the graphs
 //!
-//! Inputs are resolved **by name at load time** against [`DURATION_ALIASES`] and
-//! friends, exactly as `voxctrl-inference`'s Moonshine backend resolves its
-//! decoder plan. Anything that cannot be resolved is a hard error at load,
-//! reported together with the full discovered signature, so a naming mismatch
-//! surfaces as an actionable message rather than as garbled audio.
+//! The tensor names come from the export's own `inference_onnx.py`, so they are
+//! the graphs' real signature rather than an inference from convention. Both are
+//! verified at load time and a missing input is a hard error reporting what the
+//! graph actually declares, so a revision mismatch surfaces as an actionable
+//! message rather than as garbled audio. The `inflect_micro_inspect` Tauri
+//! command reports the same signature without loading a voice.
 //!
-//! The alias tables cover conventional VITS export naming. They were written
-//! without access to the published export (see the module docs in `mod.rs`), so
-//! if Inflect names its tensors differently, [`InflectModel::load`] will say so
-//! and list what it found — run the `inflect_micro_inspect` Tauri command to get
-//! the same report without loading a voice.
+//! `zp_noise` is drawn host-side rather than sampled inside the graph — see
+//! [`StandardNormal`] for what that means for seed reproducibility.
 
 use std::path::{Path, PathBuf};
 
@@ -33,56 +31,21 @@ use tracing::{info, warn};
 use super::phonemes::{self, PhonemeVocab};
 use super::{DECODE_FILE, DURATION_FILE, SAMPLE_RATE};
 
-// ── Tensor naming ─────────────────────────────────────────────────────────────
+// ── Tensor contract ───────────────────────────────────────────────────────────
+//
+// Taken from the export's own `inference_onnx.py`, so these are the graphs'
+// actual input and output names rather than an inference from convention.
 
-/// Accepted names for the phoneme-id input of `duration.onnx`.
-const PHONEME_IDS_ALIASES: [&str; 5] =
-    ["input", "input_ids", "phoneme_ids", "text", "x"];
-/// Accepted names for the phoneme-sequence-length input.
-const PHONEME_LENGTHS_ALIASES: [&str; 4] =
-    ["input_lengths", "phoneme_lengths", "x_lengths", "text_lengths"];
-/// Accepted names for the packed `[noise_scale, length_scale, noise_scale_w]`
-/// input used by conventional VITS exports.
-const SCALES_ALIASES: [&str; 2] = ["scales", "scale"];
-/// Accepted names when the scales are exposed as separate scalar inputs instead.
-const NOISE_SCALE_ALIASES: [&str; 2] = ["noise_scale", "noise"];
-const LENGTH_SCALE_ALIASES: [&str; 3] = ["length_scale", "speed", "duration_scale"];
-const NOISE_SCALE_W_ALIASES: [&str; 2] = ["noise_scale_w", "noise_w"];
-/// Accepted names for an explicit sampling-seed input, when the graph takes one.
-const SEED_ALIASES: [&str; 2] = ["seed", "rng_seed"];
+/// `duration.onnx` inputs.
+const DURATION_INPUTS: [&str; 3] = ["tokens", "lengths", "length_scale"];
+/// `duration.onnx` outputs, in the order the reference script requests them.
+const DURATION_OUTPUTS: [&str; 3] = ["m_p_exp", "logs_p_exp", "y_mask"];
 
-/// Accepted names for the latent sequence `decode.onnx` consumes. Matched against
-/// `duration.onnx`'s outputs to connect the two stages.
-const LATENT_ALIASES: [&str; 6] = ["z", "latent", "latents", "z_p", "input", "x"];
-/// Accepted names for an optional latent-length input on `decode.onnx`.
-const LATENT_LENGTHS_ALIASES: [&str; 3] = ["z_lengths", "y_lengths", "latent_lengths"];
-
-/// What supplies one `duration.onnx` input, resolved once at load time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DurationInput {
-    PhonemeIds,
-    PhonemeLengths,
-    /// Packed `[noise_scale, length_scale, noise_scale_w]`.
-    Scales,
-    NoiseScale,
-    LengthScale,
-    NoiseScaleW,
-    Seed,
-}
-
-/// What supplies one `decode.onnx` input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DecodeInput {
-    /// The i-th output of `duration.onnx`.
-    FromDuration(usize),
-    LatentLengths,
-    NoiseScale,
-    Seed,
-}
-
-fn matches(name: &str, aliases: &[&str]) -> bool {
-    aliases.iter().any(|a| a.eq_ignore_ascii_case(name))
-}
+/// `decode.onnx` inputs. `zp_noise` is sampled host-side (see [`StandardNormal`]).
+const DECODE_INPUTS: [&str; 5] =
+    ["m_p_exp", "logs_p_exp", "y_mask", "zp_noise", "noise_scale"];
+/// `decode.onnx` output.
+const DECODE_OUTPUT: &str = "waveform";
 
 // ── Discovered signature ──────────────────────────────────────────────────────
 
@@ -180,26 +143,113 @@ fn build_session(path: &Path) -> Result<Session> {
         .with_context(|| format!("load ONNX graph {}", path.display()))
 }
 
+// ── Latent noise ──────────────────────────────────────────────────────────────
+
+/// Seeded standard-normal sampler for the `zp_noise` input.
+///
+/// The reference script draws this host-side with NumPy
+/// (`np.random.default_rng(seed).standard_normal(...)`). Reproducing NumPy's
+/// PCG64 stream and ziggurat sampler exactly would be the only way to match its
+/// output sample-for-sample, so this uses its own PCG64 with Box–Muller instead:
+/// output is fully deterministic for a given seed within VoxCtrl, but a given
+/// seed does not correspond to the same voice as the same seed in the Python
+/// reference. Any correctly-distributed noise yields valid audio — the seed only
+/// controls which sample from the distribution you get.
+struct StandardNormal {
+    state: u128,
+    /// Box–Muller produces two deviates per pass; this holds the spare.
+    spare: Option<f32>,
+}
+
+impl StandardNormal {
+    /// PCG64 multiplier and increment, as specified by the reference implementation.
+    const MULTIPLIER: u128 = 47026247687942121848144207491837523525;
+    const INCREMENT: u128 = 117397592171526113268558934119004209487;
+
+    fn new(seed: u64) -> Self {
+        let mut rng = Self { state: 0, spare: None };
+        rng.state = rng
+            .state
+            .wrapping_add(Self::INCREMENT)
+            .wrapping_add(seed as u128);
+        rng.step();
+        rng
+    }
+
+    fn step(&mut self) -> u64 {
+        self.state = self
+            .state
+            .wrapping_mul(Self::MULTIPLIER)
+            .wrapping_add(Self::INCREMENT);
+        // XSL-RR output: xor the halves, then rotate by the top 6 bits.
+        let xored = ((self.state >> 64) ^ self.state) as u64;
+        let rot = (self.state >> 122) as u32;
+        xored.rotate_right(rot)
+    }
+
+    /// Uniform in (0, 1] — zero is excluded so `ln` stays finite.
+    fn next_open_unit(&mut self) -> f64 {
+        let bits = self.step() >> 11; // 53 significant bits
+        (bits as f64 + 1.0) / (9007199254740992.0 + 1.0)
+    }
+
+    fn next(&mut self) -> f32 {
+        if let Some(spare) = self.spare.take() {
+            return spare;
+        }
+        let u1 = self.next_open_unit();
+        let u2 = self.next_open_unit();
+        let radius = (-2.0 * u1.ln()).sqrt();
+        let theta = std::f64::consts::TAU * u2;
+        self.spare = Some((radius * theta.sin()) as f32);
+        (radius * theta.cos()) as f32
+    }
+
+    fn fill(&mut self, n: usize) -> Vec<f32> {
+        (0..n).map(|_| self.next()).collect()
+    }
+}
+
 // ── Loaded model ──────────────────────────────────────────────────────────────
 
 pub struct InflectModel {
     duration: Session,
     decode: Session,
     vocab: PhonemeVocab,
-    /// One entry per `duration.onnx` input, in declared order.
-    duration_plan: Vec<DurationInput>,
-    /// One entry per `decode.onnx` input, in declared order.
-    decode_plan: Vec<DecodeInput>,
     signature: ModelSignature,
     dir: PathBuf,
 }
 
+/// Fail with the discovered signature when a graph doesn't declare what the
+/// reference contract says it should.
+fn require_inputs(sig: &GraphSignature, required: &[&str], other: &GraphSignature) -> Result<()> {
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|r| !sig.inputs.iter().any(|i| i == r))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "Inflect-Micro-v2: {} does not declare the expected input(s): {}.\n\
+         Discovered signature:\n{}\n{}\n\
+         The contract this build targets comes from the export's own \
+         inference_onnx.py; a mismatch means the downloaded graphs are a \
+         different revision.",
+        sig.file,
+        missing.join(", "),
+        describe(sig),
+        describe(other)
+    )
+}
+
 impl InflectModel {
-    /// Load both graphs and resolve their inputs into a binding plan.
+    /// Load both graphs and verify they declare the expected tensor contract.
     ///
-    /// Fails when the phoneme vocabulary is absent or when any input cannot be
-    /// matched to a known role, rather than guessing — a wrong binding produces
-    /// audio that sounds broken in ways that are hard to trace back here.
+    /// Fails when the phoneme table is absent or a graph's signature doesn't
+    /// match, rather than proceeding — a wrong binding produces audio that
+    /// sounds broken in ways that are hard to trace back here.
     pub fn load(dir: &Path) -> Result<Self> {
         info!("Loading Inflect-Micro-v2 from {}", dir.display());
 
@@ -211,19 +261,23 @@ impl InflectModel {
 
         let vocab = PhonemeVocab::load(dir)?.ok_or_else(|| {
             anyhow!(
-                "No phoneme table found in {}. The table ships with the ONNX export \
-                 and maps eSpeak IPA to the model's phoneme ids; synthesis cannot be \
-                 correct without it. Any .json/.txt/.csv/.tsv file there that parses \
-                 as a symbol→id table is accepted — re-run the download from TTS \
-                 settings, or place the table there by hand.",
+                "No phoneme table found in {}. The export derives phoneme ids from \
+                 the ordered `symbols` list in its text frontend, so that list must \
+                 be present; synthesis cannot be correct without it. A symbols.py, \
+                 a JSON array, or a symbol->id table are all accepted.",
                 dir.display()
             )
         })?;
 
-        let duration_plan = plan_duration(&duration_sig, &decode_sig)?;
-        let decode_plan = plan_decode(&duration_sig, &decode_sig)?;
+        require_inputs(&duration_sig, &DURATION_INPUTS, &decode_sig)?;
+        require_inputs(&decode_sig, &DECODE_INPUTS, &duration_sig)?;
 
         let vocab_len = vocab.len();
+        let vocab_file = vocab
+            .source
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
         info!(
             "Inflect-Micro-v2 phoneme table: {} entries from {}",
             vocab_len,
@@ -233,26 +287,15 @@ impl InflectModel {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "built-in fallback".into())
         );
-        info!(
-            "Inflect-Micro-v2 ready: {} phonemes in vocabulary, {} duration inputs, {} decode inputs",
-            vocab_len,
-            duration_plan.len(),
-            decode_plan.len()
-        );
 
         Ok(Self {
             duration,
             decode,
             vocab,
-            duration_plan,
-            decode_plan,
             signature: ModelSignature {
                 duration: duration_sig,
                 decode: decode_sig,
-                vocab_file: phonemes::VOCAB_FILES
-                    .iter()
-                    .find(|f| dir.join(f).exists())
-                    .map(|f| (*f).to_string()),
+                vocab_file,
                 vocab_size: Some(vocab_len),
             },
             dir: dir.to_path_buf(),
@@ -267,29 +310,20 @@ impl InflectModel {
         &self.dir
     }
 
-    /// Synthesize `text` to a 24 kHz mono waveform in `[-1.0, 1.0]`.
+    /// Synthesize one chunk to a 24 kHz mono waveform in `[-1.0, 1.0]`.
     ///
-    /// `speed` is the shared TTS speed multiplier; VITS expresses rate as
-    /// `length_scale`, which is its reciprocal (a longer sequence is slower).
+    /// Mirrors `InflectONNX._synthesize_chunk`: phonemize, tokenize with blanks,
+    /// run the duration graph for the expanded latent statistics, draw the latent
+    /// noise host-side, then decode. `speed` is the shared TTS multiplier; VITS
+    /// expresses rate as `length_scale`, its reciprocal.
     pub fn synthesize(
         &mut self,
         text: &str,
         cfg: &voxctrl_config::InflectMicroConfig,
         speed: f32,
+        seed: u64,
     ) -> Result<Vec<f32>> {
-        // Destructured so the sessions can be borrowed mutably for `run` while the
-        // plans and the input names (which live in `signature`) stay borrowed
-        // immutably — `Session::run` needs `&mut`, and the graph's own
-        // `inputs()` borrow would otherwise conflict with it.
-        let Self {
-            duration,
-            decode,
-            vocab,
-            duration_plan,
-            decode_plan,
-            signature,
-            ..
-        } = self;
+        let Self { duration, decode, vocab, .. } = self;
 
         let ipa = phonemes::phonemize(text)?;
         if ipa.trim().is_empty() {
@@ -299,7 +333,7 @@ impl InflectModel {
         let encoded = vocab.encode(&ipa);
         if !encoded.skipped.is_empty() {
             warn!(
-                "Inflect-Micro-v2: {} IPA symbol(s) absent from the phoneme vocabulary and skipped: {}",
+                "Inflect-Micro-v2: {} IPA symbol(s) absent from the phoneme table and skipped: {}",
                 encoded.skipped.len(),
                 encoded.skipped.join(" ")
             );
@@ -308,205 +342,73 @@ impl InflectModel {
             return Ok(Vec::new());
         }
 
-        let length_scale = if speed > 0.0 { 1.0 / speed } else { 1.0 };
         let n = encoded.ids.len();
+        let length_scale = if speed > 0.0 { 1.0 / speed } else { 1.0 };
 
-        // ── Stage 1: phonemes → aligned latents ───────────────────────────────
-        let duration_outputs = {
-            let mut feed: Vec<(&str, SessionInputValue)> =
-                Vec::with_capacity(duration_plan.len());
-            // Tensors must outlive the `run` call, so they are built up front and
-            // referenced by the feed rather than constructed inline.
-            let ids_t = Tensor::from_array(([1_usize, n], encoded.ids.clone()))
-                .context("build phoneme id tensor")?;
-            let lengths_t = Tensor::from_array(([1_usize], vec![n as i64]))
-                .context("build phoneme length tensor")?;
-            let scales_t = Tensor::from_array((
-                [3_usize],
-                vec![cfg.noise_scale, length_scale, cfg.noise_scale_w],
-            ))
-            .context("build scales tensor")?;
-            let noise_t = Tensor::from_array(([1_usize], vec![cfg.noise_scale]))
-                .context("build noise_scale tensor")?;
-            let length_t = Tensor::from_array(([1_usize], vec![length_scale]))
+        // ── Stage 1: tokens → expanded latent statistics ──────────────────────
+        let (m_p_exp, logs_p_exp, y_mask) = {
+            let tokens = Tensor::from_array(([1_usize, n], encoded.ids.clone()))
+                .context("build tokens tensor")?;
+            let lengths = Tensor::from_array(([1_usize], vec![n as i64]))
+                .context("build lengths tensor")?;
+            // Scalar (rank-0), matching `np.asarray(value, dtype=np.float32)`.
+            let length_scale_t = Tensor::from_array(([0_usize; 0], vec![length_scale]))
                 .context("build length_scale tensor")?;
-            let noise_w_t = Tensor::from_array(([1_usize], vec![cfg.noise_scale_w]))
-                .context("build noise_scale_w tensor")?;
-            let seed_t = Tensor::from_array(([1_usize], vec![cfg.seed as i64]))
-                .context("build seed tensor")?;
 
-            for (slot, name) in duration_plan.iter().zip(signature.duration.inputs.iter()) {
-                let value: SessionInputValue = match slot {
-                    DurationInput::PhonemeIds => (&ids_t).into(),
-                    DurationInput::PhonemeLengths => (&lengths_t).into(),
-                    DurationInput::Scales => (&scales_t).into(),
-                    DurationInput::NoiseScale => (&noise_t).into(),
-                    DurationInput::LengthScale => (&length_t).into(),
-                    DurationInput::NoiseScaleW => (&noise_w_t).into(),
-                    DurationInput::Seed => (&seed_t).into(),
-                };
-                feed.push((name.as_str(), value));
-            }
+            let outputs = duration
+                .run(vec![
+                    ("tokens", SessionInputValue::from(&tokens)),
+                    ("lengths", SessionInputValue::from(&lengths)),
+                    ("length_scale", SessionInputValue::from(&length_scale_t)),
+                ])
+                .context("duration graph run")?;
 
-            let outputs = duration.run(feed).context("duration graph run")?;
-            let mut owned: Vec<(Vec<i64>, Vec<f32>)> = Vec::with_capacity(outputs.len());
-            for i in 0..outputs.len() {
-                let (shape, data) = outputs[i]
+            let mut extracted = Vec::with_capacity(DURATION_OUTPUTS.len());
+            for name in DURATION_OUTPUTS {
+                let (shape, data) = outputs[name]
                     .try_extract_tensor::<f32>()
-                    .with_context(|| format!("extract duration output {i}"))?;
-                owned.push((shape.to_vec(), data.to_vec()));
+                    .with_context(|| format!("extract duration output '{name}'"))?;
+                extracted.push((shape.to_vec(), data.to_vec()));
             }
-            owned
+            let mut it = extracted.into_iter();
+            (it.next().unwrap(), it.next().unwrap(), it.next().unwrap())
         };
 
-        // ── Stage 2: latents → waveform ───────────────────────────────────────
-        let mut feed: Vec<(&str, SessionInputValue)> = Vec::with_capacity(decode_plan.len());
+        // ── Stage 2: latents + noise → waveform ───────────────────────────────
+        let noise_values = StandardNormal::new(seed).fill(m_p_exp.1.len());
 
-        let stage1_tensors: Vec<Tensor<f32>> = duration_outputs
-            .iter()
-            .map(|(shape, data)| {
-                Tensor::from_array((shape.clone(), data.clone()))
-                    .context("rebuild duration output as decode input")
-            })
-            .collect::<Result<_>>()?;
+        let m_p_exp_t = Tensor::from_array((m_p_exp.0.clone(), m_p_exp.1))
+            .context("build m_p_exp tensor")?;
+        let logs_p_exp_t = Tensor::from_array((logs_p_exp.0, logs_p_exp.1))
+            .context("build logs_p_exp tensor")?;
+        let y_mask_t =
+            Tensor::from_array((y_mask.0, y_mask.1)).context("build y_mask tensor")?;
+        // zp_noise matches m_p_exp's shape exactly.
+        let zp_noise_t = Tensor::from_array((m_p_exp.0, noise_values))
+            .context("build zp_noise tensor")?;
+        let noise_scale_t = Tensor::from_array(([0_usize; 0], vec![cfg.noise_scale]))
+            .context("build noise_scale tensor")?;
 
-        // Latent length is the time dimension of the first stage-1 output.
-        let latent_len = duration_outputs
-            .first()
-            .and_then(|(shape, _)| shape.last().copied())
-            .unwrap_or(0);
-        let latent_lengths_t = Tensor::from_array(([1_usize], vec![latent_len]))
-            .context("build latent length tensor")?;
-        let noise_t = Tensor::from_array(([1_usize], vec![cfg.noise_scale]))
-            .context("build decode noise_scale tensor")?;
-        let seed_t = Tensor::from_array(([1_usize], vec![cfg.seed as i64]))
-            .context("build decode seed tensor")?;
+        let outputs = decode
+            .run(vec![
+                ("m_p_exp", SessionInputValue::from(&m_p_exp_t)),
+                ("logs_p_exp", SessionInputValue::from(&logs_p_exp_t)),
+                ("y_mask", SessionInputValue::from(&y_mask_t)),
+                ("zp_noise", SessionInputValue::from(&zp_noise_t)),
+                ("noise_scale", SessionInputValue::from(&noise_scale_t)),
+            ])
+            .context("decode graph run")?;
 
-        for (slot, name) in decode_plan.iter().zip(signature.decode.inputs.iter()) {
-            let value: SessionInputValue = match slot {
-                DecodeInput::FromDuration(i) => (&stage1_tensors[*i]).into(),
-                DecodeInput::LatentLengths => (&latent_lengths_t).into(),
-                DecodeInput::NoiseScale => (&noise_t).into(),
-                DecodeInput::Seed => (&seed_t).into(),
-            };
-            feed.push((name.as_str(), value));
-        }
-
-        let outputs = decode.run(feed).context("decode graph run")?;
-        if outputs.len() == 0 {
-            bail!("{DECODE_FILE} produced no outputs");
-        }
-        // The waveform is taken as the graph's first output — a vocoder graph
-        // emits it first, and any additional outputs are diagnostics. `inspect`
-        // reports the real output list if this ever needs revisiting.
-        let (_, audio) = outputs[0]
+        let (_, audio) = outputs[DECODE_OUTPUT]
             .try_extract_tensor::<f32>()
             .context("extract decoded waveform")?;
 
-        Ok(audio.to_vec())
+        Ok(audio.iter().map(|s| s.clamp(-1.0, 1.0)).collect())
     }
 
     pub const fn sample_rate() -> u32 {
         SAMPLE_RATE
     }
-}
-
-// ── Input planning ────────────────────────────────────────────────────────────
-
-fn unresolved(
-    graph: &str,
-    name: &str,
-    duration: &GraphSignature,
-    decode: &GraphSignature,
-) -> anyhow::Error {
-    anyhow!(
-        "Inflect-Micro-v2: could not map input '{name}' of {graph} to a known role.\n\
-         Discovered signature:\n{}\n{}\n\
-         The tensor names this build expects follow the conventional VITS export; \
-         if the published export differs, the alias tables in \
-         crates/voxctrl-tts/src/inflect/model.rs need the real names.",
-        describe(duration),
-        describe(decode)
-    )
-}
-
-fn plan_duration(duration: &GraphSignature, decode: &GraphSignature) -> Result<Vec<DurationInput>> {
-    let mut plan = Vec::with_capacity(duration.inputs.len());
-    for name in &duration.inputs {
-        let slot = if matches(name, &PHONEME_IDS_ALIASES) {
-            DurationInput::PhonemeIds
-        } else if matches(name, &PHONEME_LENGTHS_ALIASES) {
-            DurationInput::PhonemeLengths
-        } else if matches(name, &SCALES_ALIASES) {
-            DurationInput::Scales
-        } else if matches(name, &NOISE_SCALE_ALIASES) {
-            DurationInput::NoiseScale
-        } else if matches(name, &LENGTH_SCALE_ALIASES) {
-            DurationInput::LengthScale
-        } else if matches(name, &NOISE_SCALE_W_ALIASES) {
-            DurationInput::NoiseScaleW
-        } else if matches(name, &SEED_ALIASES) {
-            DurationInput::Seed
-        } else {
-            return Err(unresolved(DURATION_FILE, name, duration, decode));
-        };
-        plan.push(slot);
-    }
-
-    if !plan.contains(&DurationInput::PhonemeIds) {
-        bail!(
-            "Inflect-Micro-v2: {DURATION_FILE} declares no phoneme-id input.\n\
-             Discovered signature:\n{}\n{}",
-            describe(duration),
-            describe(decode)
-        );
-    }
-    Ok(plan)
-}
-
-fn plan_decode(duration: &GraphSignature, decode: &GraphSignature) -> Result<Vec<DecodeInput>> {
-    let mut plan = Vec::with_capacity(decode.inputs.len());
-    let mut next_stage1 = 0usize;
-
-    for name in &decode.inputs {
-        // Prefer connecting by matching name against a stage-1 output: that is an
-        // unambiguous link between the graphs.
-        if let Some(idx) = duration.outputs.iter().position(|o| o.eq_ignore_ascii_case(name)) {
-            plan.push(DecodeInput::FromDuration(idx));
-            next_stage1 = next_stage1.max(idx + 1);
-            continue;
-        }
-
-        let slot = if matches(name, &LATENT_ALIASES) {
-            // A conventionally-named latent input that didn't match by name; take
-            // stage-1 outputs in declared order.
-            let idx = next_stage1;
-            if idx >= duration.outputs.len() {
-                return Err(unresolved(DECODE_FILE, name, duration, decode));
-            }
-            next_stage1 += 1;
-            DecodeInput::FromDuration(idx)
-        } else if matches(name, &LATENT_LENGTHS_ALIASES) {
-            DecodeInput::LatentLengths
-        } else if matches(name, &NOISE_SCALE_ALIASES) {
-            DecodeInput::NoiseScale
-        } else if matches(name, &SEED_ALIASES) {
-            DecodeInput::Seed
-        } else {
-            return Err(unresolved(DECODE_FILE, name, duration, decode));
-        };
-        plan.push(slot);
-    }
-
-    if !plan.iter().any(|s| matches!(s, DecodeInput::FromDuration(_))) {
-        bail!(
-            "Inflect-Micro-v2: {DECODE_FILE} takes nothing from {DURATION_FILE}, so the two \
-             stages cannot be connected.\nDiscovered signature:\n{}\n{}",
-            describe(duration),
-            describe(decode)
-        );
-    }
-    Ok(plan)
 }
 
 #[cfg(test)]
@@ -521,120 +423,59 @@ mod tests {
         }
     }
 
-    // ── Alias matching ───────────────────────────────────────────────────────
+    // ── Contract validation ──────────────────────────────────────────────────
 
     #[test]
-    fn test_matches_is_case_insensitive() {
-        assert!(matches("INPUT_IDS", &PHONEME_IDS_ALIASES));
-        assert!(!matches("totally_unknown", &PHONEME_IDS_ALIASES));
-    }
-
-    // ── Duration planning ────────────────────────────────────────────────────
-
-    #[test]
-    fn test_plan_duration_conventional_vits_signature() {
-        // The shape a standard VITS ONNX export (e.g. Piper's) declares.
-        let d = sig(DURATION_FILE, &["input", "input_lengths", "scales"], &["z"]);
-        let c = sig(DECODE_FILE, &["z"], &["audio"]);
-        let plan = plan_duration(&d, &c).unwrap();
-        assert_eq!(
-            plan,
-            vec![
-                DurationInput::PhonemeIds,
-                DurationInput::PhonemeLengths,
-                DurationInput::Scales
-            ]
-        );
+    fn test_require_inputs_accepts_the_reference_contract() {
+        let d = sig(DURATION_FILE, &DURATION_INPUTS, &DURATION_OUTPUTS);
+        let c = sig(DECODE_FILE, &DECODE_INPUTS, &[DECODE_OUTPUT]);
+        assert!(require_inputs(&d, &DURATION_INPUTS, &c).is_ok());
+        assert!(require_inputs(&c, &DECODE_INPUTS, &d).is_ok());
     }
 
     #[test]
-    fn test_plan_duration_separate_scale_inputs() {
-        let d = sig(
-            DURATION_FILE,
-            &["phoneme_ids", "phoneme_lengths", "noise_scale", "length_scale", "noise_scale_w"],
-            &["z"],
-        );
-        let c = sig(DECODE_FILE, &["z"], &["audio"]);
-        let plan = plan_duration(&d, &c).unwrap();
-        assert!(plan.contains(&DurationInput::NoiseScale));
-        assert!(plan.contains(&DurationInput::LengthScale));
-        assert!(plan.contains(&DurationInput::NoiseScaleW));
+    fn test_require_inputs_ignores_extra_inputs() {
+        // A graph declaring more than we feed is fine; only absence is fatal.
+        let d = sig(DURATION_FILE, &["tokens", "lengths", "length_scale", "extra"], &[]);
+        let c = sig(DECODE_FILE, &[], &[]);
+        assert!(require_inputs(&d, &DURATION_INPUTS, &c).is_ok());
     }
 
     #[test]
-    fn test_plan_duration_accepts_seed_input() {
-        let d = sig(DURATION_FILE, &["input", "seed"], &["z"]);
-        let c = sig(DECODE_FILE, &["z"], &["audio"]);
-        assert!(plan_duration(&d, &c).unwrap().contains(&DurationInput::Seed));
+    fn test_require_inputs_names_every_missing_tensor() {
+        let d = sig(DURATION_FILE, &["tokens"], &[]);
+        let c = sig(DECODE_FILE, &[], &[]);
+        let err = require_inputs(&d, &DURATION_INPUTS, &c).unwrap_err().to_string();
+        assert!(err.contains("lengths"), "names the missing inputs: {err}");
+        assert!(err.contains("length_scale"));
+        assert!(!err.contains(" tokens,"), "does not name inputs that are present");
     }
 
     #[test]
-    fn test_plan_duration_rejects_unknown_input_with_signature_in_message() {
-        let d = sig(DURATION_FILE, &["input", "mystery_tensor"], &["z"]);
-        let c = sig(DECODE_FILE, &["z"], &["audio"]);
-        let err = plan_duration(&d, &c).unwrap_err().to_string();
-        assert!(err.contains("mystery_tensor"), "names the offending input");
-        assert!(err.contains("Discovered signature"), "includes the report");
-        assert!(err.contains("duration.onnx"));
+    fn test_require_inputs_reports_both_signatures() {
+        let d = sig(DURATION_FILE, &[], &[]);
+        let c = sig(DECODE_FILE, &["m_p_exp"], &["waveform"]);
+        let err = require_inputs(&d, &DURATION_INPUTS, &c).unwrap_err().to_string();
+        assert!(err.contains("Discovered signature"));
+        assert!(err.contains(DURATION_FILE));
+        assert!(err.contains(DECODE_FILE));
     }
 
     #[test]
-    fn test_plan_duration_requires_phoneme_ids() {
-        let d = sig(DURATION_FILE, &["input_lengths"], &["z"]);
-        let c = sig(DECODE_FILE, &["z"], &["audio"]);
-        let err = plan_duration(&d, &c).unwrap_err().to_string();
-        assert!(err.contains("no phoneme-id input"));
-    }
-
-    // ── Decode planning ──────────────────────────────────────────────────────
-
-    #[test]
-    fn test_plan_decode_links_stages_by_matching_name() {
-        let d = sig(DURATION_FILE, &["input"], &["z", "y_mask"]);
-        let c = sig(DECODE_FILE, &["y_mask", "z"], &["audio"]);
-        let plan = plan_decode(&d, &c).unwrap();
-        // Bound by name, so order in `decode` doesn't matter.
-        assert_eq!(plan, vec![DecodeInput::FromDuration(1), DecodeInput::FromDuration(0)]);
+    fn test_zp_noise_is_a_decode_input() {
+        // The latent noise is drawn host-side and fed in; forgetting it makes
+        // synthesis fail at run time rather than at load.
+        assert!(DECODE_INPUTS.contains(&"zp_noise"));
     }
 
     #[test]
-    fn test_plan_decode_falls_back_to_declared_order_for_latent_alias() {
-        let d = sig(DURATION_FILE, &["input"], &["hidden"]);
-        let c = sig(DECODE_FILE, &["z"], &["audio"]);
-        let plan = plan_decode(&d, &c).unwrap();
-        assert_eq!(plan, vec![DecodeInput::FromDuration(0)]);
-    }
-
-    #[test]
-    fn test_plan_decode_accepts_latent_lengths_and_noise() {
-        let d = sig(DURATION_FILE, &["input"], &["z"]);
-        let c = sig(DECODE_FILE, &["z", "z_lengths", "noise_scale"], &["audio"]);
-        let plan = plan_decode(&d, &c).unwrap();
-        assert!(plan.contains(&DecodeInput::LatentLengths));
-        assert!(plan.contains(&DecodeInput::NoiseScale));
-    }
-
-    #[test]
-    fn test_plan_decode_rejects_unknown_input() {
-        let d = sig(DURATION_FILE, &["input"], &["z"]);
-        let c = sig(DECODE_FILE, &["z", "wat"], &["audio"]);
-        let err = plan_decode(&d, &c).unwrap_err().to_string();
-        assert!(err.contains("wat"));
-    }
-
-    #[test]
-    fn test_plan_decode_requires_a_link_to_stage_one() {
-        let d = sig(DURATION_FILE, &["input"], &["z"]);
-        let c = sig(DECODE_FILE, &["noise_scale"], &["audio"]);
-        let err = plan_decode(&d, &c).unwrap_err().to_string();
-        assert!(err.contains("cannot be connected"));
-    }
-
-    #[test]
-    fn test_plan_decode_latent_alias_beyond_stage_one_outputs_errors() {
-        let d = sig(DURATION_FILE, &["input"], &[]);
-        let c = sig(DECODE_FILE, &["z"], &["audio"]);
-        assert!(plan_decode(&d, &c).is_err());
+    fn test_duration_outputs_feed_decode_inputs() {
+        for name in DURATION_OUTPUTS {
+            assert!(
+                DECODE_INPUTS.contains(&name),
+                "{name} should carry from the duration graph into decode"
+            );
+        }
     }
 
     // ── Reporting ────────────────────────────────────────────────────────────
@@ -651,5 +492,52 @@ mod tests {
     #[test]
     fn test_threads_is_at_least_one() {
         assert!(threads() >= 1);
+    }
+
+    // ── Latent noise sampler ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_standard_normal_is_deterministic_for_a_seed() {
+        let a = StandardNormal::new(42).fill(64);
+        let b = StandardNormal::new(42).fill(64);
+        assert_eq!(a, b, "same seed must reproduce the same noise");
+    }
+
+    #[test]
+    fn test_standard_normal_differs_between_seeds() {
+        let a = StandardNormal::new(1).fill(64);
+        let b = StandardNormal::new(2).fill(64);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_standard_normal_is_roughly_unit_gaussian() {
+        let samples = StandardNormal::new(7).fill(20_000);
+        let mean: f64 = samples.iter().map(|s| *s as f64).sum::<f64>() / samples.len() as f64;
+        let variance: f64 = samples
+            .iter()
+            .map(|s| (*s as f64 - mean).powi(2))
+            .sum::<f64>()
+            / samples.len() as f64;
+        assert!(mean.abs() < 0.05, "mean {mean} should be near 0");
+        assert!((variance - 1.0).abs() < 0.1, "variance {variance} should be near 1");
+    }
+
+    #[test]
+    fn test_standard_normal_produces_both_signs() {
+        let samples = StandardNormal::new(3).fill(256);
+        assert!(samples.iter().any(|s| *s > 0.0));
+        assert!(samples.iter().any(|s| *s < 0.0));
+    }
+
+    #[test]
+    fn test_standard_normal_values_are_finite() {
+        assert!(StandardNormal::new(11).fill(4096).iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn test_standard_normal_fill_length() {
+        assert_eq!(StandardNormal::new(0).fill(0).len(), 0);
+        assert_eq!(StandardNormal::new(0).fill(101).len(), 101);
     }
 }

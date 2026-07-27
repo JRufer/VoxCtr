@@ -804,30 +804,19 @@
     </p>
 
     <label class="field">
-      <span>Variation (noise scale)</span>
+      <span>Variation (0.0 – 1.0)</span>
       <input
         type="number"
         min="0"
-        max="1.5"
+        max="1"
         step="0.01"
         bind:value={cfg.tts.inflect_micro.noise_scale}
         onchange={onInflectSettingChanged}
       />
     </label>
 
-    <label class="field">
-      <span>Rhythm variation (duration noise)</span>
-      <input
-        type="number"
-        min="0"
-        max="1.5"
-        step="0.01"
-        bind:value={cfg.tts.inflect_micro.noise_scale_w}
-        onchange={onInflectSettingChanged}
-      />
-    </label>
     <p class="hint">
-      Higher values give more expressive but less predictable delivery. Defaults are 0.667 and 0.8.
+      Higher values give more expressive but less predictable delivery. Default is 0.667.
     </p>
 
     <label class="field">
