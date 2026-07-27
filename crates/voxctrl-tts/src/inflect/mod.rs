@@ -188,11 +188,12 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
         let names: Vec<&str> = listing.iter().map(|e| e.name.as_str()).collect();
         anyhow::bail!(
             "Downloaded the ONNX graphs from {}, but none of the accompanying files \
-             parse as a phoneme table. The vocabulary maps eSpeak IPA to the model's \
+             parse as a phoneme table. The table maps eSpeak IPA to the model's \
              phoneme ids and synthesis cannot be correct without it.\n\
              Files published there: {}\n\
-             If the table is one of these, place it in {} and report the name so it \
-             can be recognised automatically.",
+             This export ships the symbol list inside its reference script rather \
+             than as a standalone file; the scripts are downloaded to {} so the \
+             table can be recovered from them.",
             layout.file_url("").trim_end_matches('/'),
             if names.is_empty() { "(none listed)".to_string() } else { names.join(", ") },
             dir.display()
@@ -213,6 +214,10 @@ struct RepoFile {
 impl RepoFile {
     /// Whether this is a small non-graph file worth fetching alongside the
     /// graphs — the phoneme table is one of these, whatever it is called.
+    ///
+    /// `.py` is included because this export ships no standalone table: the
+    /// symbol list lives inside the reference script (`inference_onnx.py`).
+    /// Those files are only ever read as data — nothing here executes them.
     fn is_auxiliary(&self) -> bool {
         if self.size > MAX_AUX_FILE_BYTES {
             return false;
@@ -221,7 +226,9 @@ impl RepoFile {
         if lower.ends_with(".onnx") || lower.ends_with(".onnx_data") {
             return false;
         }
-        [".json", ".txt", ".csv", ".tsv"].iter().any(|e| lower.ends_with(e))
+        [".json", ".txt", ".csv", ".tsv", ".py"]
+            .iter()
+            .any(|e| lower.ends_with(e))
     }
 }
 
@@ -612,6 +619,16 @@ mod tests {
     fn test_auxiliary_selects_small_text_files() {
         for name in ["tokens.txt", "phonemes.json", "symbols.csv"] {
             let f = RepoFile { name: name.into(), size: 4096 };
+            assert!(f.is_auxiliary(), "{name} should be fetched");
+        }
+    }
+
+    #[test]
+    fn test_auxiliary_includes_reference_scripts() {
+        // This export ships no standalone table — the symbol list is inside
+        // inference_onnx.py, so the scripts have to come down with the graphs.
+        for name in ["inference_onnx.py", "export_onnx.py"] {
+            let f = RepoFile { name: name.into(), size: 8192 };
             assert!(f.is_auxiliary(), "{name} should be fetched");
         }
     }
