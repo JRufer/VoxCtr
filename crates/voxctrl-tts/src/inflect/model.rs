@@ -49,12 +49,19 @@ const DECODE_OUTPUT: &str = "waveform";
 
 // ── Discovered signature ──────────────────────────────────────────────────────
 
-/// One graph's input or output names, as declared by the ONNX file.
+/// One graph's declared inputs and outputs.
+///
+/// `inputs`/`outputs` hold bare names, which is what the contract check compares
+/// against. `input_details`/`output_details` carry ONNX Runtime's full
+/// description of each (element type and shape), which is what a diagnostic
+/// report needs — a name alone can't tell you a dtype or rank is wrong.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GraphSignature {
     pub file: String,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    pub input_details: Vec<String>,
+    pub output_details: Vec<String>,
 }
 
 /// The full discovered signature of both graphs. Returned by
@@ -74,6 +81,8 @@ fn signature_of(session: &Session, file: &str) -> GraphSignature {
         file: file.to_string(),
         inputs: session.inputs().iter().map(|i| i.name().to_string()).collect(),
         outputs: session.outputs().iter().map(|o| o.name().to_string()).collect(),
+        input_details: session.inputs().iter().map(|i| format!("{i:?}")).collect(),
+        output_details: session.outputs().iter().map(|o| format!("{o:?}")).collect(),
     }
 }
 
@@ -106,10 +115,10 @@ pub fn inspect(dir: &Path) -> Result<ModelSignature> {
 /// Render a signature as a human-readable block for error messages.
 fn describe(sig: &GraphSignature) -> String {
     format!(
-        "  {}:\n    inputs:  {}\n    outputs: {}",
+        "  {}:\n    inputs:\n      {}\n    outputs:\n      {}",
         sig.file,
-        sig.inputs.join(", "),
-        sig.outputs.join(", ")
+        sig.input_details.join("\n      "),
+        sig.output_details.join("\n      ")
     )
 }
 
@@ -269,6 +278,10 @@ impl InflectModel {
             )
         })?;
 
+        // Logged once per load: if synthesis then fails inside ONNX Runtime, this
+        // is the record of what the graphs actually declared.
+        info!("Inflect-Micro-v2 graph signatures:\n{}\n{}", describe(&duration_sig), describe(&decode_sig));
+
         require_inputs(&duration_sig, &DURATION_INPUTS, &decode_sig)?;
         require_inputs(&decode_sig, &DECODE_INPUTS, &duration_sig)?;
 
@@ -323,7 +336,7 @@ impl InflectModel {
         speed: f32,
         seed: u64,
     ) -> Result<Vec<f32>> {
-        let Self { duration, decode, vocab, .. } = self;
+        let Self { duration, decode, vocab, signature, .. } = self;
 
         let ipa = phonemes::phonemize(text)?;
         if ipa.trim().is_empty() {
@@ -361,13 +374,26 @@ impl InflectModel {
                     ("lengths", SessionInputValue::from(&lengths)),
                     ("length_scale", SessionInputValue::from(&length_scale_t)),
                 ])
-                .context("duration graph run")?;
+                .map_err(|e| {
+                    anyhow!(
+                        "{DURATION_FILE} run failed: {e}\n\
+                         Fed: tokens i64[1,{n}], lengths i64[1], length_scale f32 scalar.\n\
+                         Graph declares:\n{}",
+                        describe(&signature.duration)
+                    )
+                })?;
 
             let mut extracted = Vec::with_capacity(DURATION_OUTPUTS.len());
             for name in DURATION_OUTPUTS {
                 let (shape, data) = outputs[name]
                     .try_extract_tensor::<f32>()
-                    .with_context(|| format!("extract duration output '{name}'"))?;
+                    .map_err(|e| {
+                        anyhow!(
+                            "duration output '{name}' is not float32: {e}\n\
+                             Graph declares:\n{}",
+                            describe(&signature.duration)
+                        )
+                    })?;
                 extracted.push((shape.to_vec(), data.to_vec()));
             }
             let mut it = extracted.into_iter();
@@ -377,6 +403,7 @@ impl InflectModel {
         // ── Stage 2: latents + noise → waveform ───────────────────────────────
         let noise_values = StandardNormal::new(seed).fill(m_p_exp.1.len());
 
+        let m_shape = m_p_exp.0.clone();
         let m_p_exp_t = Tensor::from_array((m_p_exp.0.clone(), m_p_exp.1))
             .context("build m_p_exp tensor")?;
         let logs_p_exp_t = Tensor::from_array((logs_p_exp.0, logs_p_exp.1))
@@ -397,7 +424,15 @@ impl InflectModel {
                 ("zp_noise", SessionInputValue::from(&zp_noise_t)),
                 ("noise_scale", SessionInputValue::from(&noise_scale_t)),
             ])
-            .context("decode graph run")?;
+            .map_err(|e| {
+                anyhow!(
+                    "{DECODE_FILE} run failed: {e}\n\
+                     Fed: m_p_exp f32{m_shape:?}, logs_p_exp f32, y_mask f32, \
+                     zp_noise f32{m_shape:?}, noise_scale f32 scalar.\n\
+                     Graph declares:\n{}",
+                    describe(&signature.decode)
+                )
+            })?;
 
         let (_, audio) = outputs[DECODE_OUTPUT]
             .try_extract_tensor::<f32>()
@@ -420,6 +455,8 @@ mod tests {
             file: file.to_string(),
             inputs: inputs.iter().map(|s| s.to_string()).collect(),
             outputs: outputs.iter().map(|s| s.to_string()).collect(),
+            input_details: inputs.iter().map(|s| s.to_string()).collect(),
+            output_details: outputs.iter().map(|s| s.to_string()).collect(),
         }
     }
 
@@ -485,7 +522,9 @@ mod tests {
         let s = sig("duration.onnx", &["a", "b"], &["c"]);
         let text = describe(&s);
         assert!(text.contains("duration.onnx"));
-        assert!(text.contains("a, b"));
+        // The report shows per-tensor detail lines, not a comma-joined name list.
+        assert!(text.contains("a"));
+        assert!(text.contains("b"));
         assert!(text.contains("c"));
     }
 
