@@ -92,18 +92,16 @@ impl Layout {
     }
 }
 
-/// Where the ordered symbol list lives.
+/// Repositories searched for the ordered symbol list, most likely first.
 ///
-/// The ONNX export imports it as `text/symbols.py` from its parent package, and
-/// that package is published in the PyTorch repository rather than beside the
-/// graphs — so it is not in the listing the graphs come from and has to be
-/// fetched separately. Ids are positions in this list, so nothing else will do.
-const SYMBOL_LIST_URLS: [&str; 4] = [
-    "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main/text/symbols.py",
-    "https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main/text/symbols.py",
-    "https://huggingface.co/owensong/Inflect-Micro-v2/resolve/main/symbols.py",
-    "https://huggingface.co/owensong/Inflect-Micro-v2-ONNX/resolve/main/symbols.py",
-];
+/// The ONNX export imports the list from its parent package, which is published
+/// in the PyTorch repository rather than beside the graphs — so it is absent
+/// from the listing the graphs come from and has to be fetched separately. Ids
+/// are positions in this list, so nothing else will substitute for it. The file
+/// is located by listing each repository recursively rather than by assuming a
+/// path, since guessing one has proven unreliable.
+const SYMBOL_LIST_REPOS: [&str; 2] =
+    ["owensong/Inflect-Micro-v2", "owensong/Inflect-Micro-v2-ONNX"];
 
 /// Upper bound on an auxiliary file fetched alongside the graphs. The phoneme
 /// table is a few kilobytes; this only exists to stop a stray large asset from
@@ -195,22 +193,12 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
         }
     }
 
-    // The symbol list is not published with the graphs, so fetch it separately
-    // when nothing already on disk parses as a table.
+    // The symbol list is not published with the graphs, so search for it
+    // separately when nothing already on disk parses as a table.
+    let mut symbol_search = Vec::new();
     if phonemes::PhonemeVocab::load(&dir)?.is_none() {
-        let target = dir.join("symbols.py");
-        for url in SYMBOL_LIST_URLS {
-            match download_to(url, &target).await {
-                Ok(()) => {
-                    info!("Downloaded Inflect-Micro-v2 symbol list from {url}");
-                    break;
-                }
-                // Not published at this location; try the next.
-                Err(e) => {
-                    warn!("No symbol list at {url}: {e:#}");
-                    let _ = tokio::fs::remove_file(&target).await;
-                }
-            }
+        if let Err(e) = fetch_symbol_list(&dir, &mut symbol_search).await {
+            warn!("Could not fetch the Inflect-Micro-v2 symbol list: {e:#}");
         }
     }
 
@@ -222,11 +210,16 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
              phoneme ids and synthesis cannot be correct without it.\n\
              Files published there: {}\n\
              Phoneme ids are positions in the ordered `symbols` list from the \
-             model's text frontend (`text/symbols.py`), which is published in the \
-             PyTorch repository rather than with the graphs. Fetching it \
-             automatically failed; download it by hand and drop it in {}.",
+             model's text frontend, published apart from the graphs. Searching \
+             for it also failed:\n{}\n\
+             Download the symbol list by hand and drop it in {}.",
             layout.file_url("").trim_end_matches('/'),
             if names.is_empty() { "(none listed)".to_string() } else { names.join(", ") },
+            if symbol_search.is_empty() {
+                "  (no repositories reachable)".to_string()
+            } else {
+                symbol_search.join("\n")
+            },
             dir.display()
         );
     }
@@ -238,6 +231,9 @@ pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
 /// One file entry from the hub's tree listing.
 #[derive(Debug, Clone)]
 struct RepoFile {
+    /// Repo-relative path, e.g. `text/symbols.py`.
+    path: String,
+    /// Basename, e.g. `symbols.py`.
     name: String,
     size: u64,
 }
@@ -311,6 +307,56 @@ async fn fetch_listing(client: &reqwest::Client, url: &str) -> Result<Vec<RepoFi
     parse_listing(&body).with_context(|| format!("parse listing from {url}"))
 }
 
+/// Locate and download the ordered symbol list.
+///
+/// Lists each candidate repository recursively and takes the first entry named
+/// `symbols.py` (or, failing that, any Python file whose name mentions symbols),
+/// downloading it from wherever it actually lives. Steps taken are appended to
+/// `report` so a failure can say what was searched.
+async fn fetch_symbol_list(dir: &std::path::Path, report: &mut Vec<String>) -> Result<()> {
+    let client = reqwest::Client::new();
+
+    for repo in SYMBOL_LIST_REPOS {
+        let url = format!("https://huggingface.co/api/models/{repo}/tree/main?recursive=true");
+        let files = match fetch_listing(&client, &url).await {
+            Ok(f) => f,
+            Err(e) => {
+                report.push(format!("  {repo} → {e}"));
+                continue;
+            }
+        };
+
+        let candidate = files
+            .iter()
+            .find(|f| f.name == "symbols.py")
+            .or_else(|| {
+                files.iter().find(|f| {
+                    f.name.ends_with(".py") && f.name.to_ascii_lowercase().contains("symbol")
+                })
+            });
+
+        let Some(file) = candidate else {
+            report.push(format!("  {repo} → listed {} files, no symbols.py", files.len()));
+            continue;
+        };
+
+        let file_url = format!("https://huggingface.co/{repo}/resolve/main/{}", file.path);
+        let target = dir.join("symbols.py");
+        match download_to(&file_url, &target).await {
+            Ok(()) => {
+                info!("Downloaded Inflect-Micro-v2 symbol list from {file_url}");
+                return Ok(());
+            }
+            Err(e) => {
+                report.push(format!("  {file_url} → {e}"));
+                let _ = tokio::fs::remove_file(&target).await;
+            }
+        }
+    }
+
+    anyhow::bail!("no symbol list found in {}", SYMBOL_LIST_REPOS.join(" or "))
+}
+
 /// Parse the hub's tree JSON: an array of `{type, path, size}` objects, where
 /// `path` is repo-relative and so carries the subdirectory prefix.
 fn parse_listing(body: &str) -> Result<Vec<RepoFile>> {
@@ -329,6 +375,7 @@ fn parse_listing(body: &str) -> Result<Vec<RepoFile>> {
             continue;
         }
         files.push(RepoFile {
+            path: path.to_string(),
             name,
             size: entry.get("size").and_then(|s| s.as_u64()).unwrap_or(0),
         });
@@ -723,6 +770,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_listing_keeps_full_path_for_nested_files() {
+        // A recursive listing is how the symbol list is found, and downloading
+        // it needs the directory prefix that the basename throws away.
+        let body = r#"[{"type":"file","path":"text/symbols.py","size":900}]"#;
+        let files = parse_listing(body).unwrap();
+        assert_eq!(files[0].path, "text/symbols.py");
+        assert_eq!(files[0].name, "symbols.py");
+    }
+
+    #[test]
     fn test_parse_listing_rejects_non_array() {
         assert!(parse_listing(r#"{"error":"not found"}"#).is_err());
     }
@@ -738,7 +795,7 @@ mod tests {
     #[test]
     fn test_auxiliary_selects_small_text_files() {
         for name in ["tokens.txt", "phonemes.json", "symbols.csv"] {
-            let f = RepoFile { name: name.into(), size: 4096 };
+            let f = RepoFile { path: name.into(), name: name.into(), size: 4096 };
             assert!(f.is_auxiliary(), "{name} should be fetched");
         }
     }
@@ -748,20 +805,20 @@ mod tests {
         // This export ships no standalone table — the symbol list is inside
         // inference_onnx.py, so the scripts have to come down with the graphs.
         for name in ["inference_onnx.py", "export_onnx.py"] {
-            let f = RepoFile { name: name.into(), size: 8192 };
+            let f = RepoFile { path: name.into(), name: name.into(), size: 8192 };
             assert!(f.is_auxiliary(), "{name} should be fetched");
         }
     }
 
     #[test]
     fn test_auxiliary_skips_graphs_and_large_files() {
-        assert!(!RepoFile { name: "decode.onnx".into(), size: 100 }.is_auxiliary());
-        assert!(!RepoFile { name: "model.onnx_data".into(), size: 100 }.is_auxiliary());
+        assert!(!RepoFile { path: "decode.onnx".into(), name: "decode.onnx".into(), size: 100 }.is_auxiliary());
+        assert!(!RepoFile { path: "model.onnx_data".into(), name: "model.onnx_data".into(), size: 100 }.is_auxiliary());
         assert!(
-            !RepoFile { name: "huge.json".into(), size: MAX_AUX_FILE_BYTES + 1 }.is_auxiliary(),
+            !RepoFile { path: "huge.json".into(), name: "huge.json".into(), size: MAX_AUX_FILE_BYTES + 1 }.is_auxiliary(),
             "oversized files are not auxiliary"
         );
-        assert!(!RepoFile { name: "README.md".into(), size: 100 }.is_auxiliary());
+        assert!(!RepoFile { path: "README.md".into(), name: "README.md".into(), size: 100 }.is_auxiliary());
     }
 
     // ── Layout URLs ──────────────────────────────────────────────────────────
