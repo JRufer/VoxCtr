@@ -376,6 +376,20 @@ pipe_path = "/tmp/voice.fifo"
 delivery = "speak"
 ```
 
+**`chat`** — conversational LLM over an OpenAI-compatible API, with history:
+```toml
+delivery = "chat"
+chat_url = "http://localhost:8080"     # /v1 suffix optional
+chat_model = "hermes-4-14b"
+chat_system_prompt = "You are a concise voice assistant."
+chat_reply_mode = "speak"              # speak | inject | clipboard | none
+chat_max_history = 20                  # messages sent per turn; 0 = whole conversation
+chat_timeout_secs = 120
+chat_reset_phrase = "new conversation" # optional spoken phrase that clears history
+# chat_api_key = "sk-..."              # optional bearer token
+```
+See [Output Routing](routing.md#chat--conversational-llm-openai-compatible) for details.
+
 **TTS response pipe:**
 ```toml
 response_pipe = "/tmp/tts-response.fifo"  # Optional FIFO for TTS output

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import type { OutputTarget } from "./routing-types";
   import CustomSelect from "./CustomSelect.svelte";
 
@@ -24,6 +25,17 @@
   let editMcpArgsString = $state("");
   let editHttpTemplateString = $state("");
   let editWebhookTemplateString = $state("");
+
+  // Chat target connection state
+  interface ChatTestResult {
+    success: boolean;
+    message: string;
+    models: string[];
+  }
+  let chatModels = $state<string[]>([]);
+  let chatTesting = $state(false);
+  let chatStatus = $state("");
+  let chatStatusOk = $state(false);
 
   // Derived validation for Terminal Command
   let commandError = $derived.by(() => {
@@ -77,6 +89,57 @@
     return null;
   });
 
+  let chatUrlError = $derived.by(() => {
+    if (!editingTarget || editingTarget.delivery !== "chat") return null;
+    const url = (editingTarget.chat_url || "").trim();
+    if (!url) return "A server base URL is required.";
+    if (!/^https?:\/\//i.test(url)) return "URL must start with http:// or https://";
+    return null;
+  });
+
+  let chatModelError = $derived.by(() => {
+    if (!editingTarget || editingTarget.delivery !== "chat") return null;
+    if (!(editingTarget.chat_model || "").trim()) return "A model name is required.";
+    return null;
+  });
+
+  /// Probe the server and pull its model list, so the user picks rather than
+  /// guessing the exact model id. Goes through Rust — the endpoint is a
+  /// third-party server that need not send CORS headers to the webview.
+  async function testChatConnection() {
+    if (!editingTarget) return;
+    chatTesting = true;
+    try {
+      const res = await invoke<ChatTestResult>("test_chat_target", { target: editingTarget });
+      chatModels = res.models;
+      chatStatus = res.message;
+      chatStatusOk = res.success;
+      if (res.success && !editingTarget.chat_model && res.models.length > 0) {
+        editingTarget.chat_model = res.models[0];
+      }
+    } catch (e: any) {
+      chatModels = [];
+      chatStatus = String(e);
+      chatStatusOk = false;
+    } finally {
+      chatTesting = false;
+    }
+  }
+
+  async function resetChatConversation() {
+    if (!editingTarget) return;
+    try {
+      const dropped = await invoke<number>("reset_chat_conversation", {
+        targetId: editingTarget.id
+      });
+      chatStatus = `Conversation cleared (${dropped} message(s) discarded).`;
+      chatStatusOk = true;
+    } catch (e: any) {
+      chatStatus = String(e);
+      chatStatusOk = false;
+    }
+  }
+
   // Reusable Svelte action to auto-resize textareas dynamically to fit their contents
   function autoResize(node: HTMLTextAreaElement) {
     function resize() {
@@ -107,6 +170,10 @@
       if (!editingTarget.file_mode) {
         editingTarget.file_mode = "append";
       }
+      // Targets saved before the Chat delivery type existed have no chat fields.
+      editingTarget.chat_max_history ??= 20;
+      editingTarget.chat_timeout_secs ??= 120;
+      editingTarget.chat_reply_mode ||= "speak";
       editApplySnippets = editingTarget.processing.apply_snippets !== false;
       editMcpArgsString = editingTarget.mcp_args ? JSON.stringify(editingTarget.mcp_args, null, 2) : '{\n  "text": "{text}"\n}';
       editHttpTemplateString = editingTarget.http_json_template ? JSON.stringify(editingTarget.http_json_template, null, 2) : '{\n  "text": "{text}"\n}';
@@ -167,6 +234,17 @@
       }
     }
 
+    if (editingTarget.delivery === "chat") {
+      const err = chatUrlError || chatModelError;
+      if (err) {
+        alert("Validation Error: " + err);
+        return;
+      }
+      // The number inputs hand back strings when typed into.
+      editingTarget.chat_max_history = Number(editingTarget.chat_max_history) || 0;
+      editingTarget.chat_timeout_secs = Number(editingTarget.chat_timeout_secs) || 120;
+    }
+
     editingTarget.processing = {
       apply_snippets: editApplySnippets,
     };
@@ -220,7 +298,8 @@
               { value: "http", label: "HTTP Custom Client" },
               { value: "webhook", label: "Send Webhook Event" },
               { value: "mcp", label: "Call MCP Server Tool" },
-              { value: "speak", label: "Speak Text Aloud (TTS)" }
+              { value: "speak", label: "Speak Text Aloud (TTS)" },
+              { value: "chat", label: "Chat with a Local LLM (Hermes / OpenAI-compatible)" }
             ]}
           />
         </label>
@@ -469,6 +548,167 @@
           </div>
         {/if}
 
+        {#if editingTarget.delivery === "chat"}
+          <div class="morph-section mcp-container">
+            <h5>Conversational LLM settings</h5>
+            <p class="hint">
+              Sends each dictation to an OpenAI-compatible
+              <code>/v1/chat/completions</code> endpoint — Hermes, Ollama, llama.cpp —
+              carrying the running conversation so the model keeps its context between turns.
+            </p>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">Server Base URL</span>
+              </div>
+              <input
+                type="text"
+                bind:value={editingTarget.chat_url}
+                placeholder="http://localhost:8080"
+                class="full-width-input {chatUrlError ? 'border-red-500! ring-2! ring-red-500/20!' : ''}"
+              />
+              <p class="hint">The <code>/v1</code> suffix is optional — it is added automatically.</p>
+              {#if chatUrlError}
+                <span class="validation-error-msg">⚠️ {chatUrlError}</span>
+              {/if}
+            </div>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">Model</span>
+                <button class="btn-action small" onclick={testChatConnection} disabled={chatTesting}>
+                  {chatTesting ? "Connecting…" : "Test & fetch models"}
+                </button>
+              </div>
+              {#if chatModels.length > 0}
+                <CustomSelect
+                  bind:value={editingTarget.chat_model}
+                  options={chatModels.map((m) => ({ value: m, label: m }))}
+                />
+              {:else}
+                <input
+                  type="text"
+                  bind:value={editingTarget.chat_model}
+                  placeholder="e.g. hermes-4-14b"
+                  class="full-width-input {chatModelError ? 'border-red-500! ring-2! ring-red-500/20!' : ''}"
+                />
+              {/if}
+              <p class="hint">
+                Press <strong>Test &amp; fetch models</strong> to confirm the server is reachable and
+                pick from the ids it reports.
+              </p>
+              {#if chatModelError}
+                <span class="validation-error-msg">⚠️ {chatModelError}</span>
+              {/if}
+              {#if chatStatus}
+                <span class="chat-status {chatStatusOk ? 'ok' : 'bad'}">{chatStatus}</span>
+              {/if}
+            </div>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">API Key</span>
+                <span class="field-tag">Optional</span>
+              </div>
+              <input
+                type="password"
+                bind:value={editingTarget.chat_api_key}
+                placeholder="Usually not needed for a local server"
+                class="full-width-input"
+              />
+            </div>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">System Prompt</span>
+              </div>
+              <textarea
+                rows="3"
+                bind:value={editingTarget.chat_system_prompt}
+                placeholder="You are a concise voice assistant. Answer in one or two spoken sentences."
+                use:autoResize
+              ></textarea>
+              <p class="hint">Sent ahead of every turn and never trimmed from the history window.</p>
+            </div>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">Reply Handling</span>
+              </div>
+              <CustomSelect
+                bind:value={editingTarget.chat_reply_mode}
+                options={[
+                  { value: "speak", label: "Speak the reply aloud (TTS)" },
+                  { value: "inject", label: "Type the reply into the focused window" },
+                  { value: "clipboard", label: "Copy the reply to the clipboard" },
+                  { value: "none", label: "Discard the reply (fire and forget)" }
+                ]}
+              />
+              <p class="hint">Speaking the reply requires TTS to be enabled in the TTS tab.</p>
+            </div>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">Conversation Memory</span>
+                <span class="field-tag">Messages</span>
+              </div>
+              <input
+                type="number"
+                min="0"
+                bind:value={editingTarget.chat_max_history}
+                placeholder="20"
+                class="full-width-input"
+              />
+              <p class="hint">Most recent messages sent with each turn. <code>0</code> sends the whole conversation.</p>
+            </div>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">Request Timeout</span>
+                <span class="field-tag">Seconds</span>
+              </div>
+              <input
+                type="number"
+                min="1"
+                bind:value={editingTarget.chat_timeout_secs}
+                placeholder="120"
+                class="full-width-input"
+              />
+            </div>
+
+            <div class="field col">
+              <div class="field-label-row">
+                <span class="field-title">Spoken Reset Phrase</span>
+                <span class="field-tag">Optional</span>
+              </div>
+              <input
+                type="text"
+                bind:value={editingTarget.chat_reset_phrase}
+                placeholder="e.g. new conversation"
+                class="full-width-input"
+              />
+              <p class="hint">
+                Saying exactly this clears the conversation instead of sending it to the model.
+                Casing and punctuation are ignored.
+              </p>
+            </div>
+
+            {#if !isNew}
+              <div class="field col">
+                <div class="chat-actions">
+                  <button class="btn-action small" onclick={resetChatConversation}>
+                    Reset conversation
+                  </button>
+                </div>
+                <p class="hint">
+                  Discards this target's stored conversation so the next dictation starts a new
+                  thread. History is in-memory only and is never written to disk.
+                </p>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         <!-- General Processing Toggles -->
         <div class="processing-toggles">
           <h5>Post-Processing & Output Tuning</h5>
@@ -579,6 +819,27 @@
   }
   .btn-action:hover {
     @apply bg-[var(--border)] border-[var(--text-muted)];
+  }
+
+  .btn-action.small {
+    @apply p-1 px-2 text-[10px];
+  }
+  .btn-action:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  .chat-actions {
+    @apply flex gap-2 items-center;
+  }
+
+  .chat-status {
+    @apply block mt-1.5 text-[11px] leading-relaxed;
+  }
+  .chat-status.ok {
+    @apply text-emerald-400;
+  }
+  .chat-status.bad {
+    @apply text-red-400;
   }
 
   .btn-action.primary {

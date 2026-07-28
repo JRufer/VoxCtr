@@ -294,6 +294,58 @@ pub async fn save_bindings(
     Ok(())
 }
 
+/// Forget a Chat target's conversation so the next dictation starts fresh.
+#[tauri::command]
+pub async fn reset_chat_conversation(
+    _state: State<'_, Arc<AppState>>,
+    target_id: String,
+) -> Result<usize, String> {
+    let dropped = voxctrl_routing::reset_chat_history(&target_id).await;
+    info!("Chat conversation for '{target_id}' reset ({dropped} messages dropped)");
+    Ok(dropped)
+}
+
+/// Probe a Chat target's endpoint and list the models it serves.
+///
+/// Takes an unsaved target so the settings UI can test edits before persisting
+/// them. Routed through Rust rather than `fetch` in the webview because the
+/// endpoint is a third-party server that need not send CORS headers.
+#[tauri::command]
+pub async fn test_chat_target(target: OutputTarget) -> Result<OpenAiTestResult, String> {
+    use voxctrl_config::OpenAiConfig;
+
+    let endpoint = target.chat_url.unwrap_or_default();
+    if endpoint.trim().is_empty() {
+        return Err("No server URL configured.".into());
+    }
+    let client = voxctrl_llm::OpenAiClient::new(OpenAiConfig {
+        enabled: true,
+        endpoint: endpoint.clone(),
+        api_key: target.chat_api_key,
+        model: String::new(),
+        timeout_secs: target.chat_timeout_secs.clamp(1, 30),
+        ..Default::default()
+    });
+
+    match client.list_models().await {
+        Ok(models) if models.is_empty() => Ok(OpenAiTestResult {
+            success: true,
+            message: format!("Connected to {endpoint}, but it reported no models."),
+            models,
+        }),
+        Ok(models) => Ok(OpenAiTestResult {
+            success: true,
+            message: format!("Connected to {endpoint} — {} model(s) available.", models.len()),
+            models,
+        }),
+        Err(e) => Ok(OpenAiTestResult {
+            success: false,
+            message: format!("Could not reach {endpoint}: {e}"),
+            models: Vec::new(),
+        }),
+    }
+}
+
 // ── History ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]

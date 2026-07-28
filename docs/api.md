@@ -123,6 +123,31 @@ await invoke('save_bindings', { bindings: myBindings });
 
 ---
 
+#### `reset_chat_conversation(targetId: string) → number`
+Forgets a `chat` target's stored conversation so the next dictation starts a new thread.
+Returns how many messages were discarded. Unknown target ids return `0`.
+
+```typescript
+const dropped = await invoke<number>('reset_chat_conversation', { targetId: 'hermes' });
+```
+
+---
+
+#### `test_chat_target(target: OutputTarget) → string`
+Probes a `chat` target's `GET /v1/models` endpoint. Resolves with a description of the
+reachable endpoint, or rejects with the failure reason. Accepts an unsaved target so the
+settings UI can test edits before they are persisted.
+
+```typescript
+try {
+  const detail = await invoke<string>('test_chat_target', { target: editingTarget });
+} catch (e) {
+  console.error('Chat endpoint unreachable:', e);
+}
+```
+
+---
+
 ### History
 
 #### `get_history() → HistoryEntry[]`
@@ -549,6 +574,16 @@ interface OutputTarget {
   // mcp
   mcp_path?: string;
   mcp_tool?: string;
+
+  // chat (OpenAI-compatible /v1/chat/completions, with conversation history)
+  chat_url?: string;
+  chat_model?: string;
+  chat_api_key?: string;
+  chat_system_prompt?: string;
+  chat_max_history: number;   // default: 20 (0 = send the whole conversation)
+  chat_timeout_secs: number;  // default: 120
+  chat_reply_mode: string;    // "speak" | "inject" | "clipboard" | "none"
+  chat_reset_phrase?: string;
 
   send_on_release: boolean;   // default: true
   append_newline: boolean;    // default: true

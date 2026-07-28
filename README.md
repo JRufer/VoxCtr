@@ -38,7 +38,7 @@ The core of VoxCtrl is its **Output Target Router**. Rather than simply pasting 
 
 **New in v0.1:** You can now bind **multiple targets** to a single hotkey gesture! When activated, your text is broadcast concurrently to all bound targets. Configurations also **hot-reload instantly** in the background, without requiring an app restart.
 
-Below are the 10 target types supported by VoxCtrl and what they are used for:
+Below are the 11 target types supported by VoxCtrl and what they are used for:
 
 | Delivery Type | Mechanism | Perfect Use Case |
 | :--- | :--- | :--- |
@@ -52,6 +52,13 @@ Below are the 10 target types supported by VoxCtrl and what they are used for:
 | **`http`** | Sends a fast HTTP POST/GET request containing the transcription formatted inside a JSON template. | Streaming transcriptions directly to webhooks, database ingestion services, or remote HTTP endpoints. |
 | **`webhook`** | Sends a signed, secure HTTP POST request with an HMAC-SHA256 signature generated using a shared secret. | Securely connecting dictation triggers to external APIs or home automation platforms (e.g., Home Assistant). |
 | **`speak`** | Plays back the transcribed text aloud via the globally configured Text-to-Speech (TTS) engine. | Hearing the transcribed text spoken back to you directly, even without an active MCP server connection. |
+| **`chat`** | Holds a running conversation with an OpenAI-compatible `/v1/chat/completions` server, sending prior turns as context and reading the reply back. | Talking to a local LLM — Hermes, Ollama, llama.cpp — hands-free, with the answer spoken aloud, typed at your cursor, or copied to the clipboard. |
+
+> [!TIP]
+> `chat` turns VoxCtrl into a voice front end for the same API Open WebUI uses. Enable your
+> server's OpenAI-compatible HTTP API, point `chat_url` at it, and speak. See
+> [`examples/targets-hermes-chat.toml`](examples/targets-hermes-chat.toml) and the
+> [routing reference](docs/routing.md#chat--conversational-llm-openai-compatible).
 
 ---
 
