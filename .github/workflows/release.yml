@@ -166,7 +166,10 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         # `moonshine` ships the Moonshine ONNX engine alongside whisper-cpp in
         # every release build (links ONNX Runtime, fetched at build time).
-        run: npm run tauri build -- --features moonshine
+        # `inflect-micro` rides along on that same ONNX Runtime, so enabling it
+        # costs almost nothing here and means shipped builds can actually run
+        # the engine the TTS settings offer.
+        run: npm run tauri build -- --features moonshine,inflect-micro
 
       # Portable GPU AppImage. whisper.cpp's Vulkan backend links only
       # libvulkan (lightweight, unlike CUDA), so linuxdeploy bundles it fine.
@@ -175,7 +178,7 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
           QT_QPA_PLATFORM: offscreen
-        run: npm run tauri build -- --features vulkan,moonshine
+        run: npm run tauri build -- --features vulkan,moonshine,inflect-micro
 
       # linuxdeploy bundles whatever graphics/Wayland/input libraries exist on
       # the build host. On ubuntu-22.04 those are older than modern desktops, and
@@ -226,7 +229,7 @@ jobs:
       # `--bundles nsis` reaches tauri instead of cargo.
       - name: Build installer (Windows, CPU)
         if: runner.os == 'Windows'
-        run: npx tauri build --bundles nsis -- --features moonshine
+        run: npx tauri build --bundles nsis -- --features moonshine,inflect-micro
 
       # ── Collect and rename Linux artifacts ──────────────────────────────────
       # Search the whole workspace so the path is correct regardless of whether

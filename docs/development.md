@@ -167,6 +167,12 @@ The `--` is required — without it npm treats `--features` as its own flag and
 fails with `EUNKNOWNCONFIG`. Note that the model **downloads** fine in a build
 without the feature; only synthesis needs it, so Settings will show the engine
 as ready while Test TTS stays disabled.
+
+Released builds enable `inflect-micro` already — `build_appimage.sh` and the
+release workflow pass it alongside `moonshine`, which has linked ONNX Runtime
+anyway, so it adds almost nothing there. It stays off by default so plain
+`cargo build` and `cargo check --workspace` keep working offline and without
+the extra link time.
 # Or use the helper script:
 .\scripts\build_windows.ps1 -Cuda
 ```

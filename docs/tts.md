@@ -50,17 +50,25 @@ That list is published in the PyTorch repository rather than with the graphs, so
 
 **Prerequisites:**
 
-- Built with the `inflect-micro` cargo feature — opt-in because it pulls in ONNX Runtime:
+- Built with the `inflect-micro` cargo feature. **Released builds already enable it**
+  (`build_appimage.sh` and the release workflow pass it alongside `moonshine`), so
+  this only matters when building from source:
 
   ```bash
   npm run tauri dev -- --features inflect-micro
   npm run tauri build -- --features inflect-micro
   ```
 
-  The `--` is required, or npm consumes the flag itself. ONNX Runtime is fetched at
-  build time and linked in (the same `download-binaries` setup `voxctrl-inference`
-  uses for Moonshine), so the resulting binary needs no system `libonnxruntime` —
-  but the build itself needs network access to the ONNX Runtime binary host.
+  The `--` is required, or npm consumes the flag itself. It stays off by default so
+  a plain `cargo build` or `cargo check --workspace` needs neither the extra link
+  time nor network access — the same reasoning that keeps `moonshine` opt-in. In a
+  release build the cost is near zero, because `moonshine` has already linked ONNX
+  Runtime and this engine reuses it.
+
+  ONNX Runtime is fetched at build time and linked in (the `download-binaries` setup
+  `voxctrl-inference` uses), so the resulting binary needs no system
+  `libonnxruntime` — but the build itself needs network access to the ONNX Runtime
+  binary host.
 
   Note that the **model downloads fine without the feature**: only synthesis is
   gated. Settings will show the engine as ready while Test TTS stays disabled,

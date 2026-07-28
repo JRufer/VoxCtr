@@ -258,16 +258,16 @@ fi
 # (whisper-cpp and Moonshine) are selectable in every AppImage. It links ONNX
 # Runtime, fetched at build time, so this step needs network access.
 if [ "$BUILD_MODE" = "vulkan" ]; then
-    info "Compiling with Vulkan GPU support (whisper-cpp + Moonshine)..."
+    info "Compiling with Vulkan GPU support (whisper-cpp + Moonshine + Inflect)..."
     if [ "$CUDA_FOUND" = true ]; then
         warn "CUDA Toolkit was detected, but AppImages cannot bundle CUDA support"
         warn "because linuxdeploy attempts to bundle the massive CUDA libraries, which fails."
         warn "We are compiling with Vulkan GPU acceleration instead."
     fi
-    npx tauri build --verbose -- --features vulkan,moonshine
+    npx tauri build --verbose -- --features vulkan,moonshine,inflect-micro
 else
-    info "Compiling for CPU only (whisper-cpp + Moonshine)..."
-    npx tauri build --verbose -- --features moonshine
+    info "Compiling for CPU only (whisper-cpp + Moonshine + Inflect)..."
+    npx tauri build --verbose -- --features moonshine,inflect-micro
 fi
 
 ok "Compilation finished successfully."
