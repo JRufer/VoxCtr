@@ -12,8 +12,17 @@ use tracing::{debug, info, warn};
 use voxctrl_config::{TtsConfig, TtsEngine};
 use voxctrl_text::{correct_custom_vocabulary, expand_snippets};
 
+use crate::inflect::speak_inflect_micro;
 use crate::piper::{get_voice_path, piper_binary, sample_rate_for_voice};
 use crate::pocket::speak_pocket_tts;
+
+/// The worker's cached Inflect-Micro-v2 sessions. Without the `inflect-micro`
+/// feature there is no model type to cache, so the slot degenerates to `()` and
+/// `speak_inflect_micro` reports that the engine wasn't compiled in.
+#[cfg(feature = "inflect-micro")]
+type InflectModelSlot = Option<crate::inflect::model::InflectModel>;
+#[cfg(not(feature = "inflect-micro"))]
+type InflectModelSlot = Option<()>;
 
 // ── Utterance queue ───────────────────────────────────────────────────────────
 
@@ -109,7 +118,12 @@ impl TtsEngineWorker {
         let generation = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let handle = TtsEngineHandle { tx, generation: generation.clone() };
 
-        if config.engine == TtsEngine::PocketTts && config.pocket_tts.prewarm {
+        let prewarm = match config.engine {
+            TtsEngine::PocketTts => config.pocket_tts.prewarm,
+            TtsEngine::InflectMicro => config.inflect_micro.prewarm,
+            _ => false,
+        };
+        if prewarm {
             let _ = handle.tx.send(TtsCommand::Play {
                 utterance: Utterance {
                     text: " ".into(),
@@ -142,6 +156,8 @@ impl TtsEngineWorker {
         // pocket-tts model + per-voice cloned voice state, cached for the lifetime of this worker thread.
         let mut pocket_tts_model: Option<pocket_tts::TTSModel> = None;
         let mut pocket_tts_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
+        // Inflect-Micro-v2 ONNX sessions, cached for the same lifetime.
+        let mut inflect_model: InflectModelSlot = None;
 
         // Persistent Rodio Output Stream - kept alive for the lifetime of this thread!
         let mut audio_context: Option<(rodio::OutputStream, rodio::OutputStreamHandle, Arc<rodio::Sink>)> = None;
@@ -195,7 +211,15 @@ impl TtsEngineWorker {
                         *guard = Some(sink.clone());
                     }
 
-                    let result = match self.config.engine {
+                    // Caught rather than allowed to unwind: a panic here kills the
+                    // worker thread outright, and because the channel sender lives on
+                    // in the handle, every later `speak()` succeeds silently. The UI
+                    // then waits forever for callbacks that can never fire, which
+                    // presents as the app hanging rather than as a failure. ONNX
+                    // Runtime can panic during session creation when its shared
+                    // library cannot be resolved, so this path is reachable.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        match self.config.engine {
                         TtsEngine::Piper => self.speak_piper(&utterance, &sink),
                         TtsEngine::Espeak => self.speak_espeak(&utterance),
                         TtsEngine::PocketTts => speak_pocket_tts(
@@ -208,7 +232,29 @@ impl TtsEngineWorker {
                             &self.generation,
                             generation,
                         ),
-                    };
+                        TtsEngine::InflectMicro => speak_inflect_micro(
+                            &self.config,
+                            &utterance,
+                            &mut inflect_model,
+                            &self.on_playback_start,
+                            &sink,
+                            &self.generation,
+                            generation,
+                        ),
+                        }
+                    }))
+                    .unwrap_or_else(|payload| {
+                        let detail = payload
+                            .downcast_ref::<&str>()
+                            .map(|s| (*s).to_string())
+                            .or_else(|| payload.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown panic".into());
+                        Err(anyhow::anyhow!(
+                            "TTS engine panicked: {detail}. For the Inflect-Micro-v2 \
+                             engine this usually means ONNX Runtime could not be \
+                             loaded — this build resolves libonnxruntime at runtime."
+                        ))
+                    });
 
                     {
                         let mut guard = ACTIVE_SINK.lock().unwrap();

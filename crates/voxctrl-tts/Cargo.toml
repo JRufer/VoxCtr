@@ -21,3 +21,28 @@ crossbeam-channel = { workspace = true }
 rodio = { workspace = true }
 pocket-tts = { workspace = true }
 hf-hub = { workspace = true }
+# Not the workspace `ort`: that is configured `load-dynamic`, which resolves
+# ONNX Runtime at runtime and so needs a system libonnxruntime present. Nothing
+# in the workspace provides one, and its absence surfaces as the TTS worker
+# dying inside session creation. Use the same self-contained setup as
+# `voxctrl-inference`: default features include `download-binaries`, which
+# fetches a prebuilt ONNX Runtime at build time and links it in, so the shipped
+# binary needs no system library. Building this feature therefore needs network
+# access to the ONNX Runtime binary host at compile time; for a fully offline
+# build, switch to `default-features = false, features = ["load-dynamic", "std",
+# "api-24"]` and ship a libonnxruntime alongside the app.
+ort = { version = "2.0.0-rc.12", optional = true }
+
+[features]
+default = []
+# Inflect-Micro-v2 neural TTS via ONNX Runtime. Opt-in like `moonshine` on
+# voxctrl-inference, and for the same reason: it pulls in ONNX Runtime. The
+# eSpeak-NG phoneme frontend is a runtime dependency, checked for before
+# synthesis.
+inflect-micro = ["dep:ort"]
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+tempfile = { workspace = true }

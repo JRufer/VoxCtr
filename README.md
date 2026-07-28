@@ -15,19 +15,19 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 * **No Cloud API Keys Required**: VoxCtrl relies exclusively on OpenAI's Whisper models (via native CPU/GPU accelerated `whisper-rs`) running directly on your local hardware.
 * **No Telemetry**: Your ambient microphone data never leaves your machine. There are no hidden tracking scripts or analytical pings.
 * **Air-Gapped Ready**: Once the application and models are downloaded, VoxCtrl requires zero internet access to function.
-* **Local Neural Voices**: All text-to-speech feedback is generated offline via a local Piper engine.
+* **Local Neural Voices**: All text-to-speech feedback is generated offline by a local engine — Piper, Pocket-TTS, Inflect-Micro-v2, or eSpeak-NG.
 
 ---
 
 ## 🌟 Key Features
 
-* **High-Performance Offline Speech Recognition**: Local on-device inference using native `whisper.cpp` (via `whisper-rs`) supporting multi-threaded CPU execution. NVIDIA CUDA GPU acceleration is available as an opt-in compile-time feature (`--features cuda`); Vulkan acceleration (AMD/Intel/NVIDIA) works in the standard build.
+* **High-Performance Offline Speech Recognition**: Local on-device inference using native `whisper.cpp` (via `whisper-rs`) supporting multi-threaded CPU execution. NVIDIA CUDA GPU acceleration is available as an opt-in compile-time feature (`--features cuda`); Vulkan acceleration (AMD/Intel/NVIDIA) works in the standard build. The Moonshine ONNX backend is compiled in by default.
 * **Modern GUI & Tray System**: A sleek Svelte-based user interface with dedicated, swappable, fully animated overlays (Ocean Wave, Voice Card, Waveform, and Pulse Ring), a searchable transcription history panel, and a native desktop System Tray utility.
 * **Low-Latency Audio Loop**: Streamlined recording and VAD (Voice Activity Detection) built using `cpal` to minimize capture latency.
 * **Built-in Model Context Protocol (MCP) Server**: Exposes voice dictation and speech synthesis as high-level JSON-RPC tools to AI clients (like Claude Desktop or Cursor) via local secure sockets—keeping integrations fully local.
 * **Linux evdev Global Hotkeys**: Low-level event loop listener bypassing desktop environments to bind global hold-to-talk, toggle-to-talk, double-tap, double-tap & hold, or chord combo gestures directly to any keyboard.
 * **DBus Dictation Service**: Exposes `ai.voxctrl.Dictation` on the local Linux session bus, letting you script recording states securely without network exposure.
-* **Neural Text-to-Speech (TTS)**: Built-in local neural voice feedback powered by Piper, with automatic local package installation and a voice downloader interface.
+* **Neural Text-to-Speech (TTS)**: Built-in local voice feedback with a choice of four engines — **Piper** (neural, high quality), **Pocket-TTS** (neural, clones a voice from a reference clip), **Inflect-Micro-v2** (neural, 38 MB ONNX), and **eSpeak-NG** (lightweight, always available) — with automatic local package installation and an in-app model downloader. All four are compiled in by default, so any build can use them.
 * **Intelligent Post-Processing & LLM Rewriting**: Real-time automatic filler-word cleanup (e.g. stripping "um", "uh", "hmm") to sanitize dictation, combined with optional post-processing through any **OpenAI-compatible API server** (a local [Ollama](https://ollama.ai/) or LM Studio instance, or a hosted provider) for real-time grammar correction, tone rewriting, or custom formatting. Point it at any URL and supply an API key when the server requires one.
 
 ---
@@ -108,7 +108,7 @@ VoxCtrl provides a clean, native settings window and overlay environment:
 * **Audio tab**: Configure device gain, input indices, and toggle dynamic streaming/VAD threshold settings.
 * **Routing tab**: Define named targets (`targets.toml`), delivery properties, and post-processors.
 * **Hotkeys tab**: Setup keybindings (`bindings.toml`) and detect subset/exact-match conflicts in real time.
-* **Voice Output tab**: Download and preview Piper voices for local speech synthesis.
+* **Voice Output tab**: Pick a TTS engine, download its models or voices, and preview them for local speech synthesis.
 
 ### 🎨 Heads-Up HUD Overlay Styles
 
@@ -145,7 +145,7 @@ VoxCtrl features a native Model Context Protocol (MCP) server listening on a loc
 
 ### Exposed MCP Tools
 1. **`transcribe_voice(timeout_secs)`**: Prompts the application to open your default recording device, capture speech, transcribe it using the Whisper engine, and return the raw text to the model.
-2. **`speak_text(text)`**: Queues text to be spoken aloud locally on the user's host machine using the configured Piper neural TTS engine.
+2. **`speak_text(text)`**: Queues text to be spoken aloud locally on the user's host machine using the configured neural TTS engine.
 3. **`get_status()`**: Returns a JSON object with boolean states indicating whether the microphone is currently recording or the TTS engine is currently speaking.
 
 ### 🎯 Generic MCP Routing Target

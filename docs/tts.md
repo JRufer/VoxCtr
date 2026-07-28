@@ -25,6 +25,60 @@ Instead of fixed precomputed voice embeddings, Pocket-TTS clones a voice from a 
 
 Model weights and the per-voice reference clips are downloaded on demand via `pocket_tts::weights::download_if_necessary`, which resolves `hf://owner/repo/filename[@revision]` URIs through the standard HuggingFace cache (`~/.cache/huggingface/hub/`). Subsequent loads are read straight from the local cache — no network access required once downloaded.
 
+### Inflect-Micro-v2 (Neural, ONNX)
+[Inflect-Micro-v2](https://huggingface.co/owensong/Inflect-Micro-v2) is a ~9.4M-parameter VITS-family text-to-waveform model (37.5 MB FP32, Apache 2.0) producing 24 kHz mono audio from a single fixed English voice. It is the smallest neural option VoxCtrl offers and runs in-process through ONNX Runtime with no subprocess.
+
+The verified FP32 export is published separately as [`Inflect-Micro-v2-ONNX`](https://huggingface.co/owensong/Inflect-Micro-v2-ONNX), with the graphs under `onnx/`. VoxCtrl lists the repository through the Hugging Face API and downloads the graphs plus their accompanying files into `~/.local/share/voxctrl/models/inflect-micro/`. Point `model_dir` at an existing copy to skip downloading.
+
+**Pipeline**, following the export's own `inference_onnx.py`:
+
+1. `duration.onnx` — `tokens` (int64 `[1, N]`), `lengths` (int64 `[1]`), `length_scale` (float32 scalar) → `m_p_exp`, `logs_p_exp`, `y_mask`
+2. Latent noise `zp_noise` is drawn **host-side** with `m_p_exp`'s shape
+3. `decode.onnx` — `m_p_exp`, `logs_p_exp`, `y_mask`, `zp_noise`, `noise_scale` (float32 scalar) → `waveform`
+
+`length_scale` is `1.0 / speed`; `noise_scale` is the variation setting (0.0–1.0, default 0.667). Both scale inputs are rank-0 (scalar) tensors, matching `np.asarray(value, dtype=np.float32)` in the reference.
+
+**Tokenization.** Phoneme ids are positions in the ordered 178-entry `symbols` list from the model's text frontend (`text/symbols.py`), which follows the tacotron layout: a pad, then punctuation, ASCII letters, and the IPA inventory. Ids are interleaved with blanks into `[0, s₀, 0, s₁, …, 0]` (length `2n+1`); there is no BOS/EOS wrapper. `'` appears twice in the list and, as in Python's dict comprehension, the later index wins.
+
+That list is published in the PyTorch repository rather than with the graphs, so VoxCtrl fetches it separately after the download. The loader parses the tacotron form (`symbols = [_pad] + list(_punctuation) + ...`, resolving the named constants) as well as plain list literals, JSON arrays, and symbol→id maps — and identifies the table by parsing rather than by filename, so it does not depend on a fixed name. eSpeak-NG's `en-us --ipa` output is fully covered by this inventory; any symbol that ever falls outside it is skipped with a warning rather than failing the utterance.
+
+**Assets.** The graphs are found by listing the hub API rather than assuming a path, and the phoneme table is identified by parsing candidate files rather than by filename — both had to be discovered, since the export publishes the graphs and the symbol list in different repositories and ships no standalone table.
+
+**Chunking.** Text is normalised, split after `.!?;:` followed by whitespace, and any sentence over 280 characters is split again at the last `,`/`;`/`:` in range (or the last space). Each sentence is its own chunk — they are not packed together — so the per-chunk boundary pause (0.28 s after `?`, 0.22 s after `.`, down to 0.08 s with no terminator) lands correctly. Every chunk gets a 5 ms edge fade, and the seed advances per chunk. Playback of each chunk overlaps generation of the next.
+
+**Seed reproducibility.** The reference draws `zp_noise` with NumPy's PCG64. VoxCtrl uses its own PCG64 with Box–Muller instead, so output is fully deterministic for a given seed *within VoxCtrl*, but a seed does not select the same sample as the same seed in the Python reference. Any correctly-distributed noise produces valid audio; the seed only chooses which sample you get.
+
+**Prerequisites:**
+
+- Nothing, in a standard build: `inflect-micro` is a default feature, so ONNX
+  Runtime is fetched at build time and linked in (the `download-binaries` setup
+  `voxctrl-inference` uses), and the resulting binary needs no system
+  `libonnxruntime`. Building therefore needs network access to the ONNX Runtime
+  binary host; `--no-default-features --features custom-protocol` builds offline
+  without this engine or Moonshine.
+
+  In a build without the feature the model still **downloads** — only synthesis is
+  gated — so Settings shows the engine as ready while Test TTS stays disabled and
+  explains why.
+
+- `espeak-ng` installed on the system, used for grapheme-to-phoneme conversion.
+
+Graph signatures are verified at load, and a missing input is a hard error reporting what the graph actually declares. Settings → TTS → Inspect graphs (or the `inflect_micro_inspect` command) reports that signature for a downloaded model.
+
+**Debugging.** When synthesis misbehaves, run the pipeline outside the app:
+
+```bash
+cargo run -p voxctrl-tts --features inflect-micro --example inflect_probe
+cargo run -p voxctrl-tts --features inflect-micro --example inflect_probe -- "custom text"
+```
+
+It runs phonemization → tokenization → both graphs and writes `inflect_probe.wav`
+to the temp directory, with no Tauri, no event plumbing and no audio device. Each
+stage prints before and after it runs, so a stall or crash leaves the responsible
+stage as the last line on screen. Because it writes a WAV instead of playing it,
+it also separates a synthesis fault from a playback one — something the app's
+Test button cannot distinguish.
+
 ### Espeak-ng (Lightweight)
 If Piper is unavailable or no voice is downloaded, VoxCtrl can use `espeak-ng`. It is invoked as a subprocess with the text as an argument. Quality is lower but espeak-ng is always available as a system package.
 
@@ -36,7 +90,7 @@ VoxCtrl supports **GPU Acceleration** for the **Piper** neural engine:
 
 *   **Piper:** Appends the `--cuda` CLI flag to the spawned `piper` subprocess command dynamically at runtime.
 
-Pocket-TTS (Candle-based) does not currently expose a GPU toggle in this crate version, so the `gpu` config flag and the GPU setting in Settings → TTS only apply to Piper.
+Pocket-TTS (Candle-based) does not currently expose a GPU toggle in this crate version, and Inflect-Micro-v2 runs on ONNX Runtime's CPU provider, so the `gpu` config flag and the GPU setting in Settings → TTS only apply to Piper. Inflect is small enough (9.4M parameters) that CPU synthesis is fast; the upstream export also supports CUDA and DirectML providers, which VoxCtrl does not currently select.
 
 ### Requirements & Setup:
 1.  A CUDA-compatible NVIDIA GPU and drivers installed.
@@ -81,6 +135,10 @@ VoxCtrl bundles a small catalogue of reference voice clips, each pulled from the
 | `vera` | Vera (Female) |
 | `charles` | Charles (Male) |
 | `michael` | Michael (Male) |
+
+### Inflect-Micro-v2 Voices
+
+None — the model has a single fixed English voice, so Settings shows a seed and a variation control instead of a voice picker. Changing the seed resamples the delivery of the same voice; it does not select a different speaker.
 
 ### Custom Pocket-TTS Voices
 

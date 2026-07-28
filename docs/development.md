@@ -154,6 +154,23 @@ npm run tauri build -- --features cuda
 
 # Windows (PowerShell)
 npm run tauri build -- --features cuda
+
+The `--` is required — without it npm treats `--features` as its own flag and
+fails with `EUNKNOWNCONFIG`.
+
+The two ONNX-backed engines — `moonshine` (speech-to-text) and `inflect-micro`
+(text-to-speech) — are **default features**, so a plain build includes both and
+neither needs naming. They share one ONNX Runtime, which is fetched at build
+time and linked in, so builds need network access to that host. To build
+without it:
+
+```bash
+npm run tauri build -- --no-default-features --features custom-protocol
+```
+
+In such a build, selecting Moonshine falls back to whisper-cpp, and the Inflect
+TTS engine still downloads its model but leaves Test TTS disabled — only
+synthesis is gated.
 # Or use the helper script:
 .\scripts\build_windows.ps1 -Cuda
 ```

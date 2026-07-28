@@ -46,8 +46,10 @@ jobs:
         with:
           key: check-${{ matrix.os }}
 
-      # Full workspace check on Linux (includes voxctrl-inference which needs whisper-rs/C++)
-      - name: cargo check (workspace, no features)
+      # Full workspace check on Linux (includes voxctrl-inference which needs
+      # whisper-rs/C++). Default features include the two ONNX-backed engines,
+      # so this also fetches ONNX Runtime at build time and needs network access.
+      - name: cargo check (workspace, default features)
         if: runner.os != 'Windows'
         run: cargo check --workspace
 
@@ -81,7 +83,8 @@ jobs:
             patchelf \
             squashfs-tools \
             pkg-config \
-            build-essential
+            build-essential \
+            espeak-ng
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -89,9 +92,12 @@ jobs:
         with:
           key: test-linux
 
-      # Run tests for crates that have unit tests and no heavy system deps
+      # Run tests for crates that have unit tests and no heavy system deps.
+      # voxctrl-tts's phoneme-frontend tests exercise the real `espeak-ng`
+      # binary when it is present, and skip cleanly when it isn't — it is
+      # installed above so they actually run here.
       - name: cargo test
-        run: cargo test -p voxctrl-config -p voxctrl-routing -p voxctrl-hotkeys -p voxctrl-app
+        run: cargo test -p voxctrl-config -p voxctrl-routing -p voxctrl-hotkeys -p voxctrl-tts -p voxctrl-app
 
   # ── Frontend type check ───────────────────────────────────────────────────────
   frontend-check:

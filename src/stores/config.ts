@@ -80,9 +80,16 @@ export interface PocketTtsConfig {
   voice_dir: string;
 }
 
+export interface InflectMicroConfig {
+  model_dir: string;
+  seed: number;
+  noise_scale: number;
+  prewarm: boolean;
+}
+
 export interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "pocket_tts";
+  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro";
   voice: string;
   voice_dir: string;
   stop_key: string[];
@@ -90,6 +97,7 @@ export interface TtsConfig {
   speed: number;
   gpu: boolean;
   pocket_tts: PocketTtsConfig;
+  inflect_micro: InflectMicroConfig;
   snippets: Record<string, string>;
   custom_vocabulary: string[];
 }
@@ -169,6 +177,12 @@ const defaultConfig: AppConfig = {
       prewarm: false,
       hf_token: null,
       voice_dir: "",
+    },
+    inflect_micro: {
+      model_dir: "",
+      seed: 0,
+      noise_scale: 0.667,
+      prewarm: false,
     },
     snippets: {
       "VoxCtrl": "Vox Control"

@@ -221,6 +221,42 @@ await invoke('download_pocket_tts', {
 
 ---
 
+#### `inflect_micro_available() → boolean`
+Whether this build was compiled with the `inflect-micro` cargo feature. When `false` the engine can be selected and its model downloaded, but synthesis is unavailable — the Settings panel uses this to explain why Test TTS is disabled.
+
+```typescript
+const available = await invoke<boolean>('inflect_micro_available');
+```
+
+---
+
+#### `check_inflect_micro_downloaded(modelDir: string) → boolean`
+Whether both ONNX graphs and a usable phoneme table are present in `modelDir` (`""` = default directory). The table is detected by parsing rather than by filename, so this agrees with what synthesis will actually accept.
+
+```typescript
+const ready = await invoke<boolean>('check_inflect_micro_downloaded', { modelDir: '' });
+```
+
+---
+
+#### `download_inflect_micro(modelDir: string) → void`
+Downloads `duration.onnx`, `decode.onnx`, their accompanying files, and the ordered symbol list. The export's layout is discovered by listing the Hugging Face API, and the symbol list is fetched separately because it is published in a different repository from the graphs. Independent of the `inflect-micro` feature — the model downloads in any build.
+
+```typescript
+await invoke('download_inflect_micro', { modelDir: '' });
+```
+
+---
+
+#### `inflect_micro_inspect(modelDir: string) → object`
+Reports what the downloaded graphs actually declare: every input and output with its element type and shape, plus the phoneme table's filename and size. Skips the contract check, so it still answers for a model whose signature does *not* match. Requires the `inflect-micro` feature.
+
+```typescript
+const signature = await invoke<unknown>('inflect_micro_inspect', { modelDir: '' });
+```
+
+---
+
 ### Speech Recognition Models
 
 #### `check_model_downloaded(modelSize: string) → boolean`
@@ -445,9 +481,16 @@ interface PocketTtsConfig {
   voice_dir: string;       // custom .wav voice clips; empty = default directory
 }
 
+interface InflectMicroConfig {
+  model_dir: string;        // empty = default directory
+  seed: number;             // deterministic for a fixed seed
+  noise_scale: number;      // 0.0-1.0 variation, default 0.667
+  prewarm: boolean;
+}
+
 interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "pocket_tts";
+  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro";
   voice: string;
   voice_dir: string;
   stop_key: string[];       // singular field name, plural value
@@ -455,6 +498,7 @@ interface TtsConfig {
   speed: number;            // not used by pocket_tts
   gpu: boolean;             // only applies to piper
   pocket_tts: PocketTtsConfig;
+  inflect_micro: InflectMicroConfig;  // fixed-voice, so no voice field
 }
 
 interface McpConfig {
