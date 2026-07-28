@@ -235,11 +235,12 @@ cache) until the end-of-transcript token appears or a length cap is reached. The
 resulting token ids are turned back into text with the model's tokenizer, which
 is bundled into the app.
 
-**Enabling it.** Moonshine is an opt-in build feature (it links ONNX Runtime),
-compiled in with `--features moonshine`, the same way `cuda` and `vulkan` are
-opt-in. A build without it will transparently fall back to whisper-cpp if
-`"moonshine"` is selected; the Settings → Engine panel indicates whether the
-running build actually includes it.
+**Enabling it.** Moonshine is a default build feature, so a standard build
+includes it — unlike `cuda`, which stays opt-in. It links ONNX Runtime, fetched
+at build time, and shares that runtime with the Inflect-Micro-v2 TTS engine. A
+build made with `--no-default-features` omits both and transparently falls back
+to whisper-cpp if `"moonshine"` is selected; the Settings → Engine panel
+indicates whether the running build actually includes it.
 
 **Models.** Selecting a size (`base` or `tiny`) and clicking Download in
 Settings → Engine fetches the two ONNX graphs (`encoder_model.onnx` and

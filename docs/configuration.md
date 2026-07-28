@@ -135,12 +135,12 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | `model_size` | string | `"base"` | `"base"` or `"tiny"` |
 | `language` | string | `"en"` | BCP-47 language code (output label only) |
 
-> **Build requirement:** the Moonshine backend is an opt-in compile-time
-> feature. It is included only when the app is built with `--features moonshine`
-> (it pulls in ONNX Runtime). In a build **without** that feature, selecting
-> `"moonshine"` transparently falls back to `whisper-cpp` and still uses the
-> Whisper model configured above. The Settings → Engine panel shows whether
-> Moonshine is available in the running build.
+> **Build requirement:** the Moonshine backend is a **default** compile-time
+> feature, so a standard build includes it. It links ONNX Runtime, which is
+> fetched at build time — a build made with `--no-default-features` omits it,
+> and selecting `"moonshine"` then transparently falls back to `whisper-cpp`,
+> still using the Whisper model configured above. The Settings → Engine panel
+> shows whether Moonshine is available in the running build.
 >
 > A Moonshine model is two upstream ONNX graphs (`encoder_model.onnx` and
 > `decoder_model_merged.onnx`), downloaded on demand into

@@ -264,10 +264,12 @@ if [ "$BUILD_MODE" = "vulkan" ]; then
         warn "because linuxdeploy attempts to bundle the massive CUDA libraries, which fails."
         warn "We are compiling with Vulkan GPU acceleration instead."
     fi
-    npx tauri build --verbose -- --features vulkan,moonshine,inflect-micro
+    npx tauri build --verbose -- --features vulkan
 else
     info "Compiling for CPU only (whisper-cpp + Moonshine + Inflect)..."
-    npx tauri build --verbose -- --features moonshine,inflect-micro
+    # Moonshine and Inflect-Micro are default features; only GPU backends and
+    # `custom-protocol` need naming here.
+    npx tauri build --verbose
 fi
 
 ok "Compilation finished successfully."

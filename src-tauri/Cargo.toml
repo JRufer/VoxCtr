@@ -61,18 +61,27 @@ zbus = { workspace = true }
 gtk = { version = "0.18", features = ["v3_24"] }
 
 [features]
-default = ["custom-protocol"]
+# Both ONNX-backed engines ship by default: selecting them in Settings should
+# work in any build, rather than silently falling back (Moonshine) or leaving
+# Test TTS disabled (Inflect). They share one ONNX Runtime, so enabling the
+# second costs almost nothing once the first is in.
+#
+# The trade-off is that a default build now links ONNX Runtime, which is
+# fetched at build time — so building requires network access to that host.
+# Use `--no-default-features --features custom-protocol` for an offline build
+# without either engine.
+default = ["custom-protocol", "moonshine", "inflect-micro"]
 custom-protocol = ["tauri/custom-protocol"]
 cuda = ["voxctrl-inference/cuda"]
 vulkan = ["voxctrl-inference/vulkan"]
-# Compiles the Moonshine ONNX speech-to-text backend into the app. Opt-in like
-# cuda/vulkan: it pulls in ONNX Runtime (fetched at build time). Without it, a
-# "moonshine" backend selection transparently falls back to whisper-cpp.
+# Compiles the Moonshine ONNX speech-to-text backend into the app. On by
+# default; without it a "moonshine" backend selection transparently falls back
+# to whisper-cpp.
 moonshine = ["voxctrl-inference/moonshine"]
-# Compiles the Inflect-Micro-v2 ONNX text-to-speech engine into the app. Opt-in
-# for the same reason as moonshine: it pulls in ONNX Runtime. Without it,
-# selecting the engine reports that the build lacks it instead of failing
-# obscurely. Also needs `espeak-ng` installed at runtime for phonemization.
+# Compiles the Inflect-Micro-v2 ONNX text-to-speech engine into the app. On by
+# default; without it, selecting the engine reports that the build lacks it
+# instead of failing obscurely. Needs `espeak-ng` installed at runtime for
+# phonemization either way.
 inflect-micro = ["voxctrl-tts/inflect-micro"]
 
 [dev-dependencies]

@@ -46,8 +46,10 @@ jobs:
         with:
           key: check-${{ matrix.os }}
 
-      # Full workspace check on Linux (includes voxctrl-inference which needs whisper-rs/C++)
-      - name: cargo check (workspace, no features)
+      # Full workspace check on Linux (includes voxctrl-inference which needs
+      # whisper-rs/C++). Default features include the two ONNX-backed engines,
+      # so this also fetches ONNX Runtime at build time and needs network access.
+      - name: cargo check (workspace, default features)
         if: runner.os != 'Windows'
         run: cargo check --workspace
 
