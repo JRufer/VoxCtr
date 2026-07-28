@@ -26,7 +26,7 @@ use ort::{
     session::{builder::GraphOptimizationLevel, Session, SessionInputValue},
     value::Tensor,
 };
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::phonemes::{self, PhonemeVocab};
 use super::{DECODE_FILE, DURATION_FILE, SAMPLE_RATE};
@@ -86,9 +86,9 @@ fn signature_of(session: &Session, file: &str) -> GraphSignature {
     }
 }
 
-/// Load both graphs purely to report their tensor names, without binding them to
-/// a synthesis plan. Works even when the names don't match the alias tables —
-/// that is precisely the case it exists to diagnose.
+/// Load both graphs purely to report what they declare, skipping the contract
+/// check. That is deliberate: this is the diagnostic for a model whose signature
+/// does *not* match, so it has to succeed where [`InflectModel::load`] fails.
 pub fn inspect(dir: &Path) -> Result<ModelSignature> {
     let duration = build_session(&dir.join(DURATION_FILE))?;
     let decode = build_session(&dir.join(DECODE_FILE))?;
@@ -278,9 +278,9 @@ impl InflectModel {
             )
         })?;
 
-        // Logged once per load: if synthesis then fails inside ONNX Runtime, this
-        // is the record of what the graphs actually declared.
-        info!("Inflect-Micro-v2 graph signatures:\n{}\n{}", describe(&duration_sig), describe(&decode_sig));
+        // Full per-tensor detail is verbose, so it sits at debug; a failure path
+        // reports it regardless, and `inflect_micro_inspect` shows it on demand.
+        debug!("Inflect-Micro-v2 graph signatures:\n{}\n{}", describe(&duration_sig), describe(&decode_sig));
 
         require_inputs(&duration_sig, &DURATION_INPUTS, &decode_sig)?;
         require_inputs(&decode_sig, &DECODE_INPUTS, &duration_sig)?;

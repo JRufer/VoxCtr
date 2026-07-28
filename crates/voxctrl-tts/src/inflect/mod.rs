@@ -152,8 +152,10 @@ static DOWNLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(())
 /// Fetch the model into `model_dir` (or the platform default). Files already
 /// present are skipped, so this is safe to call repeatedly.
 ///
-/// The vocabulary file name isn't fixed across VITS exports, so each candidate in
-/// [`phonemes::VOCAB_FILES`] is tried and the first that exists upstream is kept.
+/// The export's layout is discovered by listing the hub rather than assumed: the
+/// graphs come from whichever candidate repository actually has them, and the
+/// symbol list is searched for separately because it is published apart from
+/// them.
 pub async fn download_inflect_micro_assets(model_dir: &str) -> Result<()> {
     let dir = resolve_model_dir(model_dir);
     tokio::fs::create_dir_all(&dir)
@@ -620,7 +622,7 @@ pub(crate) fn speak_inflect_micro(
             }
         }
 
-        info!(
+        tracing::debug!(
             "Inflect-Micro-v2 chunk {}/{}: {} samples",
             index + 1,
             chunks.len(),
