@@ -31,6 +31,14 @@ fn test_mcp_config_roundtrip() {
         mcp_path: Some("/tmp/custom-mcp.sock".into()),
         mcp_tool: Some("speak_text".into()),
         mcp_args: Some(serde_json::json!({ "message": "{TEXT}" })),
+        chat_url: None,
+        chat_model: None,
+        chat_api_key: None,
+        chat_system_prompt: None,
+        chat_max_history: 20,
+        chat_timeout_secs: 120,
+        chat_reply_mode: "speak".into(),
+        chat_reset_phrase: None,
         send_on_release: true,
         append_newline: false,
         strip_newlines: false,
@@ -138,6 +146,14 @@ async fn test_mcp_delivery_handshake() {
         mcp_path: Some(socket_path.clone()),
         mcp_tool: Some("speak_text".into()),
         mcp_args: Some(serde_json::json!({ "text": "{TEXT}" })),
+        chat_url: None,
+        chat_model: None,
+        chat_api_key: None,
+        chat_system_prompt: None,
+        chat_max_history: 20,
+        chat_timeout_secs: 120,
+        chat_reply_mode: "speak".into(),
+        chat_reset_phrase: None,
         send_on_release: true,
         append_newline: false,
         strip_newlines: false,
@@ -203,9 +219,57 @@ fn test_hotkey_binding_multi_target_roundtrip() {
 
 // ── Target Delivery Success & Failure Tests ──────────────────────────────────
 
+/// `PATH` and `WAYLAND_DISPLAY` are process-global, but cargo runs tests in
+/// parallel threads within one process. Tests that install a mock `wtype` /
+/// `wl-copy` on `PATH` must therefore not overlap with each other, nor with
+/// tests that merely *read* those variables — otherwise a reader can observe a
+/// writer's half-applied environment and assert against a world that has
+/// already been torn down.
+fn env_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    // A tokio mutex rather than std: it is held across `.await` points, and it
+    // does not poison, so one failing test does not cascade into the others.
+    LOCK.get_or_init(Default::default)
+}
+
+/// Restores an environment variable to its prior value (including "was unset")
+/// on drop, so a panicking test cannot leak its mock environment to the rest of
+/// the suite.
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(v) => std::env::set_var(self.key, v),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+/// Prepends `dir` to `PATH`, restoring the original on drop.
+fn prepend_to_path(dir: &std::path::Path) -> EnvVarGuard {
+    let previous = std::env::var_os("PATH");
+    let mut paths = std::env::split_paths(previous.as_deref().unwrap_or_default()).collect::<Vec<_>>();
+    paths.insert(0, dir.to_path_buf());
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    EnvVarGuard { key: "PATH", previous }
+}
+
 // 1. Inject Target
 #[tokio::test]
 async fn test_inject_target_success_and_failure() {
+    let _env = env_lock().lock().await;
     let temp_dir = std::env::temp_dir().join(format!("voxctrl_inject_test_{}", chrono::Utc::now().timestamp_millis()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -215,28 +279,23 @@ async fn test_inject_target_success_and_failure() {
         std::fs::write(&mock_wtype, "#!/bin/sh\nexit 0\n").unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&mock_wtype, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::env::set_var("WAYLAND_DISPLAY", "mock-display");
     }
+    #[cfg(target_os = "linux")]
+    let _wayland = EnvVarGuard::set("WAYLAND_DISPLAY", "mock-display");
     #[cfg(target_os = "windows")]
     {
         let mock_ps = temp_dir.join("powershell.exe");
         std::fs::write(&mock_ps, "@echo off\nexit /b 0\n").unwrap();
     }
 
-    // Prepend to PATH
-    let old_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut paths = std::env::split_paths(&old_path).collect::<Vec<_>>();
-    paths.insert(0, temp_dir.clone());
-    let new_path = std::env::join_paths(paths).unwrap();
-    std::env::set_var("PATH", &new_path);
+    let path_guard = prepend_to_path(&temp_dir);
 
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Inject;
     let target = build_target(config);
     let res = target.deliver("Test Input").await;
-    
-    // Clean up PATH
-    std::env::set_var("PATH", old_path);
+
+    drop(path_guard);
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     // In a test environment, if PATH was prepended successfully, it should succeed
@@ -260,6 +319,12 @@ async fn test_inject_target_failure_no_injection() {
 // 2. Clipboard Target
 #[tokio::test]
 async fn test_clipboard_target_success() {
+    // Held for the whole test: `deliver` and `test` both probe the environment,
+    // and they must agree on what it contains. Without the lock a sibling test's
+    // temporary mock `wl-copy` could satisfy `deliver` and then vanish before
+    // `test` runs, which is exactly how this failed intermittently on headless CI.
+    let _env = env_lock().lock().await;
+
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Clipboard;
     let target = build_target(config);
@@ -276,6 +341,8 @@ async fn test_clipboard_target_success() {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn test_clipboard_target_linux_cli() {
+    let _env = env_lock().lock().await;
+
     let temp_dir = std::env::temp_dir().join(format!("voxctrl_clipboard_test_{}", chrono::Utc::now().timestamp_millis()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -290,22 +357,16 @@ async fn test_clipboard_target_linux_cli() {
     
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&mock_wl_copy, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::env::set_var("WAYLAND_DISPLAY", "mock-display");
+    let _wayland = EnvVarGuard::set("WAYLAND_DISPLAY", "mock-display");
 
-    // Prepend to PATH
-    let old_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut paths = std::env::split_paths(&old_path).collect::<Vec<_>>();
-    paths.insert(0, temp_dir.clone());
-    let new_path = std::env::join_paths(paths).unwrap();
-    std::env::set_var("PATH", &new_path);
+    let path_guard = prepend_to_path(&temp_dir);
 
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Clipboard;
     let target = build_target(config);
     let res = target.deliver("Test Clipboard Content").await;
 
-    // Clean up PATH
-    std::env::set_var("PATH", old_path);
+    drop(path_guard);
 
     assert!(res.success, "Clipboard delivery failed: {:?}", res.error);
     assert_eq!(res.delivered_text.as_deref(), Some("Test Clipboard Content"));
@@ -1069,6 +1130,14 @@ async fn test_mcp_delivery_failure_server_error() {
         mcp_path: Some(socket_path.clone()),
         mcp_tool: Some("speak_text".into()),
         mcp_args: Some(serde_json::json!({ "text": "{TEXT}" })),
+        chat_url: None,
+        chat_model: None,
+        chat_api_key: None,
+        chat_system_prompt: None,
+        chat_max_history: 20,
+        chat_timeout_secs: 120,
+        chat_reply_mode: "speak".into(),
+        chat_reset_phrase: None,
         send_on_release: true,
         append_newline: false,
         strip_newlines: false,
@@ -1116,6 +1185,14 @@ fn test_strip_newlines_config_roundtrip() {
         mcp_path: None,
         mcp_tool: None,
         mcp_args: None,
+        chat_url: None,
+        chat_model: None,
+        chat_api_key: None,
+        chat_system_prompt: None,
+        chat_max_history: 20,
+        chat_timeout_secs: 120,
+        chat_reply_mode: "speak".into(),
+        chat_reset_phrase: None,
         send_on_release: true,
         append_newline: false,
         strip_newlines: true,
@@ -1262,3 +1339,229 @@ fn test_shellexpand_tilde_no_tilde_prefix_unchanged() {
     assert_eq!(shellexpand_tilde_pub(path), path);
 }
 
+
+// ── Chat target ───────────────────────────────────────────────────────────────
+
+/// Minimal OpenAI-compatible mock. Serves `reply_count` chat completions, each
+/// answering with "reply N", and hands back every request body it received.
+async fn spawn_mock_chat_server(
+    reply_count: usize,
+) -> (String, tokio::task::JoinHandle<Vec<serde_json::Value>>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let handle = tokio::spawn(async move {
+        let mut bodies = Vec::new();
+        for i in 0..reply_count {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut raw = Vec::new();
+            let mut buf = [0u8; 1024];
+
+            // Read until the body is complete, using Content-Length to know when.
+            loop {
+                let n = sock.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&raw).to_string();
+                let Some(header_end) = text.find("\r\n\r\n") else { continue };
+                let len: usize = text[..header_end]
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse().ok())?
+                    })
+                    .unwrap_or(0);
+                if raw.len() >= header_end + 4 + len {
+                    bodies.push(
+                        serde_json::from_slice(&raw[header_end + 4..header_end + 4 + len])
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                    break;
+                }
+            }
+
+            let payload = serde_json::json!({
+                "choices": [{ "message": { "role": "assistant", "content": format!("reply {i}") } }]
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            sock.write_all(response.as_bytes()).await.unwrap();
+            let _ = sock.shutdown().await;
+        }
+        bodies
+    });
+
+    (format!("http://127.0.0.1:{}", addr.port()), handle)
+}
+
+fn chat_target(id: &str, url: &str) -> OutputTarget {
+    OutputTarget {
+        id: id.into(),
+        label: "Hermes".into(),
+        delivery: DeliveryType::Chat,
+        chat_url: Some(url.into()),
+        chat_model: Some("hermes-test".into()),
+        chat_system_prompt: Some("You are helpful.".into()),
+        // Keep the reply out of TTS/injection so the test asserts on the
+        // returned text only.
+        chat_reply_mode: "none".into(),
+        ..OutputTarget::default_inject()
+    }
+}
+
+#[tokio::test]
+async fn test_chat_target_accumulates_conversation_history() {
+    let (url, server) = spawn_mock_chat_server(2).await;
+    let id = format!("chat_hist_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap());
+    let target = build_target(chat_target(&id, &url));
+
+    let first = target.deliver("What is the weather?").await;
+    assert!(first.success, "first turn failed: {:?}", first.error);
+    assert_eq!(first.delivered_text.as_deref(), Some("reply 0"));
+
+    let second = target.deliver("And tomorrow?").await;
+    assert!(second.success, "second turn failed: {:?}", second.error);
+    assert_eq!(second.delivered_text.as_deref(), Some("reply 1"));
+
+    let bodies = server.await.unwrap();
+    assert_eq!(bodies.len(), 2);
+
+    // Turn 1: system + user.
+    let first_msgs = bodies[0]["messages"].as_array().unwrap();
+    assert_eq!(first_msgs.len(), 2);
+    assert_eq!(first_msgs[0]["role"], "system");
+    assert_eq!(first_msgs[1]["content"], "What is the weather?");
+
+    // Turn 2 carries the whole exchange, which is the point of this target.
+    let second_msgs = bodies[1]["messages"].as_array().unwrap();
+    assert_eq!(second_msgs.len(), 4);
+    assert_eq!(second_msgs[1]["content"], "What is the weather?");
+    assert_eq!(second_msgs[2]["role"], "assistant");
+    assert_eq!(second_msgs[2]["content"], "reply 0");
+    assert_eq!(second_msgs[3]["content"], "And tomorrow?");
+
+    crate::targets::reset_chat_history(&id).await;
+}
+
+#[tokio::test]
+async fn test_chat_history_survives_router_reload() {
+    let (url, server) = spawn_mock_chat_server(2).await;
+    let id = format!("chat_reload_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap());
+
+    let router = crate::router::OutputTargetRouter::new(vec![chat_target(&id, &url)]);
+    assert!(router.deliver(&id, "first question").await.success);
+
+    // Saving settings rebuilds every target — the conversation must not reset.
+    router.reload(vec![chat_target(&id, &url)]).await;
+    assert!(router.deliver(&id, "second question").await.success);
+
+    let bodies = server.await.unwrap();
+    let second_msgs = bodies[1]["messages"].as_array().unwrap();
+    assert_eq!(second_msgs.len(), 4, "history was lost across reload");
+
+    crate::targets::reset_chat_history(&id).await;
+}
+
+#[tokio::test]
+async fn test_chat_reset_phrase_clears_history_without_calling_api() {
+    // Two replies for three deliveries: the reset phrase must not reach the API,
+    // otherwise the last turn finds no server left to answer it.
+    let (url, server) = spawn_mock_chat_server(2).await;
+    let id = format!("chat_reset_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap());
+    let mut config = chat_target(&id, &url);
+    config.chat_reset_phrase = Some("new conversation".into());
+    let target = build_target(config);
+
+    assert!(target.deliver("remember the number seven").await.success);
+    assert_eq!(crate::targets::chat_history(&id).await.len(), 2);
+
+    // Punctuation and casing from the transcriber must not defeat the match.
+    let reset = target.deliver("New conversation.").await;
+    assert!(reset.success);
+    assert!(crate::targets::chat_history(&id).await.is_empty());
+
+    assert!(target.deliver("what number?").await.success);
+    let bodies = server.await.unwrap();
+    let last_msgs = bodies[1]["messages"].as_array().unwrap();
+    assert_eq!(last_msgs.len(), 2, "history was not cleared before the next turn");
+}
+
+#[tokio::test]
+async fn test_chat_target_reports_http_errors_and_rolls_back_turn() {
+    use tokio::io::AsyncWriteExt;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let body = "{\"error\":\"model not found\"}";
+        let _ = sock
+            .write_all(
+                format!(
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .await;
+        let _ = sock.shutdown().await;
+    });
+
+    let id = format!("chat_err_{}", chrono::Utc::now().timestamp_nanos_opt().unwrap());
+    let target = build_target(chat_target(&id, &format!("http://127.0.0.1:{port}")));
+    let res = target.deliver("hello").await;
+
+    assert!(!res.success);
+    assert!(res.error.unwrap().contains("404"));
+    // A failed turn must not poison the next request with an unanswered question.
+    assert!(crate::targets::chat_history(&id).await.is_empty());
+}
+
+#[test]
+fn test_chat_target_config_roundtrip() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "voxctrl_chat_test_{}",
+        chrono::Utc::now().timestamp_millis()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let mut target = chat_target("hermes", "http://localhost:8765");
+    target.chat_api_key = Some("sk-local".into());
+    target.chat_max_history = 8;
+    target.chat_timeout_secs = 90;
+    target.chat_reply_mode = "speak".into();
+    target.chat_reset_phrase = Some("start over".into());
+
+    save_targets(&[target], &temp_dir).unwrap();
+    let loaded = load_targets(&temp_dir).unwrap();
+    let t = &loaded[0];
+
+    assert!(matches!(t.delivery, DeliveryType::Chat));
+    assert_eq!(t.chat_url.as_deref(), Some("http://localhost:8765"));
+    assert_eq!(t.chat_model.as_deref(), Some("hermes-test"));
+    assert_eq!(t.chat_api_key.as_deref(), Some("sk-local"));
+    assert_eq!(t.chat_system_prompt.as_deref(), Some("You are helpful."));
+    assert_eq!(t.chat_max_history, 8);
+    assert_eq!(t.chat_timeout_secs, 90);
+    assert_eq!(t.chat_reply_mode, "speak");
+    assert_eq!(t.chat_reset_phrase.as_deref(), Some("start over"));
+
+    std::fs::remove_dir_all(&temp_dir).ok();
+}
+
+#[test]
+fn test_chat_api_base_normalizes_endpoints() {
+    use crate::targets::chat_api_base_pub as base;
+    assert_eq!(base("http://localhost:8765"), "http://localhost:8765/v1");
+    assert_eq!(base("http://localhost:8765/"), "http://localhost:8765/v1");
+    assert_eq!(base("http://localhost:8765/v1"), "http://localhost:8765/v1");
+    assert_eq!(base("  http://localhost:8765/v1/  "), "http://localhost:8765/v1");
+}

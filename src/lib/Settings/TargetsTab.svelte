@@ -51,6 +51,9 @@
       webhook_json_template: { text: "{text}" },
       mcp_tool: "speak_text",
       mcp_args: { text: "{text}" },
+      chat_max_history: 20,
+      chat_timeout_secs: 120,
+      chat_reply_mode: "speak",
       send_on_release: false,
       append_newline: true,
       strip_newlines: false,
@@ -169,6 +172,11 @@
           {/if}
           {#if t.delivery === "speak"}
             <div class="binding-targets">Speech: Plays transcribed text via TTS</div>
+          {/if}
+          {#if t.delivery === "chat"}
+            <div class="binding-targets">
+              Chat: {t.chat_model || "no model"} @ {t.chat_url || "no endpoint"} → {t.chat_reply_mode || "speak"}
+            </div>
           {/if}
           <div class="binding-actions">
             <button class="btn-action small" onclick={() => editTarget(t)}>Edit</button>

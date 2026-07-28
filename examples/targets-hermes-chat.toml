@@ -1,0 +1,95 @@
+## targets-hermes-chat.toml — voice front end for Hermes (or any OpenAI-compatible server)
+##
+## The `chat` delivery type POSTs each dictation to /v1/chat/completions, keeps
+## the running conversation so the model retains context between turns, reads the
+## reply back, and speaks it aloud.
+##
+## This is the same API Open WebUI talks to — point `chat_url` at whatever base
+## URL you configured there. Enable Hermes' OpenAI-compatible HTTP API first,
+## then run `curl http://localhost:8080/v1/models` to find your exact model id.
+##
+## Requires: tts_enabled = true in config.json for chat_reply_mode = "speak"
+##
+## Copy to ~/.config/voxctrl/targets.toml (or merge with existing)
+
+format_version = "1.1"
+
+# ── Default inject (always present) ──────────────────────────────────────────
+[[target]]
+id = "default"
+label = "Focused Window"
+delivery = "inject"
+append_newline = false
+send_on_release = true
+file_timestamp = true
+
+# ── Hermes: talk, listen to the answer ───────────────────────────────────────
+# Bind this to a hold hotkey and just speak. Say "new conversation" to wipe the
+# context and start over without touching the UI.
+[[target]]
+id = "hermes"
+label = "Hermes (spoken replies)"
+delivery = "chat"
+chat_url = "http://localhost:8080"
+chat_model = "hermes-4-14b"
+chat_system_prompt = """
+You are a voice assistant. Your replies are spoken aloud, so answer in one or two
+short sentences of plain prose. No markdown, no bullet lists, no code blocks.
+"""
+chat_reply_mode = "speak"
+chat_max_history = 20
+chat_timeout_secs = 120
+chat_reset_phrase = "new conversation"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+# Keep the raw phrasing — the model handles disfluencies better than a filter does.
+processing = { remove_fillers = true, spoken_punctuation = false, apply_snippets = false }
+
+# ── Hermes: dictate a question, get the answer typed where you are ───────────
+# Useful in an editor or chat box: the reply lands as text instead of audio.
+[[target]]
+id = "hermes_inline"
+label = "Hermes (typed replies)"
+delivery = "chat"
+chat_url = "http://localhost:8080"
+chat_model = "hermes-4-14b"
+chat_system_prompt = "Answer directly and concisely. Return only the answer."
+chat_reply_mode = "inject"
+chat_max_history = 12
+chat_timeout_secs = 120
+append_newline = false
+strip_newlines = false
+send_on_release = true
+file_timestamp = false
+processing = { remove_fillers = true, spoken_punctuation = true, apply_snippets = true }
+
+# ── A separate, independent conversation ─────────────────────────────────────
+# History is keyed by target id, so two targets against the same server keep two
+# distinct threads. Handy for holding a work thread and a scratch thread at once.
+[[target]]
+id = "hermes_scratch"
+label = "Hermes (scratch thread)"
+delivery = "chat"
+chat_url = "http://localhost:8080"
+chat_model = "hermes-4-14b"
+chat_system_prompt = "You are a brainstorming partner. Be brief and concrete."
+chat_reply_mode = "speak"
+chat_max_history = 0              # 0 = send the entire conversation every turn
+chat_timeout_secs = 180
+chat_reset_phrase = "start over"
+append_newline = false
+send_on_release = true
+file_timestamp = false
+
+# ── Remote provider over the same target type ────────────────────────────────
+# The delivery type is not local-only: any OpenAI-compatible endpoint works,
+# it just needs a bearer token.
+# [[target]]
+# id = "cloud_chat"
+# label = "Cloud Chat"
+# delivery = "chat"
+# chat_url = "https://api.example.com/v1"
+# chat_model = "some-model-id"
+# chat_api_key = "sk-..."
+# chat_reply_mode = "speak"

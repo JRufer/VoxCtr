@@ -87,6 +87,7 @@ pub enum DeliveryType {
     Webhook,
     Mcp,
     Speak,
+    Chat,
 }
 
 // ── Per-target processing overrides ──────────────────────────────────────────
@@ -165,6 +166,26 @@ pub struct OutputTarget {
     pub mcp_tool: Option<String>,
     pub mcp_args: Option<serde_json::Value>,
 
+    // Chat (OpenAI-compatible /v1/chat/completions, with conversation history)
+    /// Base URL of the OpenAI-compatible server, with or without a `/v1` suffix.
+    pub chat_url: Option<String>,
+    pub chat_model: Option<String>,
+    /// Optional bearer token. Local servers usually don't need one.
+    pub chat_api_key: Option<String>,
+    /// System message prepended to every request. Empty/None = no system message.
+    pub chat_system_prompt: Option<String>,
+    /// How many non-system messages to keep. 0 = unlimited.
+    #[serde(default = "default_chat_max_history")]
+    pub chat_max_history: u32,
+    #[serde(default = "default_chat_timeout_secs")]
+    pub chat_timeout_secs: u64,
+    /// What to do with the assistant's reply: `speak`, `inject`, `clipboard` or `none`.
+    #[serde(default = "default_chat_reply_mode")]
+    pub chat_reply_mode: String,
+    /// Spoken phrase that clears this target's conversation history instead of
+    /// being sent to the model. Case- and punctuation-insensitive.
+    pub chat_reset_phrase: Option<String>,
+
     #[serde(default = "bool_true")]
     pub send_on_release: bool,
     #[serde(default = "bool_true")]
@@ -188,6 +209,18 @@ fn default_http_method() -> String {
 }
 fn default_file_mode() -> String {
     "append".into()
+}
+pub(crate) fn default_chat_max_history() -> u32 {
+    20
+}
+pub(crate) fn default_chat_timeout_secs() -> u64 {
+    // Local models on modest hardware routinely take tens of seconds for a
+    // first token, so this is far more generous than the 5s used for the
+    // fire-and-forget HTTP target.
+    120
+}
+pub(crate) fn default_chat_reply_mode() -> String {
+    "speak".into()
 }
 
 impl OutputTarget {
@@ -216,6 +249,14 @@ impl OutputTarget {
             mcp_path: None,
             mcp_tool: None,
             mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_max_history: default_chat_max_history(),
+            chat_timeout_secs: default_chat_timeout_secs(),
+            chat_reply_mode: default_chat_reply_mode(),
+            chat_reset_phrase: None,
             send_on_release: true,
             append_newline: false,
             strip_newlines: false,

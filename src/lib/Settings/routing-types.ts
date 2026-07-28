@@ -33,6 +33,14 @@ export interface OutputTarget {
   mcp_path?: string;
   mcp_tool?: string;
   mcp_args?: Record<string, any>;
+  chat_url?: string;
+  chat_model?: string;
+  chat_api_key?: string;
+  chat_system_prompt?: string;
+  chat_max_history: number;
+  chat_timeout_secs: number;
+  chat_reply_mode: string;
+  chat_reset_phrase?: string;
   send_on_release: boolean;
   append_newline: boolean;
   strip_newlines: boolean;

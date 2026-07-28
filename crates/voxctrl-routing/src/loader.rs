@@ -73,6 +73,17 @@ struct RawTarget {
     mcp_path: Option<String>,
     mcp_tool: Option<String>,
     mcp_args: Option<toml::Value>,
+    chat_url: Option<String>,
+    chat_model: Option<String>,
+    chat_api_key: Option<String>,
+    chat_system_prompt: Option<String>,
+    #[serde(default = "default_chat_max_history")]
+    chat_max_history: u32,
+    #[serde(default = "default_chat_timeout_secs")]
+    chat_timeout_secs: u64,
+    #[serde(default = "default_chat_reply_mode")]
+    chat_reply_mode: String,
+    chat_reset_phrase: Option<String>,
     #[serde(default = "bool_true")]
     send_on_release: bool,
     #[serde(default = "bool_true")]
@@ -137,6 +148,7 @@ fn default_post() -> String {
 fn default_file_mode() -> String {
     "append".into()
 }
+use crate::models::{default_chat_max_history, default_chat_reply_mode, default_chat_timeout_secs};
 fn default_tap_ms() -> u32 {
     250
 }
@@ -160,6 +172,7 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         "webhook" => DeliveryType::Webhook,
         "mcp" => DeliveryType::Mcp,
         "speak" => DeliveryType::Speak,
+        "chat" => DeliveryType::Chat,
         _ => DeliveryType::Inject,
     };
 
@@ -223,6 +236,14 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         mcp_path: r.mcp_path,
         mcp_tool: r.mcp_tool,
         mcp_args,
+        chat_url: r.chat_url,
+        chat_model: r.chat_model,
+        chat_api_key: r.chat_api_key,
+        chat_system_prompt: r.chat_system_prompt,
+        chat_max_history: r.chat_max_history,
+        chat_timeout_secs: r.chat_timeout_secs,
+        chat_reply_mode: r.chat_reply_mode,
+        chat_reset_phrase: r.chat_reset_phrase,
         send_on_release: r.send_on_release,
         append_newline: r.append_newline,
         strip_newlines: r.strip_newlines,
@@ -301,6 +322,14 @@ fn target_to_raw(t: &OutputTarget) -> RawTarget {
             .mcp_args
             .as_ref()
             .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        chat_url: t.chat_url.clone(),
+        chat_model: t.chat_model.clone(),
+        chat_api_key: t.chat_api_key.clone(),
+        chat_system_prompt: t.chat_system_prompt.clone(),
+        chat_max_history: t.chat_max_history,
+        chat_timeout_secs: t.chat_timeout_secs,
+        chat_reply_mode: t.chat_reply_mode.clone(),
+        chat_reset_phrase: t.chat_reset_phrase.clone(),
         send_on_release: t.send_on_release,
         append_newline: t.append_newline,
         strip_newlines: t.strip_newlines,

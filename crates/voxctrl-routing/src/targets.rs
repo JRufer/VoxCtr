@@ -50,6 +50,7 @@ pub fn build_target(config: OutputTarget) -> Box<dyn DeliveryTarget> {
         DeliveryType::Webhook   => Box::new(WebhookTarget(config)),
         DeliveryType::Mcp       => Box::new(McpTarget(config)),
         DeliveryType::Speak     => Box::new(SpeakTarget(config)),
+        DeliveryType::Chat      => Box::new(ChatTarget(config)),
     }
 }
 
@@ -794,6 +795,301 @@ impl DeliveryTarget for SpeakTarget {
 }
 
 
+// ── ChatTarget ────────────────────────────────────────────────────────────────
+//
+// Speaks to an OpenAI-compatible `/v1/chat/completions` endpoint — a local
+// Hermes/Ollama/llama.cpp server, or a remote provider — and keeps the running
+// conversation so each dictation is a turn in an ongoing exchange rather than
+// an isolated request. The assistant's reply is returned as the delivered text
+// and, depending on `chat_reply_mode`, spoken aloud, typed into the focused
+// window, or copied to the clipboard.
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+type Conversation = Arc<tokio::sync::Mutex<Vec<ChatMessage>>>;
+
+/// Conversation state, keyed by target id.
+///
+/// Deliberately lives outside `ChatTarget` because `OutputTargetRouter::reload`
+/// rebuilds every target whenever settings are saved — history held in the
+/// target itself would be silently discarded mid-conversation.
+///
+/// Each conversation carries its own lock so a slow model on one target can't
+/// stall a dictation routed to another.
+fn chat_histories() -> &'static std::sync::Mutex<std::collections::HashMap<String, Conversation>> {
+    static HISTORIES: OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Conversation>>,
+    > = OnceLock::new();
+    HISTORIES.get_or_init(Default::default)
+}
+
+fn conversation_for(target_id: &str) -> Conversation {
+    chat_histories()
+        .lock()
+        .unwrap()
+        .entry(target_id.to_string())
+        .or_default()
+        .clone()
+}
+
+/// Drop the stored conversation for one target. Returns the number of messages
+/// that were discarded.
+pub async fn reset_chat_history(target_id: &str) -> usize {
+    // Clear in place rather than removing the entry, so a delivery already
+    // holding this conversation's lock still writes into the same object.
+    let convo = {
+        let map = chat_histories().lock().unwrap();
+        match map.get(target_id) {
+            Some(c) => c.clone(),
+            None => return 0,
+        }
+    };
+    let mut guard = convo.lock().await;
+    let dropped = guard.len();
+    guard.clear();
+    dropped
+}
+
+/// Read a target's conversation without modifying it (for UI / tests).
+pub async fn chat_history(target_id: &str) -> Vec<ChatMessage> {
+    let convo = {
+        let map = chat_histories().lock().unwrap();
+        match map.get(target_id) {
+            Some(c) => c.clone(),
+            None => return Vec::new(),
+        }
+    };
+    let guard = convo.lock().await;
+    guard.clone()
+}
+
+/// Normalize an endpoint into an OpenAI-style base URL ending in `/v1`, so the
+/// user can paste `http://localhost:8080`, a trailing slash, or a full `/v1`.
+fn chat_api_base(endpoint: &str) -> String {
+    let trimmed = endpoint.trim().trim_end_matches('/');
+    if trimmed.ends_with("/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/v1")
+    }
+}
+
+/// Fold to lowercase alphanumerics so "New conversation." matches "new conversation".
+fn normalize_phrase(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .flat_map(|c| c.to_lowercase())
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub struct ChatTarget(OutputTarget);
+
+impl ChatTarget {
+    /// Send the assistant's reply onward according to `chat_reply_mode`.
+    async fn surface_reply(&self, reply: &str) -> Option<String> {
+        match self.0.chat_reply_mode.as_str() {
+            "none" => None,
+            "inject" => {
+                let mut cfg = self.0.clone();
+                cfg.delivery = DeliveryType::Inject;
+                InjectTarget(cfg).deliver(reply).await.error
+            }
+            "clipboard" => {
+                let mut cfg = self.0.clone();
+                cfg.delivery = DeliveryType::Clipboard;
+                ClipboardTarget(cfg).deliver(reply).await.error
+            }
+            // "speak" and anything unrecognized fall back to text-to-speech,
+            // which is the mode this target exists for.
+            _ => match SPEAK_CALLBACK.get() {
+                Some(callback) => {
+                    callback(reply);
+                    None
+                }
+                None => Some("TTS engine not initialized or speak callback not registered".into()),
+            },
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl DeliveryTarget for ChatTarget {
+    async fn deliver(&self, text: &str) -> DeliveryResult {
+        let Some(endpoint) = self.0.chat_url.as_deref().filter(|u| !u.trim().is_empty()) else {
+            return DeliveryResult::err("No chat_url configured");
+        };
+        let Some(model) = self.0.chat_model.as_deref().filter(|m| !m.trim().is_empty()) else {
+            return DeliveryResult::err("No chat_model configured");
+        };
+
+        // A spoken reset phrase clears the conversation instead of becoming a turn.
+        if let Some(phrase) = self
+            .0
+            .chat_reset_phrase
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+        {
+            if normalize_phrase(text) == normalize_phrase(phrase) {
+                let dropped = reset_chat_history(&self.0.id).await;
+                tracing::info!(
+                    target_id = %self.0.id,
+                    dropped,
+                    "Chat conversation reset by spoken phrase"
+                );
+                return DeliveryResult::ok(String::new());
+            }
+        }
+
+        // Hold this conversation's lock across the request so two dictations to
+        // the same target can't interleave and corrupt the turn order.
+        let convo = conversation_for(&self.0.id);
+        let mut history = convo.lock().await;
+        history.push(ChatMessage {
+            role: "user".into(),
+            content: text.to_string(),
+        });
+
+        // Build the wire messages: system prompt (never trimmed) + recent turns.
+        let mut messages: Vec<ChatMessage> = Vec::with_capacity(history.len() + 1);
+        if let Some(system) = self
+            .0
+            .chat_system_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            messages.push(ChatMessage {
+                role: "system".into(),
+                content: system.to_string(),
+            });
+        }
+        let keep = self.0.chat_max_history as usize;
+        let start = if keep > 0 {
+            history.len().saturating_sub(keep)
+        } else {
+            0
+        };
+        messages.extend(history[start..].iter().cloned());
+
+        let url = format!("{}/chat/completions", chat_api_base(endpoint));
+        let body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "stream": false,
+        });
+
+        let mut req = http_client()
+            .post(&url)
+            .timeout(std::time::Duration::from_secs(self.0.chat_timeout_secs))
+            .json(&body);
+        if let Some(key) = self
+            .0
+            .chat_api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+        {
+            req = req.bearer_auth(key);
+        }
+
+        let reply = match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(val) => val
+                        .pointer("/choices/0/message/content")
+                        .and_then(|c| c.as_str())
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                    Err(e) => {
+                        history.pop();
+                        return DeliveryResult::err(format!("Chat response parse error: {e}"));
+                    }
+                }
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let detail = resp.text().await.unwrap_or_default();
+                history.pop();
+                let detail = detail.chars().take(300).collect::<String>();
+                return DeliveryResult::err(format!("Chat HTTP {status}: {detail}"));
+            }
+            Err(e) => {
+                history.pop();
+                return DeliveryResult::err(format!("Chat request failed: {e}"));
+            }
+        };
+
+        // Roll back the user turn on an empty reply so the next request doesn't
+        // resend a question the model already ignored.
+        if reply.is_empty() {
+            history.pop();
+            return DeliveryResult::err("Chat API returned no content");
+        }
+
+        history.push(ChatMessage {
+            role: "assistant".into(),
+            content: reply.clone(),
+        });
+        // Trim stored history so a long-running conversation can't grow forever.
+        // Kept at twice the send window so context survives a couple of turns
+        // beyond what is actually transmitted.
+        if keep > 0 && history.len() > keep * 2 {
+            let excess = history.len() - keep * 2;
+            history.drain(..excess);
+        }
+        drop(history);
+
+        match self.surface_reply(&reply).await {
+            Some(err) => DeliveryResult::err(format!("Chat reply delivery failed: {err}")),
+            None => DeliveryResult::ok(reply),
+        }
+    }
+
+    async fn test(&self) -> TestResult {
+        let Some(endpoint) = self.0.chat_url.as_deref().filter(|u| !u.trim().is_empty()) else {
+            return TestResult { reachable: false, detail: "No chat_url configured".into() };
+        };
+        if self
+            .0
+            .chat_model
+            .as_deref()
+            .map(|m| m.trim().is_empty())
+            .unwrap_or(true)
+        {
+            return TestResult { reachable: false, detail: "No chat_model configured".into() };
+        }
+
+        let url = format!("{}/models", chat_api_base(endpoint));
+        let mut req = http_client()
+            .get(&url)
+            .timeout(std::time::Duration::from_secs(5));
+        if let Some(key) = self
+            .0
+            .chat_api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+        {
+            req = req.bearer_auth(key);
+        }
+        match req.send().await {
+            Ok(r) if r.status().is_success() => {
+                TestResult { reachable: true, detail: format!("Chat API reachable at {url}") }
+            }
+            Ok(r) => TestResult { reachable: false, detail: format!("HTTP {} from {url}", r.status()) },
+            Err(e) => TestResult { reachable: false, detail: e.to_string() },
+        }
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn which(bin: &str) -> bool {
@@ -806,6 +1102,12 @@ fn which(bin: &str) -> bool {
 #[cfg(test)]
 pub fn shellexpand_tilde_pub(s: &str) -> String {
     shellexpand_tilde(s)
+}
+
+/// Public alias for tests — not part of the stable API.
+#[cfg(test)]
+pub fn chat_api_base_pub(s: &str) -> String {
+    chat_api_base(s)
 }
 
 fn shellexpand_tilde(s: &str) -> String {

@@ -31,6 +31,11 @@ Defined in `~/.config/voxctrl/targets.toml`. Each `[[target]]` block describes o
 | `processing` | object | (inherit) | Per-target post-processing overrides |
 | `response_pipe` | string | null | FIFO path for TTS response output |
 
+> [!NOTE]
+> Two targets carry a conversation with an LLM. Use `chat` when the model is reachable
+> over an OpenAI-compatible HTTP API; use `pipe` + `response_pipe` when you are driving a
+> local agent process over FIFOs.
+
 ### Delivery Types
 
 #### `inject` — Keystroke Injection
@@ -208,6 +213,61 @@ id = "tts_out"
 label = "Read Transcription Aloud"
 delivery = "speak"
 ```
+
+---
+
+#### `chat` — Conversational LLM (OpenAI-compatible)
+
+Sends each dictation as a turn in an ongoing conversation to an OpenAI-compatible
+`/v1/chat/completions` endpoint — Hermes, Ollama, llama.cpp, LM Studio, vLLM, or a
+remote provider — and surfaces the model's reply.
+
+Unlike `http`, this target **reads the response** and **remembers the exchange**, so the
+model keeps its context across turns. This makes VoxCtrl a voice front end for the same
+API that Open WebUI talks to.
+
+```toml
+[[target]]
+id = "hermes"
+label = "Hermes"
+delivery = "chat"
+chat_url = "http://localhost:8080"          # /v1 suffix optional
+chat_model = "hermes-4-14b"
+chat_system_prompt = "You are a concise voice assistant. Answer in one or two spoken sentences."
+chat_reply_mode = "speak"                    # speak | inject | clipboard | none
+chat_max_history = 20                        # messages sent per turn; 0 = whole conversation
+chat_timeout_secs = 120
+chat_reset_phrase = "new conversation"       # optional; clears history instead of asking
+# chat_api_key = "sk-..."                    # optional; usually unnecessary locally
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `chat_url` | string | required | Server base URL. A missing `/v1` suffix is added automatically |
+| `chat_model` | string | required | Model id as reported by `GET /v1/models` |
+| `chat_api_key` | string | null | Sent as `Authorization: Bearer …` when set |
+| `chat_system_prompt` | string | null | Prepended to every request; never trimmed from the window |
+| `chat_max_history` | int | `20` | Most recent messages sent per turn. `0` sends everything |
+| `chat_timeout_secs` | int | `120` | Per-request timeout — local models can be slow to first token |
+| `chat_reply_mode` | string | `"speak"` | `speak`, `inject`, `clipboard`, or `none` |
+| `chat_reset_phrase` | string | null | Saying this clears the conversation instead of sending it |
+
+**Conversation lifetime.** History is held in memory, keyed by target id, and survives
+saving settings (which rebuilds every target). It is cleared by the spoken reset phrase,
+by the *Reset conversation* button in the target editor, or by restarting VoxCtrl. It is
+never written to disk.
+
+**Reply handling.** `speak` requires TTS to be enabled under Settings → TTS. `inject`
+types the reply into the focused window and honours the target's `strip_newlines` and
+`append_newline` settings. `none` runs the conversation without surfacing replies.
+
+**Failure behaviour.** If the request fails, times out, or returns an empty completion,
+the unanswered turn is rolled back so it is not resent on the next dictation.
+
+> [!TIP]
+> Point `chat_url` at whatever base URL you gave Open WebUI. If Open WebUI can reach the
+> server, so can this target — use its model list to find the exact `chat_model` id, or
+> press **Fetch models** in the target editor.
 
 ---
 
