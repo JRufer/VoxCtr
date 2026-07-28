@@ -211,7 +211,15 @@ impl TtsEngineWorker {
                         *guard = Some(sink.clone());
                     }
 
-                    let result = match self.config.engine {
+                    // Caught rather than allowed to unwind: a panic here kills the
+                    // worker thread outright, and because the channel sender lives on
+                    // in the handle, every later `speak()` succeeds silently. The UI
+                    // then waits forever for callbacks that can never fire, which
+                    // presents as the app hanging rather than as a failure. ONNX
+                    // Runtime can panic during session creation when its shared
+                    // library cannot be resolved, so this path is reachable.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        match self.config.engine {
                         TtsEngine::Piper => self.speak_piper(&utterance, &sink),
                         TtsEngine::Espeak => self.speak_espeak(&utterance),
                         TtsEngine::PocketTts => speak_pocket_tts(
@@ -233,7 +241,20 @@ impl TtsEngineWorker {
                             &self.generation,
                             generation,
                         ),
-                    };
+                        }
+                    }))
+                    .unwrap_or_else(|payload| {
+                        let detail = payload
+                            .downcast_ref::<&str>()
+                            .map(|s| (*s).to_string())
+                            .or_else(|| payload.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown panic".into());
+                        Err(anyhow::anyhow!(
+                            "TTS engine panicked: {detail}. For the Inflect-Micro-v2 \
+                             engine this usually means ONNX Runtime could not be \
+                             loaded — this build resolves libonnxruntime at runtime."
+                        ))
+                    });
 
                     {
                         let mut guard = ACTIVE_SINK.lock().unwrap();
