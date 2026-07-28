@@ -219,9 +219,57 @@ fn test_hotkey_binding_multi_target_roundtrip() {
 
 // ── Target Delivery Success & Failure Tests ──────────────────────────────────
 
+/// `PATH` and `WAYLAND_DISPLAY` are process-global, but cargo runs tests in
+/// parallel threads within one process. Tests that install a mock `wtype` /
+/// `wl-copy` on `PATH` must therefore not overlap with each other, nor with
+/// tests that merely *read* those variables — otherwise a reader can observe a
+/// writer's half-applied environment and assert against a world that has
+/// already been torn down.
+fn env_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    // A tokio mutex rather than std: it is held across `.await` points, and it
+    // does not poison, so one failing test does not cascade into the others.
+    LOCK.get_or_init(Default::default)
+}
+
+/// Restores an environment variable to its prior value (including "was unset")
+/// on drop, so a panicking test cannot leak its mock environment to the rest of
+/// the suite.
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        match self.previous.take() {
+            Some(v) => std::env::set_var(self.key, v),
+            None => std::env::remove_var(self.key),
+        }
+    }
+}
+
+/// Prepends `dir` to `PATH`, restoring the original on drop.
+fn prepend_to_path(dir: &std::path::Path) -> EnvVarGuard {
+    let previous = std::env::var_os("PATH");
+    let mut paths = std::env::split_paths(previous.as_deref().unwrap_or_default()).collect::<Vec<_>>();
+    paths.insert(0, dir.to_path_buf());
+    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+    EnvVarGuard { key: "PATH", previous }
+}
+
 // 1. Inject Target
 #[tokio::test]
 async fn test_inject_target_success_and_failure() {
+    let _env = env_lock().lock().await;
     let temp_dir = std::env::temp_dir().join(format!("voxctrl_inject_test_{}", chrono::Utc::now().timestamp_millis()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -231,28 +279,23 @@ async fn test_inject_target_success_and_failure() {
         std::fs::write(&mock_wtype, "#!/bin/sh\nexit 0\n").unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&mock_wtype, std::fs::Permissions::from_mode(0o755)).unwrap();
-        std::env::set_var("WAYLAND_DISPLAY", "mock-display");
     }
+    #[cfg(target_os = "linux")]
+    let _wayland = EnvVarGuard::set("WAYLAND_DISPLAY", "mock-display");
     #[cfg(target_os = "windows")]
     {
         let mock_ps = temp_dir.join("powershell.exe");
         std::fs::write(&mock_ps, "@echo off\nexit /b 0\n").unwrap();
     }
 
-    // Prepend to PATH
-    let old_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut paths = std::env::split_paths(&old_path).collect::<Vec<_>>();
-    paths.insert(0, temp_dir.clone());
-    let new_path = std::env::join_paths(paths).unwrap();
-    std::env::set_var("PATH", &new_path);
+    let path_guard = prepend_to_path(&temp_dir);
 
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Inject;
     let target = build_target(config);
     let res = target.deliver("Test Input").await;
-    
-    // Clean up PATH
-    std::env::set_var("PATH", old_path);
+
+    drop(path_guard);
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     // In a test environment, if PATH was prepended successfully, it should succeed
@@ -276,6 +319,12 @@ async fn test_inject_target_failure_no_injection() {
 // 2. Clipboard Target
 #[tokio::test]
 async fn test_clipboard_target_success() {
+    // Held for the whole test: `deliver` and `test` both probe the environment,
+    // and they must agree on what it contains. Without the lock a sibling test's
+    // temporary mock `wl-copy` could satisfy `deliver` and then vanish before
+    // `test` runs, which is exactly how this failed intermittently on headless CI.
+    let _env = env_lock().lock().await;
+
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Clipboard;
     let target = build_target(config);
@@ -292,6 +341,8 @@ async fn test_clipboard_target_success() {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn test_clipboard_target_linux_cli() {
+    let _env = env_lock().lock().await;
+
     let temp_dir = std::env::temp_dir().join(format!("voxctrl_clipboard_test_{}", chrono::Utc::now().timestamp_millis()));
     std::fs::create_dir_all(&temp_dir).unwrap();
 
@@ -306,22 +357,16 @@ async fn test_clipboard_target_linux_cli() {
     
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&mock_wl_copy, std::fs::Permissions::from_mode(0o755)).unwrap();
-    std::env::set_var("WAYLAND_DISPLAY", "mock-display");
+    let _wayland = EnvVarGuard::set("WAYLAND_DISPLAY", "mock-display");
 
-    // Prepend to PATH
-    let old_path = std::env::var_os("PATH").unwrap_or_default();
-    let mut paths = std::env::split_paths(&old_path).collect::<Vec<_>>();
-    paths.insert(0, temp_dir.clone());
-    let new_path = std::env::join_paths(paths).unwrap();
-    std::env::set_var("PATH", &new_path);
+    let path_guard = prepend_to_path(&temp_dir);
 
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Clipboard;
     let target = build_target(config);
     let res = target.deliver("Test Clipboard Content").await;
 
-    // Clean up PATH
-    std::env::set_var("PATH", old_path);
+    drop(path_guard);
 
     assert!(res.success, "Clipboard delivery failed: {:?}", res.error);
     assert_eq!(res.delivered_text.as_deref(), Some("Test Clipboard Content"));
