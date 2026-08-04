@@ -8,7 +8,18 @@ use crate::{
     GestureSender, ListenerHandle,
 };
 
-pub fn start(bindings: Vec<HotkeyBinding>, tx: GestureSender, rx_reload: crate::ReloaderReceiver) {
+pub fn start(
+    bindings: Vec<HotkeyBinding>,
+    tx: GestureSender,
+    rx_reload: crate::ReloaderReceiver,
+    health: std::sync::Arc<crate::ListenerHealth>,
+) {
+    // The Windows hook needs no device permissions, so the listener is healthy
+    // as soon as the thread is up.
+    health.set_supported(true);
+    health.record_scan(1, 0);
+    health.set_keyboards_open(1);
+
     std::thread::Builder::new()
         .name("voxctrl-rdev".into())
         .spawn(move || run(bindings, tx, rx_reload))

@@ -69,6 +69,11 @@ pub struct AppState {
     /// Channel for sending hotkey configurations directly to background threads
     pub hotkey_reloader: Arc<Mutex<Option<crossbeam_channel::Sender<Vec<voxctrl_routing::HotkeyBinding>>>>>,
 
+    /// Live view of whether the global hotkey listener can actually see a
+    /// keyboard. Drives the "finish setup" warnings — without it a missing
+    /// permission is indistinguishable from a hotkey the user never pressed.
+    pub hotkey_health: Arc<voxctrl_hotkeys::ListenerHealth>,
+
     /// Channel sender to forward stdin messages to the native Slint overlay process
     pub overlay_tx: crossbeam_channel::Sender<String>,
 }
