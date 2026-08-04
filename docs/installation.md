@@ -38,17 +38,40 @@ chmod +x VoxCtrl.AppImage
 
 VoxCtrl supports two ways to perform system configuration (udev rules, input group, desktop shortcut, and high-res icon):
 1. **CLI Mode:** Run `./VoxCtrl-x86_64.AppImage --install` in a terminal. It will prompt for your administrator password via `sudo` and configure everything.
-2. **GUI Mode:** Launch the AppImage normally. If hardware permissions are missing, a diagnostics window will automatically appear. Click the **🔧 Setup System Integration** button; it will securely prompt for your password via `pkexec` and configure everything in the background.
+2. **GUI Mode:** Launch the AppImage normally. If anything is missing, a **VoxCtrl Setup** window appears listing every step and its live status. Click **Grant keyboard access**; it securely prompts for your password via `pkexec` and configures everything in the background.
 
 The built-in installer:
 1. Copies the application icon to `~/.local/share/icons/hicolor/128x128/apps/voxctrl.png`
 2. Registers a `.desktop` launcher file in `~/.local/share/applications/voxctrl.desktop` linking to the active AppImage path
 3. Establishes hardware udev rules (`/etc/udev/rules.d/99-voxctrl.rules`) to grant hotkey device permissions
-4. Adds your active user account to the system `input` group
+4. Adds your active user account to the system `input` group as a fallback
 
-> **Note:** After running the installer, you must log out and log back in (or reboot) for the new `input` group permissions to take effect. Until then, global hotkeys will not work.
-> 
-> **Robust Container / Sandbox Support:** VoxCtrl employs intelligent diagnostic checks that support legacy rule files (`99-voxctrl.rules`, `99-voxctl.rules`, or `99-voxctr.rules`) and dynamically fallback to checking the system's NSS group database (`/etc/group`) if the current container process session fails to refresh its active group token, ensuring that the warning screen does not show up repeatedly on every launch.
+### No logout required
+
+The udev rule tags input devices with systemd's `uaccess`, so `systemd-logind`
+grants your **active session** an ACL as soon as the rules are reloaded and the
+devices are re-triggered. That happens inside the setup itself, which is why
+hotkeys normally work the second the password prompt closes.
+
+If a system cannot apply that (no logind, an unusual session), VoxCtrl falls
+back in order:
+
+1. **Restart VoxCtrl** — offered as a button in the setup window, and done
+   automatically at startup when possible. VoxCtrl relaunches itself through
+   `sg input`, which picks up the group membership `usermod` just wrote without
+   a new login session.
+2. **Log out and back in** — only shown when neither of the above can work, and
+   stated explicitly rather than assumed.
+
+### Setup is verified, not assumed
+
+The setup window reports what is actually true: how many input devices exist,
+how many VoxCtrl can read, whether the installed rule is the current one, and
+whether the keystroke-injection helper (`wtype`/`xdotool`) is present. It polls
+while open, so finishing the setup — in the app or in a terminal — flips it to
+green without reopening anything.
+
+> **Robust Container / Sandbox Support:** VoxCtrl supports legacy rule files (`99-voxctrl.rules`, `99-voxctl.rules`, or `99-voxctr.rules`) and falls back to the system's NSS group database (`/etc/group`) when the current process session has not refreshed its group token, so the setup window does not reappear on every launch.
 
 ---
 
@@ -200,20 +223,30 @@ See [Development Guide](./development.md).
 ## Troubleshooting
 
 ### Hotkeys not working
-- Check you are in the `input` group: `groups | grep input`
-- Log out and back in after adding to group
-- On some distros, the udev rule path differs — check the built-in installer logic for details
+VoxCtrl tells you about this itself: the tray entry reads **⚠️ Finish setup —
+hotkeys inactive**, and a notification appears when it cannot read your
+keyboard. Open the setup window from the tray; its first step names the cause.
+
+To check by hand:
+- `ls -l /dev/input/event*` — VoxCtrl needs read access to at least one of these
+- `getfacl /dev/input/event0 | grep $USER` — confirms the `uaccess` ACL applied
+- `groups | grep input` — the fallback path
+- If the rule predates this VoxCtrl version, re-run the setup: older rules only
+  granted access through the `input` group, which needs a fresh login.
 
 ### Permissions screen keeps reappearing (fresh Arch / CachyOS installs)
-The startup permissions screen reappears on every launch until global hotkeys
-actually work in your session:
-1. Click **Setup System Integration** and enter your password. This writes the
-   udev rule and adds you to the `input` group *first*; the optional host
-   package installation runs afterwards and is allowed to fail (stale pacman
-   mirrors on a freshly installed system are common — run `sudo pacman -Syu`
-   later to fix them).
-2. **Log out and log back in** (or reboot). Group membership only applies to
-   new login sessions; until then the screen shows a "Relogin Required" notice.
+The setup window reappears while global hotkeys still do not work:
+1. Click **Grant keyboard access** and enter your password. This writes the
+   udev rule and reloads it *first*; the optional host package installation
+   runs afterwards and is allowed to fail (stale pacman mirrors on a freshly
+   installed system are common — run `sudo pacman -Syu` later to fix them).
+2. That is normally the end of it. If the window still shows the step as
+   unfinished, it offers **Restart VoxCtrl to finish** — one click, no logout.
+3. Only if that button is absent does the window ask you to log out, and it
+   says so plainly.
+
+If `pkexec` is unavailable, the window's **Set it up manually** link shows the
+exact commands to paste into a terminal.
 
 ### Hotkey records but no text is typed (and no overlay)
 - Download a **Whisper model** first: Settings → Engine → Download. On a fresh

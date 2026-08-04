@@ -239,25 +239,51 @@ fi
 step "Configuring Hardware Permissions (udev)"
 
 UDEV_RULE_PATH="/etc/udev/rules.d/99-voxctrl.rules"
-if [ ! -f "$UDEV_RULE_PATH" ]; then
-    info "Setting up udev rules for global hotkeys (requires sudo)..."
-    sudo tee "$UDEV_RULE_PATH" > /dev/null <<EOF
-KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
-EOF
-    info "Reloading udev rules..."
-    sudo udevadm control --reload-rules && sudo udevadm trigger || true
-    ok "udev rules configured successfully."
-else
-    ok "udev rules already exist."
-fi
 
-# Add active user to input group if not already present
-if ! groups "$USER" | grep -q "\binput\b"; then
-    info "Adding user '$USER' to 'input' group for hardware keystroke capture..."
-    sudo usermod -aG input "$USER"
-    warn "You have been added to the 'input' group. You MUST log out and log back in for hotkey bindings to work!"
+# The `uaccess` tag is what removes the "log out and log back in" step:
+# systemd-logind grants the user of the active local session an ACL on these
+# devices as soon as the rules are reloaded and the devices re-triggered.
+# The rule is rewritten unconditionally so an upgrade from a VoxCtrl version
+# that shipped the group-only rule actually picks up the new behaviour.
+info "Setting up udev rules for global hotkeys (requires sudo)..."
+sudo tee "$UDEV_RULE_PATH" > /dev/null <<'EOF'
+# Installed by VoxCtrl — global hotkey and input access.
+#
+# uaccess grants the user of the ACTIVE local session an ACL on these devices,
+# applied immediately by systemd-logind on `udevadm trigger`. This is why
+# VoxCtrl does not require logging out after setup, and it is narrower than
+# permanent `input` group membership: access follows the seat, not the account.
+SUBSYSTEM=="input", KERNEL=="event*", TAG+="uaccess"
+
+# Virtual keyboard device used for synthetic keystroke injection.
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput", TAG+="uaccess"
+EOF
+sudo chmod 0644 "$UDEV_RULE_PATH"
+
+info "Reloading udev rules..."
+sudo udevadm control --reload-rules || true
+sudo udevadm trigger --subsystem-match=input --action=change || true
+sudo udevadm trigger --subsystem-match=misc --action=change || true
+ok "udev rules configured successfully."
+
+# Fallback for systems without logind, where the ACL above is not applied.
+if ! id -Gn "$USER" | tr ' ' '\n' | grep -qx input; then
+    info "Adding user '$USER' to 'input' group as a fallback..."
+    sudo usermod -aG input "$USER" || true
 else
     ok "User is already in the 'input' group."
+fi
+
+# Report what is actually true rather than assuming the worst.
+HOTKEYS_LIVE=false
+for dev in /dev/input/event*; do
+    [ -r "$dev" ] && HOTKEYS_LIVE=true && break
+done
+if [ "$HOTKEYS_LIVE" = true ]; then
+    ok "Keyboard access is live — no logout required."
+else
+    warn "Keyboard access is not active in this shell yet. VoxCtrl picks it up on"
+    warn "its next start; only if that also fails do you need to log out."
 fi
 
 # Remove legacy rules if they exist to keep system clean
@@ -346,7 +372,11 @@ echo "  VoxCtrl ($APP_VERSION) is now fully integrated into your desktop environ
 echo "  You can launch it directly from your applications menu or run:"
 echo -e "    ${GREEN}$PORTABLE_APPIMAGE${NC}"
 echo ""
-echo "  ⚠️  IMPORTANT REMINDER:"
-echo "  If you were just added to the 'input' group, you MUST log out"
-echo "  and log back in (or reboot) for evdev hotkeys to function correctly."
+if [ "$HOTKEYS_LIVE" = true ]; then
+    echo "  ✅ Global hotkeys are ready to use — no logout needed."
+else
+    echo "  ℹ️  Keyboard access was configured but is not visible from this shell."
+    echo "  Start VoxCtrl: it restarts itself once to pick the permissions up, and"
+    echo "  tells you in-app if anything is still missing."
+fi
 echo ""

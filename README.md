@@ -187,11 +187,13 @@ Alternatively, you can just launch the AppImage normally. If the application det
 
 #### What the built-in installer accomplishes automatically:
 * **System Runtime Packages**: Detects your package manager (`apt`, `pacman`, `dnf`, `zypper`) and installs WebKitGTK, OpenSSL, PortAudio, `wtype`, `xdotool`, and clipboard utilities.
-* **Low-Level Hardware Hotkeys**: Creates the `/etc/udev/rules.d/99-voxctrl.rules` rule to permit access to `uinput`, and adds your user to the `input` group so the evdev key listener works globally without running the application as root.
+* **Low-Level Hardware Hotkeys**: Creates the `/etc/udev/rules.d/99-voxctrl.rules` rule so the evdev key listener works globally without running the application as root. The rule uses systemd's `uaccess` tag, which grants access to your active session **immediately** — no logout, no reboot. (`input` group membership is still added as a fallback for systems without logind.)
 * **Desktop Menu Integration**: Registers a modern `.desktop` entry in `~/.local/share/applications/` and copies the application icon so VoxCtrl appears in your desktop application menus.
 
-> [!IMPORTANT]
-> If the installer adds your user account to the `input` group, you **must log out and log back in** (or reboot) for hardware global hotkeys to function correctly.
+> [!NOTE]
+> Setup takes effect right away. If a system somehow can't apply the new permissions to the running session, VoxCtrl offers a one-click **Restart VoxCtrl** instead — it relaunches itself with the right group. Logging out is now only a last resort, and VoxCtrl tells you explicitly if it comes to that.
+>
+> VoxCtrl also keeps watching: if it cannot read your keyboard it says so in the tray and in a notification rather than silently ignoring your shortcut, and it starts working the moment permissions appear — without an app restart.
 
 ---
 

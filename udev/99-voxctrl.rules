@@ -1,1 +1,10 @@
-KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+# Installed by VoxCtrl — global hotkey and input access.
+#
+# uaccess grants the user of the ACTIVE local session an ACL on these devices,
+# applied immediately by systemd-logind on `udevadm trigger`. This is why
+# VoxCtrl does not require logging out after setup, and it is narrower than
+# permanent `input` group membership: access follows the seat, not the account.
+SUBSYSTEM=="input", KERNEL=="event*", TAG+="uaccess"
+
+# Virtual keyboard device used for synthetic keystroke injection.
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput", TAG+="uaccess"
