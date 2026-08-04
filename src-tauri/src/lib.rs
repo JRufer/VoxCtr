@@ -28,6 +28,109 @@ pub fn run_cli_installer() -> Result<(), String> {
     crate::installer::run_cli_installer()
 }
 
+/// Set once the Tauri app is built, so background tasks started before it (the
+/// hotkey gesture loop) can raise windows.
+static APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+/// Label of the first-run setup window.
+const SETUP_WINDOW: &str = "udev-warning";
+
+/// Minimum gap between "finish the setup" notifications, so holding a
+/// push-to-talk key does not produce a wall of toasts.
+const SETUP_NOTICE_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How often the setup watcher re-checks permissions. Short enough that
+/// finishing the setup — in the app, in a terminal, anywhere — visibly flips
+/// the app to working within a couple of seconds.
+const SETUP_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Re-alert cadence while VoxCtrl cannot read the keyboard at all. In that
+/// state no shortcut can reach the app, so this is the only way the user hears
+/// about it while they are pressing keys and getting nothing.
+const BLIND_ALERT_INTERVAL: Duration = Duration::from_secs(300);
+
+/// The tray entry that doubles as the setup indicator.
+static SETUP_MENU_ITEM: std::sync::OnceLock<tauri::menu::MenuItem<tauri::Wry>> =
+    std::sync::OnceLock::new();
+
+const TRAY_SETUP_OK: &str = "🩺  Setup & Diagnostics";
+const TRAY_SETUP_BROKEN: &str = "⚠️  Finish setup — hotkeys inactive";
+
+/// Reflect setup state in the tray, which is the one piece of VoxCtrl UI that
+/// is always on screen.
+fn update_tray_for_setup(app: &tauri::AppHandle, ok: bool) {
+    let app = app.clone();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(item) = SETUP_MENU_ITEM.get() {
+            let _ = item.set_text(if ok { TRAY_SETUP_OK } else { TRAY_SETUP_BROKEN });
+        }
+        if let Some(tray) = handle.tray_by_id("main-tray") {
+            let _ = tray.set_tooltip(Some(if ok {
+                "VoxCtrl"
+            } else {
+                "VoxCtrl — setup unfinished, global hotkeys are inactive"
+            }));
+        }
+    });
+}
+
+/// Bring the setup window to the front.
+fn show_setup_window() {
+    if let Some(handle) = APP_HANDLE.get() {
+        if let Some(w) = handle.get_webview_window(SETUP_WINDOW) {
+            let _ = w.unminimize();
+            let _ = w.show();
+            let _ = w.set_always_on_top(true);
+            let _ = w.set_focus();
+        }
+    }
+}
+
+/// What is stopping dictation from working end to end, as a message to show the
+/// user. `None` means the app is fully set up.
+///
+/// Called on every hotkey activation: pressing the shortcut and getting silence
+/// is the moment the user needs to be told the install is unfinished, and it is
+/// the only moment we know for certain they are trying to dictate.
+async fn setup_blocker(state: &Arc<AppState>) -> Option<String> {
+    if let Some(tool) = commands::missing_injection_tool() {
+        return Some(format!(
+            "VoxCtrl cannot type text into other windows: '{tool}' is not installed. \
+             Finish the setup in VoxCtrl → Settings to install it."
+        ));
+    }
+
+    let cfg = state.config.lock().await;
+    let eng = &cfg.data.engine;
+    // Moonshine only bypasses the Whisper-model check when it is actually
+    // compiled in; otherwise the app silently falls back to whisper-cpp and
+    // still needs the model.
+    let uses_whisper_model = eng.backend != voxctrl_config::BackendChoice::Moonshine
+        || !voxctrl_inference::MOONSHINE_COMPILED;
+    if !uses_whisper_model {
+        return None;
+    }
+    // Skip small models the startup hook auto-downloads in the background —
+    // that flow has its own "downloading…/ready/failed" notifications, so this
+    // would only add a confusing "go to Settings" message mid-download.
+    if voxctrl_inference::whisper_cpp::is_small_auto_downloadable(&eng.whisper_cpp.model_size) {
+        return None;
+    }
+    if voxctrl_inference::whisper_cpp::is_model_downloaded(
+        &eng.whisper_cpp.model_size,
+        &eng.whisper_cpp.model_dir,
+    ) {
+        return None;
+    }
+
+    Some(format!(
+        "Speech model '{}' is not downloaded — dictation cannot produce text. \
+         Open Settings → Engine and download it.",
+        eng.whisper_cpp.model_size
+    ))
+}
+
 // Helper to robustly show, unminimize, and focus a window, especially under Linux WMs
 fn show_and_focus_window(window: &tauri::WebviewWindow) {
     let w = window.clone();
@@ -119,8 +222,16 @@ pub fn run() {
         let _ = registry.try_init();
     }
 
+    // Before anything is built: if setup already ran but this login session
+    // never picked up the new input permissions, restart into a process that
+    // has them. This is what used to be "log out and log back in".
+    #[cfg(target_os = "linux")]
+    if crate::installer::auto_relaunch_if_pending() {
+        return;
+    }
+
     let config = Config::load();
-    
+
     // Log the sanitized configuration parameters at startup
     tracing::info!("=== System Startup Config ===");
     tracing::info!("Backend choice: {:?}", config.data.engine.backend);
@@ -168,6 +279,8 @@ pub fn run() {
 
     let (overlay_tx, overlay_rx) = crossbeam_channel::unbounded::<String>();
 
+    let hotkey_health = Arc::new(voxctrl_hotkeys::ListenerHealth::default());
+
     let app_state = Arc::new(AppState {
         config: config.clone(),
         router: router.clone(),
@@ -193,6 +306,7 @@ pub fn run() {
         tts_handle: Arc::new(Mutex::new(None)),
         active_fifos: Arc::new(Mutex::new(std::collections::HashSet::new())),
         hotkey_reloader: Arc::new(Mutex::new(None)),
+        hotkey_health: hotkey_health.clone(),
         overlay_tx: overlay_tx.clone(),
     });
 
@@ -300,6 +414,7 @@ pub fn run() {
         all_bindings,
         gesture_tx,
         cfg_data.audio.evdev_device.clone(),
+        hotkey_health.clone(),
     );
 
     let state_for_gesture = app_state.clone();
@@ -309,10 +424,12 @@ pub fn run() {
     });
 
     let state_for_gesture = app_state.clone();
-    // Once-per-session notices for the two silent failure modes of a fresh
-    // install: recording with no Whisper model, and recording with a mic
-    // stream that never delivers audio.
-    let model_notice_shown = Arc::new(AtomicBool::new(false));
+    // Notices for the silent failure modes of a fresh install: dictating with
+    // an unfinished setup, and recording with a mic stream that never delivers
+    // audio. The setup notice repeats (throttled) rather than firing once —
+    // a single toast at the very first keypress is easy to miss, and the user
+    // will keep pressing the shortcut until something explains itself.
+    let last_setup_notice = Arc::new(Mutex::new(None::<std::time::Instant>));
     let mic_notice_shown = Arc::new(AtomicBool::new(false));
     tokio::spawn(async move {
         while let Some(event) = gesture_rx.recv().await {
@@ -341,36 +458,21 @@ pub fn run() {
                     *state_for_gesture.active_binding_id.lock().await = event.binding_id.clone();
                     state_for_gesture.set_recording(true);
 
-                    // Warn right at the keypress if transcription is doomed to
-                    // fail because the Whisper model was never downloaded.
-                    // Skip this for small models the startup hook already
-                    // auto-downloads in the background (see lib.rs setup()) —
-                    // that flow has its own "downloading.../ready/failed"
-                    // notifications, so this would just be a confusing extra
-                    // "not downloaded, go to Settings" message mid-download.
-                    {
-                        let cfg = state_for_gesture.config.lock().await;
-                        let eng = &cfg.data.engine;
-                        // Moonshine only bypasses the Whisper-model check when it
-                        // is actually compiled in; otherwise the app silently
-                        // falls back to whisper-cpp and still needs the model.
-                        let uses_whisper_model = eng.backend != voxctrl_config::BackendChoice::Moonshine
-                            || !voxctrl_inference::MOONSHINE_COMPILED;
-                        if uses_whisper_model
-                            && !voxctrl_inference::whisper_cpp::is_small_auto_downloadable(&eng.whisper_cpp.model_size)
-                            && !voxctrl_inference::whisper_cpp::is_model_downloaded(
-                                &eng.whisper_cpp.model_size,
-                                &eng.whisper_cpp.model_dir,
-                            )
-                            && !model_notice_shown.swap(true, std::sync::atomic::Ordering::SeqCst)
-                        {
-                            voxctrl_inject::show_notification(
-                                "VoxCtrl",
-                                &format!(
-                                    "Whisper model '{}' is not downloaded — dictation will not produce text. Open Settings → Engine and download it.",
-                                    eng.whisper_cpp.model_size
-                                ),
-                            );
+                    // The user just tried to dictate. If the install is not
+                    // finished, say so now — otherwise the shortcut records
+                    // audio that can never become text, which reads as
+                    // "VoxCtrl is broken" rather than "setup is incomplete".
+                    if let Some(msg) = setup_blocker(&state_for_gesture).await {
+                        let now = std::time::Instant::now();
+                        let stale = {
+                            let last = last_setup_notice.lock().await;
+                            last.map(|t: std::time::Instant| now.duration_since(t) > SETUP_NOTICE_INTERVAL)
+                                .unwrap_or(true)
+                        };
+                        if stale {
+                            *last_setup_notice.lock().await = Some(now);
+                            voxctrl_inject::show_notification("VoxCtrl — setup unfinished", &msg);
+                            show_setup_window();
                         }
                     }
 
@@ -540,6 +642,8 @@ pub fn run() {
             }
         })
         .setup(move |app| {
+            let _ = APP_HANDLE.set(app.handle().clone());
+
             // Set window icon programmatically on Linux/Wayland
             #[cfg(target_os = "linux")]
             {
@@ -616,24 +720,79 @@ pub fn run() {
                 }));
             }
 
-            // ── Startup udev Diagnostics ──────────────────────────────────────
+            // ── Setup watcher ─────────────────────────────────────────────────
+            // Keeps an eye on hotkey permissions for the whole session rather
+            // than only at startup. Two things depend on that:
+            //
+            //  * When the listener cannot see a keyboard, no shortcut can ever
+            //    reach the app — so the "finish setup" alert has to come from
+            //    here. It repeats on a slow cadence because the user's next
+            //    move is to press the shortcut again and wait.
+            //  * When permissions appear (setup finished, ACLs applied, group
+            //    relaunch), the listener picks the keyboard up on its own and
+            //    the user is told hotkeys are live. Nothing needs restarting.
             #[cfg(target_os = "linux")]
             {
                 let app_handle = app.handle().clone();
+                let health = app_state.hotkey_health.clone();
                 tauri::async_runtime::spawn(async move {
-                    // Shared with the check_udev_status IPC command. Not
-                    // configured covers both "setup never ran" and "setup ran
-                    // but the session still lacks the input group" — the
-                    // warning window itself shows the right variant (setup
-                    // button vs. relogin notice) by re-querying the status.
-                    let status = crate::commands::check_udev_status_sync();
+                    // Give the listener one scan before judging it.
+                    tokio::time::sleep(Duration::from_millis(500)).await;
 
-                    if !status.is_configured {
-                        if let Some(w) = app_handle.get_webview_window("udev-warning") {
-                            let _ = w.show();
-                            let _ = w.set_always_on_top(true);
-                            let _ = w.set_focus();
+                    let mut first_pass = true;
+                    let mut was_active: Option<bool> = None;
+                    let mut last_alert: Option<std::time::Instant> = None;
+                    loop {
+                        // Deliberately only the listener's own health: it is a
+                        // pair of atomics, and "a keyboard is open right now"
+                        // is the ground truth anyway. Re-deriving it from udev
+                        // rules and group lookups would spawn subprocesses on
+                        // every tick for the life of the app, and would still
+                        // be a worse answer.
+                        let active = health.is_active();
+
+                        if active && was_active == Some(false) {
+                            voxctrl_inject::show_notification(
+                                "VoxCtrl",
+                                "Keyboard permissions are active — your global shortcuts work now.",
+                            );
                         }
+
+                        if !active {
+                            // No shortcut can reach the app in this state, so
+                            // the alert cannot wait for a keypress. The window
+                            // is the alert the first time; after that a toast,
+                            // since the window may be buried behind whatever
+                            // the user is actually working in.
+                            let due = last_alert
+                                .map(|t| t.elapsed() >= BLIND_ALERT_INTERVAL)
+                                .unwrap_or(true);
+                            if due {
+                                last_alert = Some(std::time::Instant::now());
+                                if first_pass {
+                                    show_setup_window();
+                                } else {
+                                    voxctrl_inject::show_notification(
+                                        "VoxCtrl — setup unfinished",
+                                        "VoxCtrl still cannot read your keyboard, so global \
+                                         shortcuts do nothing. Open VoxCtrl to finish setup.",
+                                    );
+                                }
+                            }
+                        } else if first_pass && crate::commands::missing_injection_tool().is_some() {
+                            // Hotkeys work but nothing can be typed anywhere —
+                            // just as broken, and just as invisible.
+                            show_setup_window();
+                        }
+
+                        if was_active != Some(active) {
+                            was_active = Some(active);
+                            let _ = app_handle.emit("setup-status-changed", active);
+                            update_tray_for_setup(&app_handle, active);
+                        }
+
+                        first_pass = false;
+                        tokio::time::sleep(SETUP_POLL_INTERVAL).await;
                     }
                 });
             }
@@ -701,12 +860,14 @@ pub fn run() {
 
             let settings_i = tauri::menu::MenuItem::with_id(app, "settings", "⚙  Settings", true, None::<&str>)?;
             let history_i = tauri::menu::MenuItem::with_id(app, "history", "📋  History", true, None::<&str>)?;
+            let setup_i = tauri::menu::MenuItem::with_id(app, "setup", TRAY_SETUP_OK, true, None::<&str>)?;
             let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
             let quit_i = tauri::menu::MenuItem::with_id(app, "quit", "Quit VoxCtrl", true, None::<&str>)?;
             let menu = tauri::menu::Menu::with_items(
                 app,
-                &[&settings_i, &history_i, &separator, &quit_i],
+                &[&settings_i, &history_i, &setup_i, &separator, &quit_i],
             )?;
+            let _ = SETUP_MENU_ITEM.set(setup_i);
 
             let _tray = TrayIconBuilder::with_id("main-tray")
                 .icon(tray_icon)
@@ -721,6 +882,11 @@ pub fn run() {
                         }
                         "history" => {
                             if let Some(window) = app.get_webview_window("history") {
+                                show_and_focus_window(&window);
+                            }
+                        }
+                        "setup" => {
+                            if let Some(window) = app.get_webview_window(SETUP_WINDOW) {
                                 show_and_focus_window(&window);
                             }
                         }
@@ -1035,6 +1201,10 @@ pub fn run() {
             cuda_enabled,
             check_udev_status,
             install_system_integration,
+            restart_for_permissions,
+            get_setup_status,
+            download_configured_model,
+            open_settings_tab,
             stop_tts,
             reset_chat_conversation,
             test_chat_target,
@@ -1258,6 +1428,7 @@ mod tests {
             tts_handle: Arc::new(Mutex::new(None)),
             active_fifos: Arc::new(Mutex::new(std::collections::HashSet::new())),
             hotkey_reloader: Arc::new(Mutex::new(None)),
+            hotkey_health: Arc::new(voxctrl_hotkeys::ListenerHealth::default()),
         }
     }
 
@@ -1489,6 +1660,78 @@ mod tests {
             assert!(res.rule_exists);
             assert!(res.in_group);
         }
+    }
+
+    #[tokio::test]
+    async fn test_udev_status_never_offers_both_recovery_paths() {
+        // "Restart VoxCtrl" and "log out and back in" are mutually exclusive
+        // instructions. Showing both is how a user ends up doing the slow one.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
+
+        let res = check_udev_status().await.unwrap();
+        assert!(
+            !(res.can_relaunch && res.is_configured),
+            "a working setup must not ask to be restarted"
+        );
+        assert!(
+            res.devices_readable <= res.devices_total,
+            "readable ({}) cannot exceed total ({})",
+            res.devices_readable,
+            res.devices_total
+        );
+        assert!(!res.detail.is_empty(), "every state needs an explanation");
+    }
+
+    #[tokio::test]
+    async fn test_udev_status_detail_explains_a_blocked_setup() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("VOXCTRL_TEST_UDEV_STATUS", "missing");
+        let res = check_udev_status().await.unwrap();
+        assert!(!res.is_configured);
+        assert!(!res.detail.is_empty());
+        std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
+    }
+
+    #[tokio::test]
+    async fn test_setup_blocker_flags_a_missing_model_at_keypress() {
+        // The hotkey fired, so permissions are fine — but the model is not
+        // downloaded and dictation will silently produce nothing. That is
+        // exactly the moment the user must be told.
+        let state = Arc::new(make_test_state());
+        {
+            let mut cfg = state.config.lock().await;
+            cfg.data.engine.backend = voxctrl_config::BackendChoice::WhisperCpp;
+            cfg.data.engine.whisper_cpp.model_size = "large-v3".to_string();
+            cfg.data.engine.whisper_cpp.model_dir =
+                tempfile::tempdir().unwrap().path().to_string_lossy().to_string();
+        }
+
+        // The injection-tool check runs first and depends on the host, so only
+        // assert that *something* is reported and that it names a real cause.
+        let blocker = setup_blocker(&state).await.expect("unfinished setup must report");
+        assert!(
+            blocker.contains("large-v3") || blocker.contains("wtype") || blocker.contains("xdotool"),
+            "message must name the actual cause: {blocker}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_setup_blocker_stays_quiet_for_the_auto_downloading_default() {
+        // "tiny" downloads itself in the background with its own notifications;
+        // a second "go to Settings" toast mid-download is pure noise.
+        if crate::commands::missing_injection_tool().is_some() {
+            return; // host lacks wtype/xdotool; that blocker legitimately wins
+        }
+        let state = Arc::new(make_test_state());
+        {
+            let mut cfg = state.config.lock().await;
+            cfg.data.engine.backend = voxctrl_config::BackendChoice::WhisperCpp;
+            cfg.data.engine.whisper_cpp.model_size = "tiny".to_string();
+            cfg.data.engine.whisper_cpp.model_dir =
+                tempfile::tempdir().unwrap().path().to_string_lossy().to_string();
+        }
+        assert!(setup_blocker(&state).await.is_none());
     }
 
     #[tokio::test]

@@ -36,12 +36,14 @@
       },
       {
         "label": "udev-warning",
-        "title": "VoxCtrl Diagnostics",
-        "width": 460,
-        "height": 380,
+        "title": "VoxCtrl Setup",
+        "width": 580,
+        "height": 600,
+        "minWidth": 480,
+        "minHeight": 420,
         "visible": false,
         "alwaysOnTop": true,
-        "resizable": false,
+        "resizable": true,
         "url": "/udev-warning"
       }
     ]

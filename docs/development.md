@@ -421,14 +421,23 @@ def test_mcp_handshake_and_tools():
 Linux global hotkeys require specific udev permissions and user group memberships configured by `install.sh`. To make testing these startup states safe and easy, developers can use the `VOXCTRL_TEST_UDEV_STATUS` environment variable to mock various diagnostic outcomes without mutating their own user accounts or system rules.
 
 #### How Diagnostics Work (Linux)
-The application employs robust permission checks at startup and via the `check_udev_status` Tauri IPC command:
-1. **Rule File Compatibility:** The app checks for the existence of `/etc/udev/rules.d/99-voxctrl.rules`, `/etc/udev/rules.d/99-voxctl.rules` (legacy name), or `/etc/udev/rules.d/99-voxctr.rules` (legacy name). If any match, rules are recognized as configured.
+The application employs robust permission checks at startup and via the `check_udev_status` / `get_setup_status` Tauri IPC commands:
+1. **Rule File Compatibility:** The app checks for the existence of `/etc/udev/rules.d/99-voxctrl.rules`, `/etc/udev/rules.d/99-voxctl.rules` (legacy name), or `/etc/udev/rules.d/99-voxctr.rules` (legacy name). If any match, rules are recognized as configured. It additionally reads the current rule and reports `rule_is_current: false` for the pre-`uaccess` rule, which is the one that forced a logout.
 2. **Active vs NSS Group Database Verification:** It checks if the active process session belongs to the `input` group. If missing, it queries the NSS system group database (`id -Gn <username>`) as a fallback. This handles persistent containerized development environments (where process group tokens do not refresh) gracefully, preventing false warning windows once the installer has been run.
-3. **Windows Exclusions:** Non-Linux environments (such as Windows builds) completely compile out udev diagnostic checks on startup and return fully bypassed success payloads (`is_configured: true`), ensuring the warning screen never displays on Windows.
+3. **Device-level ground truth:** `count_input_devices()` opens `/dev/input/event*` directly, so the app can tell "this machine has no keyboard" apart from "VoxCtrl is not allowed to read one". `evdev::enumerate()` cannot: it silently drops every device it fails to open.
+4. **Listener health:** `voxctrl_hotkeys::ListenerHealth` reports how many keyboards the listener actually holds open. Permissions existing on disk is not the same as hotkeys working, and only the listener knows the difference.
+5. **Windows Exclusions:** Non-Linux environments (such as Windows builds) completely compile out udev diagnostic checks on startup and return fully bypassed success payloads (`is_configured: true`), ensuring the warning screen never displays on Windows.
+
+#### Recovery paths, in order
+The setup flow avoids telling the user to log out unless nothing else can work:
+1. The `uaccess` udev rule applies to the active session on `udevadm trigger` — the common case, effective immediately.
+2. `installer::auto_relaunch_if_pending()` restarts the app through `sg input` at startup when the session lacks a membership that `/etc/group` already records. `sg` is probed first (`sg input -c 'id -Gn'`) so a password-protected group cannot leave the user with an app that exits and never returns.
+3. The listener rescans `/dev/input` every 2 s while blocked, so permissions granted by any means start working without an app restart.
+4. Only then does the UI mention logging out.
 
 #### Why Test This?
 * **Onboarding Verification**: Ensure that new users are clearly prompted to install required dependencies.
-* **Troubleshooting Relogins**: Verify the specific advice prompting the user to reboot or log out if they ran `install.sh` but didn't refresh their session.
+* **Recovery advice**: Verify that "Restart VoxCtrl" and "log out and back in" are never offered at the same time — they are mutually exclusive instructions.
 * **Layout Integrity**: Make sure the modal overlays perfectly on the dark obsidian theme on launch.
 
 #### Mock Configurations
@@ -438,14 +447,14 @@ The application employs robust permission checks at startup and via the `check_u
   ```bash
   VOXCTRL_TEST_UDEV_STATUS=missing npm run tauri dev
   ```
-  * **UI Outcome**: Spawns a standalone native window (`udev-warning`) in the foreground detailing the need for hardware udev rules, providing a direct **🔧 Setup System Integration** button to run setup automatically, and a **Continue Anyway** native window close pathway.
+  * **UI Outcome**: Spawns the standalone **VoxCtrl Setup** window (`udev-warning`) in the foreground, listing each step with live status and a **Grant keyboard access** button, plus a **Set it up manually** disclosure with copy-pasteable commands and a **Continue anyway** close pathway.
 
 * **Simulate Relogin Required (Installer run but session not updated)**:
   Simulates that rules exist but the current shell process is missing `input` group permissions:
   ```bash
   VOXCTRL_TEST_UDEV_STATUS=relogin npm run tauri dev
   ```
-  * **UI Outcome**: Spawns a standalone native window (`udev-warning`) displaying the explicit logout/relogin guidance (hiding the installer download CTA since the rules are already present).
+  * **UI Outcome**: The setup window shows the keyboard-access step as unfinished. If `sg` can grant the group it offers **Restart VoxCtrl to finish**; the logout guidance appears only when it cannot.
 
 * **Simulate Normal/Configured State (Bypasses checks)**:
   ```bash

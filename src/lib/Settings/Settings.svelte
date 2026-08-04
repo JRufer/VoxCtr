@@ -3,6 +3,7 @@
   import { config, saveConfig, configDirty, configLoaded } from "../../stores/config";
   import { status } from "../../stores/status";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
 
 
@@ -60,6 +61,15 @@
   });
 
   onMount(() => {
+    // The setup window sends the user here for the model step; land them on
+    // the tab that actually has the download button.
+    const tabListener = listen<string>("focus-settings-tab", (event) => {
+      const requested = event.payload as Tab;
+      if (tabs.some((t) => t.id === requested)) {
+        activeTab = requested;
+      }
+    });
+
     let unsubscribeLoaded: () => void;
     unsubscribeLoaded = configLoaded.subscribe((loaded) => {
       if (loaded) {
@@ -95,6 +105,10 @@
         }
       }
     });
+
+    return () => {
+      tabListener.then((unlisten) => unlisten()).catch(() => {});
+    };
   });
 </script>
 

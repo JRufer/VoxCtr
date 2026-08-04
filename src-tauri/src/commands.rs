@@ -725,28 +725,98 @@ pub async fn test_openai(
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 pub struct UdevStatusPayload {
+    /// Hotkeys can be captured right now.
     pub is_configured: bool,
     pub rule_exists: bool,
+    /// The active session can read input devices (group membership or ACL).
     pub in_group: bool,
+    /// Setup has run but this session cannot use it yet.
     pub needs_relogin: bool,
+    /// The installed rule is the current, logout-free one. Older VoxCtrl
+    /// versions wrote a rule that only worked after a fresh login.
+    pub rule_is_current: bool,
+    /// `/dev/input/event*` nodes present, and how many VoxCtrl can open.
+    pub devices_total: u32,
+    pub devices_readable: u32,
+    /// VoxCtrl can pick the permissions up by restarting itself — no logout.
+    pub can_relaunch: bool,
+    /// Graphical privilege escalation is available for the one-click setup.
+    pub pkexec_available: bool,
+    pub session_type: String,
+    /// One-line, human-readable explanation of the state above.
+    pub detail: String,
+    /// Copy-pasteable commands for when the automated setup cannot run.
+    pub manual_commands: String,
+}
+
+impl UdevStatusPayload {
+    fn fully_working() -> Self {
+        Self {
+            is_configured: true,
+            rule_exists: true,
+            in_group: true,
+            needs_relogin: false,
+            rule_is_current: true,
+            devices_total: 1,
+            devices_readable: 1,
+            can_relaunch: false,
+            pkexec_available: true,
+            session_type: String::new(),
+            detail: "Global hotkeys are active.".to_string(),
+            manual_commands: String::new(),
+        }
+    }
 }
 
 /// Ground truth for whether the evdev hotkey listener can work in THIS
 /// process: at least one `/dev/input/event*` device is readable. Covers setups
 /// that grant access via ACLs (systemd uaccess) rather than the input group.
 #[cfg(target_os = "linux")]
-fn any_input_device_readable() -> bool {
-    let Ok(entries) = std::fs::read_dir("/dev/input") else { return false };
-    entries.flatten().any(|entry| {
-        entry
+pub fn any_input_device_readable() -> bool {
+    count_input_devices().1 > 0
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn any_input_device_readable() -> bool {
+    true
+}
+
+/// Returns `(total, readable)` counts of `/dev/input/event*` nodes.
+#[cfg(target_os = "linux")]
+fn count_input_devices() -> (u32, u32) {
+    let Ok(entries) = std::fs::read_dir("/dev/input") else {
+        return (0, 0);
+    };
+    let mut total = 0;
+    let mut readable = 0;
+    for entry in entries.flatten() {
+        let is_event = entry
             .file_name()
             .to_str()
             .map(|n| n.starts_with("event"))
-            .unwrap_or(false)
-            && std::fs::File::open(entry.path()).is_ok()
-    })
+            .unwrap_or(false);
+        if !is_event {
+            continue;
+        }
+        total += 1;
+        if std::fs::File::open(entry.path()).is_ok() {
+            readable += 1;
+        }
+    }
+    (total, readable)
+}
+
+#[cfg(target_os = "linux")]
+fn session_type() -> String {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        "wayland".to_string()
+    } else if std::env::var_os("DISPLAY").is_some() {
+        "x11".to_string()
+    } else {
+        std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".to_string())
+    }
 }
 
 /// Shared udev/permission status check used by both the `check_udev_status`
@@ -769,23 +839,25 @@ pub fn check_udev_status_sync() -> UdevStatusPayload {
                     rule_exists: false,
                     in_group: false,
                     needs_relogin: false,
+                    rule_is_current: false,
+                    devices_readable: 0,
+                    detail: "Setup has not been run yet.".to_string(),
+                    ..UdevStatusPayload::fully_working()
                 };
             }
             "relogin" => {
                 return UdevStatusPayload {
                     is_configured: false,
-                    rule_exists: true,
                     in_group: false,
                     needs_relogin: true,
+                    devices_readable: 0,
+                    detail: "Setup has run but this session cannot read the keyboard yet."
+                        .to_string(),
+                    ..UdevStatusPayload::fully_working()
                 };
             }
             "ok" => {
-                return UdevStatusPayload {
-                    is_configured: true,
-                    rule_exists: true,
-                    in_group: true,
-                    needs_relogin: false,
-                };
+                return UdevStatusPayload::fully_working();
             }
             _ => {}
         }
@@ -794,20 +866,23 @@ pub fn check_udev_status_sync() -> UdevStatusPayload {
     // 2. Platform-specific checks
     #[cfg(not(target_os = "linux"))]
     {
-        UdevStatusPayload {
-            is_configured: true,
-            rule_exists: true,
-            in_group: true,
-            needs_relogin: false,
-        }
+        UdevStatusPayload::fully_working()
     }
 
     #[cfg(target_os = "linux")]
     {
         // Check if udev rules exist (support new and legacy names)
-        let rule_exists = std::path::Path::new("/etc/udev/rules.d/99-voxctrl.rules").exists()
+        let rule_path = std::path::Path::new(crate::installer::UDEV_RULE_PATH);
+        let rule_exists = rule_path.exists()
             || std::path::Path::new("/etc/udev/rules.d/99-voxctl.rules").exists()
             || std::path::Path::new("/etc/udev/rules.d/99-voxctr.rules").exists();
+
+        // An old install may have the group-only rule, which is the one that
+        // forces a logout. Treating it as "configured" is how an upgrading user
+        // ends up stuck: everything looks green and nothing works.
+        let rule_is_current = std::fs::read_to_string(rule_path)
+            .map(|c| crate::installer::rule_content_is_current(&c))
+            .unwrap_or(false);
 
         // Does the ACTIVE session have the "input" group?
         let session_in_group = match std::process::Command::new("id").args(&["-Gn"]).output() {
@@ -818,33 +893,58 @@ pub fn check_udev_status_sync() -> UdevStatusPayload {
             Err(_) => false,
         };
 
+        let (devices_total, devices_readable) = count_input_devices();
+
         // Hotkeys work if the session has the group OR devices are readable anyway.
-        let in_group = session_in_group || any_input_device_readable();
+        let in_group = session_in_group || devices_readable > 0;
 
         // Is the membership at least recorded in the system group database (NSS
         // /etc/group)? If so, setup already ran and only a relogin is missing.
-        let db_in_group = if in_group {
-            true
-        } else if let Ok(username) = std::env::var("USER") {
-            match std::process::Command::new("id").args(&["-Gn", &username]).output() {
-                Ok(output) => {
-                    let groups_str = String::from_utf8_lossy(&output.stdout);
-                    groups_str.split_whitespace().any(|g| g == "input")
-                }
-                Err(_) => false,
-            }
-        } else {
-            false
-        };
+        let db_in_group = in_group || crate::installer::user_in_input_group_db();
 
         let needs_relogin = rule_exists && !in_group && db_in_group;
         let is_configured = rule_exists && in_group;
+        let can_relaunch = !in_group && crate::installer::can_relaunch_with_input_group();
+        let pkexec_available = crate::installer::command_exists("pkexec");
+
+        let detail = if is_configured && !rule_is_current && rule_exists {
+            "Hotkeys work, but VoxCtrl's udev rule is from an older version. \
+             Re-run setup so access survives without logging out."
+                .to_string()
+        } else if is_configured {
+            format!("Global hotkeys are active ({devices_readable} of {devices_total} input devices readable).")
+        } else if can_relaunch {
+            "Permissions are configured but this VoxCtrl process started before they applied. \
+             Restart VoxCtrl to finish — you do not need to log out."
+                .to_string()
+        } else if needs_relogin {
+            "Permissions are configured but your desktop session has not picked them up."
+                .to_string()
+        } else if devices_total == 0 {
+            "No keyboard devices were found under /dev/input.".to_string()
+        } else {
+            format!(
+                "VoxCtrl cannot read any of the {devices_total} input devices on this system, \
+                 so global hotkeys do nothing. Run the setup below."
+            )
+        };
 
         UdevStatusPayload {
             is_configured,
             rule_exists,
             in_group,
             needs_relogin,
+            rule_is_current,
+            devices_total,
+            devices_readable,
+            can_relaunch,
+            pkexec_available,
+            session_type: session_type(),
+            detail,
+            manual_commands: crate::installer::manual_setup_commands(
+                crate::installer::detect_pkg_manager(),
+                &std::env::var("USER").unwrap_or_default(),
+            ),
         }
     }
 }
@@ -857,7 +957,150 @@ pub async fn check_udev_status() -> Result<UdevStatusPayload, String> {
 #[tauri::command]
 pub async fn install_system_integration() -> Result<UdevStatusPayload, String> {
     crate::installer::run_gui_installer().await?;
+
+    // The udev `uaccess` ACLs are applied asynchronously by logind after
+    // `udevadm trigger`. Give that a moment before reporting a verdict,
+    // otherwise a setup that succeeded reports "restart required" purely
+    // because we looked too early.
+    for _ in 0..10 {
+        if any_input_device_readable() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
     check_udev_status().await
+}
+
+/// Restart VoxCtrl so it picks up `input` group membership that the current
+/// login session never received — the operation that replaces "log out and log
+/// back in".
+#[tauri::command]
+pub async fn restart_for_permissions(app: tauri::AppHandle) -> Result<(), String> {
+    crate::installer::relaunch_with_input_group()?;
+    // The replacement waits for this process to exit before starting.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        app.exit(0);
+    });
+    Ok(())
+}
+
+/// The keystroke-injection helper this session needs, if it is not installed.
+///
+/// The package step of the setup script is deliberately best-effort (a stale
+/// mirror must not block the permission fix), so it really can leave a system
+/// with working hotkeys and no way to type the transcription anywhere. That
+/// failure is otherwise invisible: dictation appears to do nothing at all.
+pub fn missing_injection_tool() -> Option<&'static str> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let have = |name: &str| voxctrl_config::find_in_path(name).is_some();
+        if have("wtype") || have("xdotool") {
+            return None;
+        }
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            Some("wtype")
+        } else {
+            Some("xdotool")
+        }
+    }
+}
+
+/// Everything first-run setup depends on, in one call: keyboard permissions,
+/// whether the listener is actually reading a keyboard, whether text can be
+/// typed anywhere, and whether a speech model is on disk.
+#[derive(serde::Serialize)]
+pub struct SetupStatusPayload {
+    pub permissions: UdevStatusPayload,
+    /// The listener currently has at least one keyboard open.
+    pub hotkeys_active: bool,
+    pub model_ready: bool,
+    pub model_size: String,
+    /// The configured model downloads itself in the background at first launch.
+    pub model_auto_downloads: bool,
+    /// Name of the missing keystroke-injection helper, if any.
+    pub missing_injection_tool: Option<String>,
+    pub is_complete: bool,
+}
+
+#[tauri::command]
+pub async fn get_setup_status(
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+) -> Result<SetupStatusPayload, String> {
+    let permissions = check_udev_status_sync();
+    let hotkeys_active = state.hotkey_health.is_active();
+
+    let (model_size, model_dir, uses_whisper_model) = {
+        let cfg = state.config.lock().await;
+        let eng = &cfg.data.engine;
+        (
+            eng.whisper_cpp.model_size.clone(),
+            eng.whisper_cpp.model_dir.clone(),
+            eng.backend != voxctrl_config::BackendChoice::Moonshine
+                || !voxctrl_inference::MOONSHINE_COMPILED,
+        )
+    };
+
+    let model_ready = !uses_whisper_model
+        || voxctrl_inference::whisper_cpp::is_model_downloaded(&model_size, &model_dir);
+    let model_auto_downloads =
+        uses_whisper_model && voxctrl_inference::whisper_cpp::is_small_auto_downloadable(&model_size);
+
+    let missing_tool = missing_injection_tool();
+
+    Ok(SetupStatusPayload {
+        is_complete: permissions.is_configured
+            && hotkeys_active
+            && model_ready
+            && missing_tool.is_none(),
+        permissions,
+        hotkeys_active,
+        model_ready,
+        model_size,
+        model_auto_downloads,
+        missing_injection_tool: missing_tool.map(str::to_string),
+    })
+}
+
+/// Download whichever speech model the config currently selects.
+///
+/// The setup window has no business knowing the model directory layout, and
+/// asking the user to pick a model before they have used the app once is the
+/// step this whole flow is trying to remove.
+#[tauri::command]
+pub async fn download_configured_model(
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+) -> Result<(), String> {
+    let (model_size, model_dir) = {
+        let cfg = state.config.lock().await;
+        (
+            cfg.data.engine.whisper_cpp.model_size.clone(),
+            cfg.data.engine.whisper_cpp.model_dir.clone(),
+        )
+    };
+    voxctrl_inference::whisper_cpp::download_model(&model_size, &model_dir)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Open the settings window on a specific tab. Used by the setup window so
+/// "choose a different model" lands the user on the right screen instead of
+/// making them find it.
+#[tauri::command]
+pub async fn open_settings_tab(app: tauri::AppHandle, tab: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("focus-settings-tab", tab);
+    }
+    Ok(())
 }
 
 #[derive(serde::Serialize)]

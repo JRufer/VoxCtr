@@ -146,10 +146,16 @@ chmod +x VoxCtrl-*-x86_64.AppImage
 ./VoxCtrl-*-x86_64.AppImage --install
 ```
 
-Alternatively, you can just double-click or run the AppImage directly; VoxCtrl's diagnostic system will detect the missing permissions at startup and present an interactive GUI button to configure the setup.
+Alternatively, you can just double-click or run the AppImage directly; VoxCtrl's setup window detects the missing permissions at startup and presents an interactive GUI button to configure the setup.
 
-### 3. Apply Group Privileges
-Because the installer adds your account to the low-level `input` group for global hardware hotkeys, **you must log out and log back in** (or reboot) before launching the application.
+### 3. Start Using It
+The installed udev rule tags input devices with `uaccess`, so `systemd-logind`
+grants your active session access as soon as the rules are reloaded — global
+hotkeys work immediately. No logout, no reboot.
+
+If a system cannot apply that, the setup window offers a one-click **Restart
+VoxCtrl** (it relaunches through `sg input`), and only falls back to asking for
+a logout when neither path is available.
 
 ---
 
