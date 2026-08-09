@@ -926,6 +926,110 @@ fn test_override(value: &str) -> Option<HotkeyStatusPayload> {
     }
 }
 
+/// Verdict on a key combination the user just recorded.
+#[derive(serde::Serialize, Clone)]
+pub struct HotkeyKeysCheck {
+    /// The combination can be saved as-is.
+    pub accepted: bool,
+    /// True when a rejection is binding rather than advisory — i.e. shortcuts
+    /// are delivered by the desktop portal, which cannot register this. On the
+    /// evdev fallback and on Windows, VoxCtrl watches the keys itself and a
+    /// bare modifier works fine, so the same combination is merely flagged.
+    pub enforced: bool,
+    /// The shortcut as the desktop will see it, e.g. `LOGO+space`.
+    pub accelerator: Option<String>,
+    /// Machine-readable problem: `modifiers_only`, `multiple_keys`,
+    /// `unsupported_key` or `empty`.
+    pub problem: Option<String>,
+    /// What to tell the user, and what to press instead.
+    pub message: Option<String>,
+}
+
+impl HotkeyKeysCheck {
+    fn ok(accelerator: Option<String>) -> Self {
+        Self {
+            accepted: true,
+            enforced: false,
+            accelerator,
+            problem: None,
+            message: None,
+        }
+    }
+}
+
+/// Can this key combination be registered as a global shortcut?
+///
+/// The settings UI calls this instead of reimplementing the rules, so the key
+/// recorder and the portal registration can never disagree about what is
+/// valid. `voxctrl_hotkeys::accelerator` is the single definition.
+pub fn check_hotkey_keys_with(
+    keys: &[String],
+    health: &voxctrl_hotkeys::ListenerHealth,
+) -> HotkeyKeysCheck {
+    use voxctrl_hotkeys::{Backend, TriggerProblem};
+
+    let problem = match voxctrl_hotkeys::accelerator(keys) {
+        Ok(accelerator) => return HotkeyKeysCheck::ok(Some(accelerator)),
+        Err(problem) => problem,
+    };
+
+    // Only the portal actually cannot deliver these. Blocking them everywhere
+    // would break bare-modifier shortcuts on the backends where VoxCtrl watches
+    // the keys itself and they work perfectly well.
+    let enforced = matches!(health.backend(), Backend::Portal | Backend::Starting);
+
+    let hint = match problem {
+        TriggerProblem::ModifiersOnly => Some(
+            "Add a regular key to the combination — Super+Space and Ctrl+Alt+D both work.",
+        ),
+        TriggerProblem::MultipleKeys => {
+            Some("Keep one regular key and use modifiers for the rest.")
+        }
+        TriggerProblem::UnsupportedKey(_) => Some("Try a letter, number, function or arrow key."),
+        TriggerProblem::Empty => None,
+    };
+
+    let mut message = if enforced {
+        format!("Your desktop cannot register this shortcut: {problem}.")
+    } else {
+        format!(
+            "This works right now, because VoxCtrl is watching the keyboard itself rather \
+             than using the desktop's shortcut service. It will stop working if that \
+             changes: {problem}."
+        )
+    };
+    if let Some(hint) = hint {
+        message.push(' ');
+        message.push_str(hint);
+    }
+
+    HotkeyKeysCheck {
+        // Advisory-only rejections still save: the combination genuinely works
+        // on this machine, and refusing it would be a lie.
+        accepted: !enforced,
+        enforced,
+        accelerator: None,
+        problem: Some(
+            match problem {
+                TriggerProblem::Empty => "empty",
+                TriggerProblem::ModifiersOnly => "modifiers_only",
+                TriggerProblem::MultipleKeys => "multiple_keys",
+                TriggerProblem::UnsupportedKey(_) => "unsupported_key",
+            }
+            .to_string(),
+        ),
+        message: Some(message),
+    }
+}
+
+#[tauri::command]
+pub async fn check_hotkey_keys(
+    keys: Vec<String>,
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+) -> Result<HotkeyKeysCheck, String> {
+    Ok(check_hotkey_keys_with(&keys, &state.hotkey_health))
+}
+
 #[tauri::command]
 pub async fn check_hotkey_status(
     state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,

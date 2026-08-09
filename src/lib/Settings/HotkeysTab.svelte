@@ -191,6 +191,7 @@
       return;
     }
     isEditingBindingNew = true;
+    keysCheck = null;
     editOpenaiEnabled = false;
     editOpenaiModel = "";
     editOpenaiMode = "custom";
@@ -216,6 +217,7 @@
 
   function editBinding(b: HotkeyBinding) {
     isEditingBindingNew = false;
+    keysCheck = null;
     const clone = JSON.parse(JSON.stringify(b));
     if (!clone.target_ids) {
       clone.target_ids = clone.target_id ? [clone.target_id] : [];
@@ -257,6 +259,22 @@
     if (editingBinding.keys.length === 0) {
       alert("Please capture at least one hotkey before saving.");
       return;
+    }
+
+    // Re-checked here, not just at capture time: a binding created by an older
+    // VoxCtrl (or on a machine without the desktop portal) can be sitting in
+    // the editor without ever passing through the recorder.
+    try {
+      const check = await invoke<KeysCheck>("check_hotkey_keys", {
+        keys: editingBinding.keys,
+      });
+      if (!check.accepted) {
+        keysCheck = check;
+        alert(check.message ?? "This key combination cannot be used as a shortcut.");
+        return;
+      }
+    } catch (e) {
+      console.error("Failed to validate hotkey keys before saving:", e);
     }
     if (editOpenaiEnabled) {
       if (editOpenaiMode === "custom") {
@@ -338,6 +356,69 @@
 
   let currentlyPressedKeys = $state<string[]>([]);
 
+  // Result of validating the last captured combination. The rules live in Rust
+  // (`voxctrl_hotkeys::accelerator`) and are reached over IPC, so the recorder
+  // and the portal registration cannot disagree about what is bindable.
+  type KeysCheck = {
+    accepted: boolean;
+    enforced: boolean;
+    accelerator: string | null;
+    problem: string | null;
+    message: string | null;
+  };
+  let keysCheck = $state<KeysCheck | null>(null);
+
+  // Presentational only — used for the live "keep going" hint while keys are
+  // still held, and for the badge on saved bindings. The authoritative verdict
+  // always comes from the backend, so drift here cannot let an invalid
+  // combination through.
+  const MODIFIER_KEYS = new Set([
+    "KEY_LEFTCTRL", "KEY_RIGHTCTRL",
+    "KEY_LEFTALT", "KEY_RIGHTALT",
+    "KEY_LEFTSHIFT", "KEY_RIGHTSHIFT",
+    "KEY_LEFTMETA", "KEY_RIGHTMETA",
+  ]);
+
+  function isModifiersOnly(keys: string[]): boolean {
+    return keys.length > 0 && keys.every(k => MODIFIER_KEYS.has(k));
+  }
+
+  // Whether a bare-modifier binding is actually broken on this machine, as
+  // opposed to merely fragile. Only the portal cannot deliver them.
+  let portalEnforced = $derived(
+    hotkeyStatus === null ||
+    hotkeyStatus.backend === "portal" ||
+    hotkeyStatus.backend === "starting",
+  );
+
+  // A shortcut needs a regular key. Say so while the user is still holding
+  // modifiers, rather than letting them lift and get rejected.
+  let liveCaptureHint = $derived.by(() => {
+    if (recordingTarget !== "keys") return null;
+    if (!isModifiersOnly(currentlyPressedKeys)) return null;
+    if (!portalEnforced) return null;
+    return "Keep holding and add a regular key — modifiers alone cannot be a shortcut.";
+  });
+
+  /// Validate a captured combination and commit it if the backend allows.
+  async function commitCapture(keys: string[]): Promise<void> {
+    if (!editingBinding || keys.length === 0) return;
+    let check: KeysCheck;
+    try {
+      check = await invoke<KeysCheck>("check_hotkey_keys", { keys });
+    } catch (e) {
+      console.error("Failed to validate hotkey keys:", e);
+      // A validation call that fails must not silently discard the user's
+      // capture; the save-time check still guards the real constraint.
+      editingBinding.keys = [...keys];
+      return;
+    }
+    keysCheck = check;
+    if (check.accepted && editingBinding) {
+      editingBinding.keys = [...keys];
+    }
+  }
+
   function handleRecordKeyDown(e: KeyboardEvent) {
     if (!recordingTarget || !editingBinding) return;
     e.preventDefault();
@@ -349,9 +430,10 @@
         currentlyPressedKeys = [...currentlyPressedKeys, evdevKey];
       }
       if (e.key === "Escape") {
-        editingBinding.keys = [...currentlyPressedKeys];
+        const captured = [...currentlyPressedKeys];
         currentlyPressedKeys = [];
         recordingTarget = null;
+        void commitCapture(captured);
       }
     }
   }
@@ -362,19 +444,23 @@
     e.stopPropagation();
 
     if (recordingTarget === "keys") {
-      if (currentlyPressedKeys.length > 0) {
-        editingBinding.keys = [...currentlyPressedKeys];
-      }
+      const captured = [...currentlyPressedKeys];
       currentlyPressedKeys = [];
+      // Deliberately leaves recording mode even when the capture is refused.
+      // Dropping straight back into "press your combination now" would hide the
+      // shortcut the binding still has, and the user needs to see that their
+      // working keybind survived the rejection.
       recordingTarget = null;
+      void commitCapture(captured);
     }
   }
 
   function handleRecordKeyBlur() {
     if (!recordingTarget) return;
-    if (recordingTarget === "keys" && currentlyPressedKeys.length > 0 && editingBinding) {
-      editingBinding.keys = [...currentlyPressedKeys];
+    if (recordingTarget === "keys" && currentlyPressedKeys.length > 0) {
+      const captured = [...currentlyPressedKeys];
       currentlyPressedKeys = [];
+      void commitCapture(captured);
     }
     recordingTarget = null;
   }
@@ -522,6 +608,14 @@
               {/each}
             </div>
             <span class="badge gesture">{b.gesture}</span>
+            {#if portalEnforced && isModifiersOnly(b.keys)}
+              <span
+                class="badge unbound"
+                title="Modifiers on their own cannot be registered with your desktop. Edit this binding and add a regular key."
+              >
+                needs a regular key
+              </span>
+            {/if}
             {#if hotkeyStatus?.backend === "portal" && !b.disabled && shortcutByBinding.get(b.id)}
               {@const sc = shortcutByBinding.get(b.id)!}
               {#if !sc.bound}
@@ -728,6 +822,9 @@
                       : "Press your physical shortcut combination now..."}
                   </span>
                 </div>
+                {#if liveCaptureHint}
+                  <span class="text-[11px] text-amber-300/90 mt-1.5">{liveCaptureHint}</span>
+                {/if}
               {:else}
                 <span class="text-[12px] text-obsidian-300 flex flex-col gap-1.5 items-center">
                   {#if editingBinding.keys.length > 0}
@@ -744,6 +841,25 @@
               {/if}
             </div>
           </div>
+
+          {#if keysCheck && !keysCheck.accepted}
+            <div class="keys-rejected" role="alert">
+              <span class="shrink-0">🚫</span>
+              <span>
+                <strong>That combination was not accepted.</strong>
+                {keysCheck.message}
+              </span>
+            </div>
+          {:else if keysCheck && keysCheck.problem}
+            <div class="keys-fragile" role="status">
+              <span class="shrink-0">⚠️</span>
+              <span>{keysCheck.message}</span>
+            </div>
+          {:else if keysCheck?.accelerator && portalEnforced}
+            <span class="keys-accepted">
+              Your desktop will register this as <code>{keysCheck.accelerator}</code>.
+            </span>
+          {/if}
 
           {#if editingBindingConflict}
             <span class="validation-error-msg" style="color: #fbbf24; font-weight: 500; margin-top: 4px;">
@@ -830,6 +946,22 @@
 
 <style>
   @reference "tailwindcss";
+
+  .keys-rejected {
+    @apply flex items-start gap-2 p-2.5 rounded-md bg-red-500/10 border border-red-500/25 text-[12px] leading-relaxed text-red-300;
+  }
+
+  .keys-fragile {
+    @apply flex items-start gap-2 p-2.5 rounded-md bg-amber-500/10 border border-amber-500/25 text-[12px] leading-relaxed text-amber-200;
+  }
+
+  .keys-accepted {
+    @apply text-[11.5px] text-emerald-300/90;
+  }
+
+  .keys-accepted code {
+    @apply bg-white/5 px-1.5 py-0.5 rounded font-mono;
+  }
 
   .hotkeys-section {
     @apply flex flex-col gap-5 pb-10;

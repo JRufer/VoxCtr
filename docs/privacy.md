@@ -154,6 +154,7 @@ sudo unshare -n sudo -u "$USER" ./VoxCtrl-x86_64.AppImage
 **Read the code.** The hotkey crate is about 1,500 lines and self-contained:
 
 - `crates/voxctrl-hotkeys/src/portal.rs` — the portal backend, the whole data path
+- `crates/voxctrl-hotkeys/src/trigger.rs` — what VoxCtrl is allowed to ask a desktop to bind
 - `crates/voxctrl-hotkeys/src/gestures.rs` — gesture recognition, which never sees a key name
 - `crates/voxctrl-hotkeys/src/linux.rs` — the evdev fallback and why it is a fallback
 - `src-tauri/src/installer.rs` — everything the installer does, in one file

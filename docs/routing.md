@@ -307,7 +307,7 @@ Defined in `~/.config/voxctrl/bindings.toml`. Each `[[binding]]` block maps a ke
 |---|---|---|---|
 | `id` | string | required | Unique identifier |
 | `label` | string | `""` | Display name in UI |
-| `keys` | string[] | required | Key names (evdev format, on every platform) |
+| `keys` | string[] | required | Key names (evdev format, on every platform). Any number of modifiers plus exactly one regular key — see [Hotkeys](hotkeys.md#what-can-be-a-shortcut) |
 | `gesture` | string | required | `"hold"`, `"toggle"`, `"double_tap"`, or `"double_tap_hold"` |
 | `target_ids` | string[] | required | Ordered list of targets to route to |
 | `target_id` | string | | Single target (legacy; resolved if `target_ids` is empty) |
@@ -366,7 +366,7 @@ tap_ms = 300
 [[binding]]
 id = "double_tap_hold_dictate"
 label = "Double-Tap & Hold to Dictate"
-keys = ["KEY_LEFTMETA"]
+keys = ["KEY_LEFTMETA", "KEY_SPACE"]
 gesture = "double_tap_hold"
 tap_ms = 300
 hold_threshold_ms = 200

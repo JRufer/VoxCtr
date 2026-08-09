@@ -1193,6 +1193,7 @@ pub fn run() {
             test_openai,
             cuda_enabled,
             check_hotkey_status,
+            check_hotkey_keys,
             install_system_integration,
             get_setup_status,
             download_configured_model,
@@ -1579,6 +1580,98 @@ mod tests {
 
         let _ = std::fs::remove_file(&path_a);
         let _ = std::fs::remove_file(&path_b);
+    }
+
+    #[test]
+    fn bare_modifier_shortcuts_are_refused_on_the_portal() {
+        // The case the settings recorder has to catch. A lone Super reads as a
+        // perfectly good hotkey to a user and no desktop can bind it, so the
+        // rejection has to name the rule and say what to press instead.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_LEFTMETA".to_string()],
+            &health,
+        );
+        assert!(!check.accepted);
+        assert!(check.enforced);
+        assert_eq!(check.problem.as_deref(), Some("modifiers_only"));
+        let message = check.message.expect("a rejection must explain itself");
+        assert!(message.contains("regular key"), "{message}");
+        assert!(
+            message.contains("Super+Space") || message.contains("Ctrl+Alt"),
+            "the user needs an example of what does work: {message}"
+        );
+    }
+
+    #[test]
+    fn a_valid_combination_reports_what_the_desktop_will_bind() {
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_LEFTMETA".to_string(), "KEY_SPACE".to_string()],
+            &health,
+        );
+        assert!(check.accepted);
+        assert_eq!(check.accelerator.as_deref(), Some("LOGO+space"));
+        assert!(check.problem.is_none());
+    }
+
+    #[test]
+    fn bare_modifiers_are_allowed_where_voxctrl_watches_the_keyboard() {
+        // On the evdev fallback a lone Super genuinely works. Refusing it there
+        // would break a working setup to satisfy a constraint that does not
+        // apply — but it is still worth telling the user it is fragile.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Evdev);
+        health.set_keyboards_open(1);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_LEFTMETA".to_string()],
+            &health,
+        );
+        assert!(check.accepted, "this combination works on this machine");
+        assert!(!check.enforced);
+        assert_eq!(check.problem.as_deref(), Some("modifiers_only"));
+        assert!(check
+            .message
+            .expect("an advisory still needs wording")
+            .contains("stop working"));
+    }
+
+    #[test]
+    fn two_regular_keys_are_refused_with_their_own_reason() {
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_A".to_string(), "KEY_B".to_string()],
+            &health,
+        );
+        assert!(!check.accepted);
+        assert_eq!(check.problem.as_deref(), Some("multiple_keys"));
+    }
+
+    #[test]
+    fn validation_is_enforced_before_the_backend_has_answered() {
+        // The portal is the default path, so an unfinished handshake must not
+        // be a window in which an unbindable shortcut can be saved.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        assert_eq!(health.backend(), voxctrl_hotkeys::Backend::Starting);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_LEFTMETA".to_string()],
+            &health,
+        );
+        assert!(!check.accepted);
+        assert!(check.enforced);
     }
 
     #[test]

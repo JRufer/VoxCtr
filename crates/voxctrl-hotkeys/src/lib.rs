@@ -1,6 +1,7 @@
 pub mod gestures;
 mod health;
 mod keys;
+pub mod trigger;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -16,6 +17,7 @@ use voxctrl_routing::HotkeyBinding;
 
 pub use gestures::{GestureEvent, GestureKind};
 pub use health::{Backend, BoundShortcut, ListenerHealth};
+pub use trigger::{accelerator, is_modifier, TriggerProblem};
 
 /// Callback channel: the listener sends GestureEvents to the app coordinator.
 pub type GestureSender = mpsc::UnboundedSender<GestureEvent>;

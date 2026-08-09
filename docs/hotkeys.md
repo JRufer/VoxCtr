@@ -43,11 +43,26 @@ VoxCtrl talks to `org.freedesktop.portal.GlobalShortcuts` over D-Bus:
 
 Supported by KDE Plasma (5.27+), GNOME 48+, and Hyprland (via `xdg-desktop-portal-hyprland`). Compositors that do not implement the interface — Sway and most other wlroots compositors as of writing — fall through to the section below.
 
-#### Bare modifiers
+#### What can be a shortcut
 
-A shortcut like "double-tap Super" has no accelerator in the XDG shortcuts syntax — a lone modifier is not a valid accelerator. VoxCtrl registers those shortcuts with no preferred trigger, which asks the portal to let *you* pick the keys in your desktop's own dialog. The Hotkeys tab then shows what your desktop assigned.
+An accelerator is **any number of modifiers plus exactly one regular key**. `Super+Space`, `Ctrl+Alt+D` and `F5` are all fine.
 
-If your desktop refuses the shortcut entirely, the binding is flagged **not bound by your desktop** in the Hotkeys tab. Choose a combination with a regular key in it (for example `Super+Space` rather than `Super` alone), or assign it in your desktop's shortcut settings.
+Two shapes are not accelerators, and no desktop can bind them:
+
+- **Modifiers alone** — a lone Super, or Ctrl+Shift with nothing else. This is the one that catches people out, because "double-tap Super" feels like a perfectly ordinary hotkey.
+- **Two regular keys** — `A+B`. Use modifiers for everything but the last key.
+
+The key recorder in Settings → Hotkeys **refuses these while you are recording** and says why, rather than saving something that silently never fires. It nudges you as soon as you are holding modifiers with no regular key yet, so you can add one without lifting your fingers, and it shows the accelerator your desktop will receive (`LOGO+space`) once the combination is valid. A refused capture leaves your existing shortcut untouched.
+
+The rule is defined once, in `crates/voxctrl-hotkeys/src/trigger.rs`, and the settings UI validates against it over IPC — so what the recorder accepts and what the portal can register cannot drift apart.
+
+On the evdev fallback and on Windows, VoxCtrl watches the keys itself and a bare modifier genuinely works. There the recorder accepts it and shows a note that it will stop working if shortcut delivery ever moves to the portal, rather than blocking something that works on your machine today.
+
+#### Bindings from older versions
+
+A binding saved before this rule existed is not deleted and not silently broken. It is flagged **needs a regular key** in the Hotkeys tab, and VoxCtrl still registers it with the portal without a preferred trigger — which asks your desktop to let you pick the keys in its own settings. Editing the binding and choosing a valid combination is the clean fix.
+
+If your desktop refuses a shortcut for any other reason, the binding is flagged **not bound by your desktop**.
 
 ### Linux — evdev fallback
 
@@ -79,7 +94,7 @@ A dictation app should not be the reason your machine's security posture changes
 
 - **VoxCtrl never writes that rule, and never runs `usermod -aG input`.** Not at install, not on first launch, not from any button in the UI.
 - If your desktop has no shortcuts portal, VoxCtrl **tells you at launch** and explains the trade-off, rather than quietly widening access.
-- Nothing is removed from a machine that already has the rule from an older version — VoxCtrl just stops depending on it. If you want it gone, delete `/etc/udev/rules.d/99-voxctrl.rules` and remove yourself from the `input` group.
+- On a machine that still has the rule from an older version, `install.sh` and `scripts/uninstall.sh` **remove** it, so upgrading narrows access rather than leaving it wide open. To do it by hand: delete `/etc/udev/rules.d/99-voxctrl.rules`, reload udev, and drop yourself from the `input` group with `sudo gpasswd -d $USER input`.
 
 Administrator rights are still requested for one thing: installing host packages such as `wtype` and `xdotool`, which are what type the transcription into your focused window. That step touches no permissions.
 

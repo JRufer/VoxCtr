@@ -312,7 +312,7 @@ target_ids = ["default", "notes"]            # Sequential delivery to both targe
 [[binding]]
 id = "double_tap_dictation"
 label = "Double-Tap & Hold to Dictate"
-keys = ["KEY_LEFTMETA"]
+keys = ["KEY_LEFTMETA", "KEY_SPACE"]
 gesture = "double_tap_hold"
 tap_ms = 300                                 # Gap allowed between the two taps
 hold_threshold_ms = 200                      # Hold on the second tap before recording

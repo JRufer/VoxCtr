@@ -6,10 +6,12 @@ import type { HotkeyBinding, OutputTarget } from "../../src/lib/Settings/routing
 let mockBindings: HotkeyBinding[] = [];
 let mockTargets: OutputTarget[] = [];
 let mockHotkeyStatus: Record<string, unknown> = {};
+let mockKeysChecks: Array<Record<string, unknown>> = [];
+let keysCheckCalls: string[][] = [];
 
 // Mock tauri invoke
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn(async (cmd) => {
+  invoke: vi.fn(async (cmd, args) => {
     if (cmd === "get_targets") {
       return mockTargets;
     }
@@ -19,9 +21,24 @@ vi.mock("@tauri-apps/api/core", () => ({
     if (cmd === "check_hotkey_status") {
       return mockHotkeyStatus;
     }
+    if (cmd === "check_hotkey_keys") {
+      keysCheckCalls.push([...((args as { keys: string[] })?.keys ?? [])]);
+      return mockKeysChecks.shift() ?? { accepted: true, enforced: false, accelerator: null, problem: null, message: null };
+    }
     return {};
   }),
 }));
+
+/// The backend's verdict for a combination the desktop cannot register.
+function rejected(message: string) {
+  return {
+    accepted: false,
+    enforced: true,
+    accelerator: null,
+    problem: "modifiers_only",
+    message,
+  };
+}
 
 function hotkeyStatus(overrides: Record<string, unknown> = {}) {
   return {
@@ -56,6 +73,195 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     ];
     mockBindings = [];
     mockHotkeyStatus = hotkeyStatus();
+    mockKeysChecks = [];
+    keysCheckCalls = [];
+  });
+
+  test("refuses a bare-modifier capture and says why", async () => {
+    // A lone Super looks like a perfectly good hotkey to a user, and no desktop
+    // can bind it. Discovering that later, silently, is the failure this
+    // prevents.
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_D"],
+        gesture: "double_tap",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Dictate",
+        disabled: false,
+      },
+    ];
+    mockKeysChecks = [
+      rejected(
+        "Your desktop cannot register this shortcut: a shortcut needs at least one regular key. Add a regular key to the combination — Super+Space and Ctrl+Alt+D both work.",
+      ),
+    ];
+
+    const { container } = render(HotkeysTab);
+    const editBtn = await screen.findByRole("button", { name: /Edit/i });
+    await fireEvent.click(editBtn);
+
+    const recorder = container.querySelector('[aria-label="Base Hotkey recorder input"]')!;
+    await fireEvent.focus(recorder);
+    await fireEvent.keyDown(recorder, { key: "Meta", code: "MetaLeft" });
+    await fireEvent.keyUp(recorder, { key: "Meta", code: "MetaLeft" });
+
+    expect(await screen.findByText(/That combination was not accepted/i)).toBeTruthy();
+    expect(await screen.findByText(/needs at least one regular key/i)).toBeTruthy();
+    expect(keysCheckCalls).toEqual([["KEY_LEFTMETA"]]);
+  });
+
+  test("keeps the previous combination when a capture is refused", async () => {
+    // Rejecting must not also destroy the working shortcut the user already had.
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_D"],
+        gesture: "hold",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Dictate",
+        disabled: false,
+      },
+    ];
+    mockKeysChecks = [rejected("Your desktop cannot register this shortcut.")];
+
+    const { container } = render(HotkeysTab);
+    await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+
+    const recorder = container.querySelector('[aria-label="Base Hotkey recorder input"]')!;
+    await fireEvent.focus(recorder);
+    await fireEvent.keyDown(recorder, { key: "Shift", code: "ShiftLeft" });
+    await fireEvent.keyUp(recorder, { key: "Shift", code: "ShiftLeft" });
+
+    await screen.findByText(/not accepted/i);
+    // Chips render the evdev name minus the KEY_ prefix.
+    for (const key of ["LEFTCTRL", "LEFTALT", "D"]) {
+      expect(screen.getAllByText(key).length).toBeGreaterThan(0);
+    }
+    expect(screen.queryByText("LEFTSHIFT")).toBeNull();
+  });
+
+  test("accepts a valid combination and shows what the desktop will bind", async () => {
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_D"],
+        gesture: "hold",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Dictate",
+        disabled: false,
+      },
+    ];
+    mockKeysChecks = [
+      { accepted: true, enforced: false, accelerator: "LOGO+space", problem: null, message: null },
+    ];
+
+    const { container } = render(HotkeysTab);
+    await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+
+    const recorder = container.querySelector('[aria-label="Base Hotkey recorder input"]')!;
+    await fireEvent.focus(recorder);
+    await fireEvent.keyDown(recorder, { key: "Meta", code: "MetaLeft" });
+    await fireEvent.keyDown(recorder, { key: " ", code: "Space" });
+    await fireEvent.keyUp(recorder, { key: " ", code: "Space" });
+
+    expect(await screen.findByText("LOGO+space")).toBeTruthy();
+    expect(screen.queryByText(/not accepted/i)).toBeNull();
+    expect(keysCheckCalls).toEqual([["KEY_LEFTMETA", "KEY_SPACE"]]);
+  });
+
+  test("nudges the user while only modifiers are held", async () => {
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_D"],
+        gesture: "hold",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Dictate",
+        disabled: false,
+      },
+    ];
+
+    const { container } = render(HotkeysTab);
+    await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+
+    const recorder = container.querySelector('[aria-label="Base Hotkey recorder input"]')!;
+    await fireEvent.focus(recorder);
+    await fireEvent.keyDown(recorder, { key: "Meta", code: "MetaLeft" });
+
+    // Told before they lift the key, not after the capture is thrown away.
+    expect(await screen.findByText(/add a regular key/i)).toBeTruthy();
+  });
+
+  test("flags a saved binding the desktop cannot register", async () => {
+    // Bindings from an older VoxCtrl are not silently broken — they are named.
+    mockBindings = [
+      {
+        id: "legacy",
+        keys: ["KEY_LEFTMETA"],
+        gesture: "double_tap",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Legacy Super Tap",
+        disabled: false,
+      },
+    ];
+
+    render(HotkeysTab);
+
+    expect(await screen.findByText(/needs a regular key/i)).toBeTruthy();
+  });
+
+  test("does not block bare modifiers when VoxCtrl watches the keyboard itself", async () => {
+    // On the evdev fallback a lone Super genuinely works, so refusing it would
+    // be wrong — but it is still worth saying it is fragile.
+    mockHotkeyStatus = hotkeyStatus({
+      backend: "evdev",
+      is_private: false,
+      detail: "VoxCtrl is reading input devices directly.",
+    });
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_D"],
+        gesture: "hold",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Dictate",
+        disabled: false,
+      },
+    ];
+    mockKeysChecks = [
+      {
+        accepted: true,
+        enforced: false,
+        accelerator: null,
+        problem: "modifiers_only",
+        message: "This works right now, because VoxCtrl is watching the keyboard itself.",
+      },
+    ];
+
+    const { container } = render(HotkeysTab);
+    await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+
+    const recorder = container.querySelector('[aria-label="Base Hotkey recorder input"]')!;
+    await fireEvent.focus(recorder);
+    await fireEvent.keyDown(recorder, { key: "Meta", code: "MetaLeft" });
+    await fireEvent.keyUp(recorder, { key: "Meta", code: "MetaLeft" });
+
+    expect(await screen.findByText(/watching the keyboard itself/i)).toBeTruthy();
+    expect(screen.queryByText(/not accepted/i)).toBeNull();
+    expect(screen.getAllByText("LEFTMETA").length).toBeGreaterThan(0);
   });
 
   test("offers only the four supported gestures", async () => {

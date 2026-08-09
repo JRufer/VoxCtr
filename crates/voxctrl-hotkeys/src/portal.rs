@@ -21,6 +21,7 @@ use voxctrl_routing::HotkeyBinding;
 
 use crate::{
     gestures::{GestureEngine, Transition},
+    trigger::portal_trigger,
     BoundShortcut, GestureSender, ListenerHealth, ReloaderReceiver,
 };
 
@@ -97,113 +98,6 @@ fn shortcut_id(signature: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
     format!("voxctrl_{slug}")
-}
-
-/// Translate evdev key names into the accelerator syntax of the XDG shortcuts
-/// specification (`CTRL+SHIFT+a`).
-///
-/// Returns `None` when the combination cannot be expressed — most importantly
-/// for a bare modifier such as a lone Super, which is not a valid accelerator.
-/// The portal treats a missing preferred trigger as "ask the user", so those
-/// bindings still work; the compositor just picks the keys instead of VoxCtrl.
-pub fn portal_trigger(keys: &[String]) -> Option<String> {
-    let mut modifiers: Vec<&str> = Vec::new();
-    let mut key: Option<String> = None;
-
-    for k in keys {
-        match modifier_name(k) {
-            Some(m) => {
-                if !modifiers.contains(&m) {
-                    modifiers.push(m);
-                }
-            }
-            None => {
-                let named = keysym_name(k)?;
-                if key.is_some() {
-                    // Two non-modifier keys is not an accelerator.
-                    return None;
-                }
-                key = Some(named);
-            }
-        }
-    }
-
-    let key = key?;
-    // Canonical order, so the same combo always produces the same string.
-    let mut parts: Vec<&str> = Vec::new();
-    for m in ["CTRL", "ALT", "SHIFT", "LOGO"] {
-        if modifiers.contains(&m) {
-            parts.push(m);
-        }
-    }
-    let mut out = parts.join("+");
-    if !out.is_empty() {
-        out.push('+');
-    }
-    out.push_str(&key);
-    Some(out)
-}
-
-fn modifier_name(key: &str) -> Option<&'static str> {
-    match key {
-        "KEY_LEFTCTRL" | "KEY_RIGHTCTRL" => Some("CTRL"),
-        "KEY_LEFTALT" | "KEY_RIGHTALT" => Some("ALT"),
-        "KEY_LEFTSHIFT" | "KEY_RIGHTSHIFT" => Some("SHIFT"),
-        "KEY_LEFTMETA" | "KEY_RIGHTMETA" => Some("LOGO"),
-        _ => None,
-    }
-}
-
-/// evdev name → XKB keysym name, as the shortcuts specification expects.
-fn keysym_name(key: &str) -> Option<String> {
-    let name = key.strip_prefix("KEY_")?;
-    let sym = match name {
-        "SPACE" => "space".to_string(),
-        "ENTER" | "KPENTER" => "Return".to_string(),
-        "TAB" => "Tab".to_string(),
-        "ESC" | "ESCAPE" => "Escape".to_string(),
-        "BACKSPACE" => "BackSpace".to_string(),
-        "DELETE" => "Delete".to_string(),
-        "INSERT" => "Insert".to_string(),
-        "HOME" => "Home".to_string(),
-        "END" => "End".to_string(),
-        "PAGEUP" => "Prior".to_string(),
-        "PAGEDOWN" => "Next".to_string(),
-        "UP" => "Up".to_string(),
-        "DOWN" => "Down".to_string(),
-        "LEFT" => "Left".to_string(),
-        "RIGHT" => "Right".to_string(),
-        "MINUS" => "minus".to_string(),
-        "EQUAL" => "equal".to_string(),
-        "COMMA" => "comma".to_string(),
-        "DOT" => "period".to_string(),
-        "SLASH" => "slash".to_string(),
-        "SEMICOLON" => "semicolon".to_string(),
-        "APOSTROPHE" => "apostrophe".to_string(),
-        "GRAVE" => "grave".to_string(),
-        "BACKSLASH" => "backslash".to_string(),
-        "LEFTBRACE" => "bracketleft".to_string(),
-        "RIGHTBRACE" => "bracketright".to_string(),
-        "CAPSLOCK" => "Caps_Lock".to_string(),
-        _ => {
-            if let Some(n) = name.strip_prefix('F') {
-                if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) {
-                    return Some(format!("F{n}"));
-                }
-            }
-            if name.len() == 1 {
-                let c = name.chars().next()?;
-                if c.is_ascii_alphabetic() {
-                    return Some(c.to_ascii_lowercase().to_string());
-                }
-                if c.is_ascii_digit() {
-                    return Some(c.to_string());
-                }
-            }
-            return None;
-        }
-    };
-    Some(sym)
 }
 
 /// Bring up a portal session and start dispatching shortcuts into `tx`.
@@ -416,55 +310,6 @@ mod tests {
             openai_prompt: None,
             openai_system_prompt: None,
         }
-    }
-
-    fn keys(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn combos_translate_to_accelerator_syntax() {
-        assert_eq!(
-            portal_trigger(&keys(&["KEY_LEFTMETA", "KEY_SPACE"])).as_deref(),
-            Some("LOGO+space")
-        );
-        assert_eq!(
-            portal_trigger(&keys(&["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_D"])).as_deref(),
-            Some("CTRL+ALT+d")
-        );
-        assert_eq!(
-            portal_trigger(&keys(&["KEY_F5"])).as_deref(),
-            Some("F5")
-        );
-    }
-
-    #[test]
-    fn modifier_order_does_not_change_the_trigger() {
-        assert_eq!(
-            portal_trigger(&keys(&["KEY_SPACE", "KEY_LEFTMETA"])),
-            portal_trigger(&keys(&["KEY_LEFTMETA", "KEY_SPACE"])),
-        );
-    }
-
-    #[test]
-    fn left_and_right_modifiers_are_the_same_accelerator() {
-        assert_eq!(
-            portal_trigger(&keys(&["KEY_RIGHTCTRL", "KEY_A"])).as_deref(),
-            Some("CTRL+a")
-        );
-    }
-
-    #[test]
-    fn a_bare_modifier_has_no_accelerator() {
-        // Not a failure: the portal asks the user to choose instead, which is
-        // the only way a lone Super can ever be a global shortcut.
-        assert!(portal_trigger(&keys(&["KEY_LEFTMETA"])).is_none());
-        assert!(portal_trigger(&keys(&["KEY_LEFTCTRL", "KEY_LEFTSHIFT"])).is_none());
-    }
-
-    #[test]
-    fn two_non_modifier_keys_have_no_accelerator() {
-        assert!(portal_trigger(&keys(&["KEY_A", "KEY_B"])).is_none());
     }
 
     #[test]
