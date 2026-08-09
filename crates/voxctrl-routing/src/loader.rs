@@ -124,8 +124,6 @@ struct RawBinding {
     #[serde(default = "default_hold_ms")]
     hold_threshold_ms: u32,
     #[serde(default)]
-    subkey: Option<String>,
-    #[serde(default)]
     disabled: bool,
     #[serde(default, alias = "ollama_enabled")]
     openai_enabled: Option<bool>,
@@ -150,7 +148,8 @@ fn default_file_mode() -> String {
 }
 use crate::models::{default_chat_max_history, default_chat_reply_mode, default_chat_timeout_secs};
 fn default_tap_ms() -> u32 {
-    250
+    // Keep in sync with models::default_tap_ms.
+    300
 }
 fn default_hold_ms() -> u32 {
     // Keep in sync with models::default_hold_threshold_ms — 200ms debounces
@@ -354,7 +353,18 @@ fn raw_to_binding(r: RawBinding) -> HotkeyBinding {
         "toggle" => GestureType::Toggle,
         "double_tap" => GestureType::DoubleTap,
         "double_tap_hold" => GestureType::DoubleTapHold,
-        "chord" => GestureType::Chord,
+        // `chord` was removed. Its base keys already live in `keys`, and its
+        // start/stop semantics (hold the base combo, release to stop) are what
+        // `hold` does — so an existing binding keeps working instead of
+        // vanishing from the user's config. The `subkey` field is simply
+        // dropped: serde ignores it on read and it is no longer written back.
+        "chord" => {
+            tracing::info!(
+                binding = %r.id,
+                "The `chord` gesture was removed; migrating this binding to `hold`"
+            );
+            GestureType::Hold
+        }
         _ => GestureType::Hold,
     };
     let target_ids = if let Some(ref ids) = r.target_ids {
@@ -375,7 +385,6 @@ fn raw_to_binding(r: RawBinding) -> HotkeyBinding {
         target_ids,
         tap_ms: r.tap_ms,
         hold_threshold_ms: r.hold_threshold_ms,
-        subkey: r.subkey,
         disabled: r.disabled,
         openai_enabled: r.openai_enabled,
         openai_model: r.openai_model,
@@ -390,7 +399,6 @@ fn binding_to_raw(b: &HotkeyBinding) -> RawBinding {
         GestureType::Toggle => "toggle",
         GestureType::DoubleTap => "double_tap",
         GestureType::DoubleTapHold => "double_tap_hold",
-        GestureType::Chord => "chord",
         GestureType::Hold => "hold",
     };
     let target_id = b.target_ids.first().cloned().unwrap_or_else(|| b.target_id.clone());
@@ -403,7 +411,6 @@ fn binding_to_raw(b: &HotkeyBinding) -> RawBinding {
         target_ids: Some(b.target_ids.clone()),
         tap_ms: b.tap_ms,
         hold_threshold_ms: b.hold_threshold_ms,
-        subkey: b.subkey.clone(),
         disabled: b.disabled,
         openai_enabled: b.openai_enabled,
         openai_model: b.openai_model.clone(),
@@ -428,9 +435,8 @@ pub fn default_bindings() -> Vec<HotkeyBinding> {
             gesture: GestureType::Hold,
             target_id: "default".into(),
             target_ids: vec!["default".into()],
-            tap_ms: 250,
+            tap_ms: 300,
             hold_threshold_ms: 200,
-            subkey: None,
             disabled: false,
             openai_enabled: Some(false),
             openai_model: None,
@@ -449,9 +455,8 @@ pub fn default_bindings() -> Vec<HotkeyBinding> {
             gesture: GestureType::Toggle,
             target_id: "default".into(),
             target_ids: vec!["default".into()],
-            tap_ms: 250,
+            tap_ms: 300,
             hold_threshold_ms: 200,
-            subkey: None,
             disabled: false,
             openai_enabled: Some(false),
             openai_model: None,

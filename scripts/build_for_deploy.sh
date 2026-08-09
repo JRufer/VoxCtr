@@ -79,8 +79,6 @@ chmod +x "${BUNDLE_DIR}/install.sh"
 
 # Scripts needed by install.sh at runtime
 mkdir -p "${BUNDLE_DIR}/scripts"
-cp "scripts/setup-permissions.sh" "${BUNDLE_DIR}/scripts/"
-chmod +x "${BUNDLE_DIR}/scripts/setup-permissions.sh"
 
 # Icon (used by install.sh for the desktop entry)
 mkdir -p "${BUNDLE_DIR}/assets"
@@ -98,7 +96,6 @@ step "Verifying bundle contents"
 REQUIRED_FILES=(
     "${APPIMAGE_FILE}"
     "install.sh"
-    "scripts/setup-permissions.sh"
     "assets/app_icon.png"
 )
 

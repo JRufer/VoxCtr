@@ -16,6 +16,10 @@ crossbeam-channel = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.12"
+# The XDG GlobalShortcuts portal: the compositor owns the key grab, so VoxCtrl
+# receives its own shortcuts and never reads a keyboard device.
+ashpd = { workspace = true }
+futures-util = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # rdev provides global hotkey listening on Windows

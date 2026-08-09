@@ -9459,8 +9459,10 @@ name = "voxctrl-hotkeys"
 version = "0.3.2"
 dependencies = [
  "anyhow",
+ "ashpd",
  "crossbeam-channel",
  "evdev",
+ "futures-util",
  "rdev",
  "serde",
  "thiserror 2.0.18",

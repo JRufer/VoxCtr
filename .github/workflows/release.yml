@@ -342,7 +342,8 @@ jobs:
             ### Linux CPU / GPU — first run
             ```bash
             chmod +x VoxCtrl_*-linux-x86_64*.AppImage
-            # Run the built-in host setup (configures evdev global hotkeys and udev permissions)
+            # Optional: installs the desktop entry and text-injection helpers.
+            # Global shortcuts need no permissions — your desktop handles them.
             ./VoxCtrl_*-linux-x86_64*.AppImage --install
             # Launch the application
             ./VoxCtrl_*-linux-x86_64*.AppImage

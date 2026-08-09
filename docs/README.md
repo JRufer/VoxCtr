@@ -2,6 +2,8 @@
 
 VoxCtrl is a high-performance, privacy-first voice-to-text dictation application and programmable voice input broker. All processing happens 100% on-device with zero telemetry or cloud dependencies.
 
+Global shortcuts are registered with your desktop through the XDG `GlobalShortcuts` portal, so **VoxCtrl does not read your keyboard** and needs no permission setup at all. See [Privacy & Security](./privacy.md) for exactly what it can see and how to verify it.
+
 ---
 
 ## Wiki Index
@@ -9,11 +11,12 @@ VoxCtrl is a high-performance, privacy-first voice-to-text dictation application
 | Document | Description |
 |---|---|
 | [Overview](./overview.md) | What VoxCtrl does, key features, and design principles |
+| [Privacy & Security](./privacy.md) | What VoxCtrl can see, what the installer touches, and how to verify both |
 | [Architecture](./architecture.md) | System design, crate layout, data flow, concurrency model |
 | [Audio Pipeline](./audio.md) | Audio capture, device management, VAD, resampling |
 | [Speech Recognition](./speech-recognition.md) | Whisper engine, models, inference pipeline, post-processing |
 | [Routing](./routing.md) | Output targets, hotkey bindings, delivery types |
-| [Hotkeys](./hotkeys.md) | Global hotkey listener, gestures, platform support |
+| [Hotkeys](./hotkeys.md) | Global shortcuts via the desktop portal, gestures, platform support |
 | [Text-to-Speech](./tts.md) | TTS engines, voice packs, playback |
 | [Integrations](./integrations.md) | MCP server, DBus service, OpenAI-compatible LLM API, webhooks |
 | [UI & Windows](./ui.md) | Svelte frontend, overlay, history viewer, settings |

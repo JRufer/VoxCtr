@@ -39,7 +39,7 @@ VoxCtrl/
 └── crates/
     ├── voxctrl-config/     # AppConfig struct, TOML/JSON persistence
     ├── voxctrl-audio/      # Microphone capture, resampling, VU meter
-    ├── voxctrl-hotkeys/    # Global key listener (evdev / Win32)
+    ├── voxctrl-hotkeys/    # Global shortcuts (XDG portal / evdev / Win32)
     ├── voxctrl-inference/  # whisper.cpp/Moonshine transcription + post-processing
     ├── voxctrl-routing/    # OutputTarget + HotkeyBinding data models, router
     ├── voxctrl-inject/     # Text injection via wtype/xdotool/clipboard
@@ -120,7 +120,7 @@ VoxCtrl uses Tokio for async I/O plus dedicated OS threads for latency-sensitive
 | Main Tauri thread | OS thread | Window management, IPC dispatch |
 | Audio capture | OS thread (cpal) | Microphone streaming at hardware rate |
 | Audio level emitter | Tokio task | Forwards RMS levels to UI every ~50ms |
-| Hotkey listener | OS thread | evdev/Win32 event loop |
+| Hotkey listener | async task + OS threads | XDG GlobalShortcuts portal, with an evdev/Win32 fallback |
 | Inference worker | OS thread | Blocking Whisper computation; `WhisperState` (KV cache + attention buffers) is allocated once at load and reused across all calls |
 | Status ticker | Tokio task | Emits `status-tick` events every 250ms |
 | Config watcher | Tokio task | `inotify`/`kqueue` on config files |

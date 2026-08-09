@@ -610,12 +610,11 @@ interface HotkeyBinding {
   id: string;
   label: string;
   keys: string[];
-  gesture: "hold" | "toggle" | "double_tap" | "double_tap_hold" | "chord";
+  gesture: "hold" | "toggle" | "double_tap" | "double_tap_hold";
   target_id: string;
   target_ids: string[];
   tap_ms: number;           // default: 250
   hold_threshold_ms: number;// default: 200
-  subkey?: string;          // Optional subkey trigger for chord gesture
   disabled: boolean;
   openai_enabled?: boolean;       // legacy alias: ollama_enabled
   openai_model?: string;          // legacy alias: ollama_model

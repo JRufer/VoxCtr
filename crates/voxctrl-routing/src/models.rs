@@ -4,14 +4,13 @@ use serde::{Deserialize, Serialize};
 
 // ── Gesture types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GestureType {
     Hold,
     Toggle,
     DoubleTap,
     DoubleTapHold,
-    Chord,
 }
 
 // ── Hotkey binding ────────────────────────────────────────────────────────────
@@ -30,8 +29,6 @@ pub struct HotkeyBinding {
     pub hold_threshold_ms: u32,
     #[serde(default)]
     pub label: String,
-    #[serde(default)]
-    pub subkey: Option<String>,
     #[serde(default)]
     pub disabled: bool,
     #[serde(default, alias = "ollama_enabled")]
@@ -58,10 +55,27 @@ impl HotkeyBinding {
     pub fn target_ids_string(&self) -> String {
         self.resolved_target_ids().join(",")
     }
+
+    /// Stable identity of the key combination this binding listens for,
+    /// independent of the order the keys were captured in.
+    ///
+    /// Two bindings that share a signature share a physical trigger, which is
+    /// what lets `double_tap` and `double_tap_hold` coexist on one key and what
+    /// lets the portal backend register a single system shortcut for both.
+    pub fn trigger_signature(&self) -> String {
+        let mut keys = self.keys.clone();
+        keys.sort();
+        keys.dedup();
+        keys.join("+")
+    }
 }
 
 fn default_tap_ms() -> u32 {
-    250
+    // Gap allowed between releasing the first tap and pressing the second.
+    // 250ms was tight enough that a deliberate but unhurried double-tap missed;
+    // desktop double-click windows are typically 400-500ms, so this stays on
+    // the responsive side of convention without punishing a slower tap.
+    300
 }
 fn default_hold_threshold_ms() -> u32 {
     // Minimum press duration before a Hold gesture starts recording. Long

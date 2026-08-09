@@ -5,6 +5,7 @@ import type { HotkeyBinding, OutputTarget } from "../../src/lib/Settings/routing
 
 let mockBindings: HotkeyBinding[] = [];
 let mockTargets: OutputTarget[] = [];
+let mockHotkeyStatus: Record<string, unknown> = {};
 
 // Mock tauri invoke
 vi.mock("@tauri-apps/api/core", () => ({
@@ -15,9 +16,28 @@ vi.mock("@tauri-apps/api/core", () => ({
     if (cmd === "get_bindings") {
       return mockBindings;
     }
+    if (cmd === "check_hotkey_status") {
+      return mockHotkeyStatus;
+    }
     return {};
   }),
 }));
+
+function hotkeyStatus(overrides: Record<string, unknown> = {}) {
+  return {
+    is_active: true,
+    backend: "portal",
+    is_private: true,
+    portal_error: null,
+    shortcuts: [],
+    session_type: "wayland",
+    devices_total: 0,
+    devices_readable: 0,
+    needs_attention: false,
+    detail: "Your desktop is handling VoxCtrl's global shortcuts.",
+    ...overrides,
+  };
+}
 
 describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
   beforeEach(() => {
@@ -35,6 +55,117 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
       },
     ];
     mockBindings = [];
+    mockHotkeyStatus = hotkeyStatus();
+  });
+
+  test("offers only the four supported gestures", async () => {
+    // `chord` was removed; it must not reappear as a selectable option.
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTMETA"],
+        gesture: "double_tap",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Tap",
+        disabled: false,
+      },
+    ];
+
+    render(HotkeysTab);
+    const editBtn = await screen.findByRole("button", { name: /Edit/i });
+    await fireEvent.click(editBtn);
+    expect(screen.getByText("Edit Hotkey Binding")).not.toBeNull();
+
+    expect(screen.queryByText(/chord/i)).toBeNull();
+    expect(screen.queryByText(/sub ?key/i)).toBeNull();
+    expect(screen.queryByText(/Base Combo/i)).toBeNull();
+    expect(
+      await screen.findByText(/Double-tap hotkey to trigger recording/i),
+    ).toBeTruthy();
+  });
+
+  test("tells the user their desktop owns the shortcut keys", async () => {
+    render(HotkeysTab);
+
+    expect(
+      await screen.findByText("Your desktop is handling these shortcuts"),
+    ).toBeTruthy();
+    expect(await screen.findByText(/Your desktop decides which keys/i)).toBeTruthy();
+  });
+
+  test("shows the keys the compositor actually bound, not the ones requested", async () => {
+    // The portal lets the user pick different keys, and the app must show
+    // what is really in effect rather than what it asked for.
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTMETA", "KEY_SPACE"],
+        gesture: "hold",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Dictate",
+        disabled: false,
+      },
+    ];
+    mockHotkeyStatus = hotkeyStatus({
+      shortcuts: [
+        {
+          binding_ids: ["bind1"],
+          requested: "LOGO+space",
+          trigger_description: "Ctrl+Alt+D",
+          bound: true,
+        },
+      ],
+    });
+
+    render(HotkeysTab);
+
+    expect(await screen.findByText(/desktop: Ctrl\+Alt\+D/)).toBeTruthy();
+  });
+
+  test("flags a shortcut the desktop refused to bind", async () => {
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTMETA"],
+        gesture: "double_tap",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Dictate",
+        disabled: false,
+      },
+    ];
+    mockHotkeyStatus = hotkeyStatus({
+      shortcuts: [
+        {
+          binding_ids: ["bind1"],
+          requested: null,
+          trigger_description: "",
+          bound: false,
+        },
+      ],
+    });
+
+    render(HotkeysTab);
+
+    expect(await screen.findByText(/not bound by your desktop/i)).toBeTruthy();
+  });
+
+  test("warns when shortcuts come from reading input devices", async () => {
+    mockHotkeyStatus = hotkeyStatus({
+      backend: "evdev",
+      is_private: false,
+      portal_error: "no such interface",
+      detail: "VoxCtrl is reading input devices directly.",
+    });
+
+    render(HotkeysTab);
+
+    expect(await screen.findByText("Reading input devices directly")).toBeTruthy();
   });
 
   test("does not show conflict warnings when there are no conflicts", async () => {

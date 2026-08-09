@@ -4,7 +4,7 @@
 # Configures the host environment to run the portable AppImage natively:
 # 1. Installs system runtime dependencies (PortAudio, WebKitGTK, espeak-ng, tools).
 # 2. Ensures the portable AppImage exists (compiling if missing).
-# 3. Establishes hardware udev permissions for evdev global hotkeys.
+# 3. Removes the udev rule older versions installed (no longer needed).
 # 4. Integrates the AppImage into the desktop launcher (~/.local/share/applications/).
 
 set -euo pipefail
@@ -234,66 +234,45 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 3. Udev Rules Setup for evdev Hotkeys
+# 3. Global shortcuts — nothing to configure
 # ══════════════════════════════════════════════════════════════════════════════
-step "Configuring Hardware Permissions (udev)"
+step "Global Shortcuts"
 
-UDEV_RULE_PATH="/etc/udev/rules.d/99-voxctrl.rules"
-
-# The `uaccess` tag is what removes the "log out and log back in" step:
-# systemd-logind grants the user of the active local session an ACL on these
-# devices as soon as the rules are reloaded and the devices re-triggered.
-# The rule is rewritten unconditionally so an upgrade from a VoxCtrl version
-# that shipped the group-only rule actually picks up the new behaviour.
-info "Setting up udev rules for global hotkeys (requires sudo)..."
-sudo tee "$UDEV_RULE_PATH" > /dev/null <<'EOF'
-# Installed by VoxCtrl — global hotkey and input access.
+# VoxCtrl registers its shortcuts with the desktop through the XDG
+# GlobalShortcuts portal. The compositor owns the key grab and tells VoxCtrl
+# only that its own shortcut fired, so there is no permission to grant.
 #
-# uaccess grants the user of the ACTIVE local session an ACL on these devices,
-# applied immediately by systemd-logind on `udevadm trigger`. This is why
-# VoxCtrl does not require logging out after setup, and it is narrower than
-# permanent `input` group membership: access follows the seat, not the account.
-SUBSYSTEM=="input", KERNEL=="event*", TAG+="uaccess"
+# This installer used to write /etc/udev/rules.d/99-voxctrl.rules, tagging every
+# input device with `uaccess`. That rule lets EVERY process running as this user
+# read EVERY keystroke on the system — not just VoxCtrl. systemd grants that tag
+# to joysticks and nothing else by default, for exactly this reason. VoxCtrl no
+# longer creates it, and no longer needs it.
+ok "No keyboard permissions needed — your desktop handles VoxCtrl's shortcuts."
+info "VoxCtrl cannot read your keyboard; it is only told when its own shortcut fires."
 
-# Virtual keyboard device used for synthetic keystroke injection.
-KERNEL=="uinput", SUBSYSTEM=="misc", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput", TAG+="uaccess"
-EOF
-sudo chmod 0644 "$UDEV_RULE_PATH"
-
-info "Reloading udev rules..."
-sudo udevadm control --reload-rules || true
-sudo udevadm trigger --subsystem-match=input --action=change || true
-sudo udevadm trigger --subsystem-match=misc --action=change || true
-ok "udev rules configured successfully."
-
-# Fallback for systems without logind, where the ACL above is not applied.
-if ! id -Gn "$USER" | tr ' ' '\n' | grep -qx input; then
-    info "Adding user '$USER' to 'input' group as a fallback..."
-    sudo usermod -aG input "$USER" || true
-else
-    ok "User is already in the 'input' group."
-fi
-
-# Report what is actually true rather than assuming the worst.
-HOTKEYS_LIVE=false
-for dev in /dev/input/event*; do
-    [ -r "$dev" ] && HOTKEYS_LIVE=true && break
+# Clean up the rules older VoxCtrl versions installed, so an upgrade actually
+# narrows access instead of leaving it wide open.
+LEGACY_RULES=(
+    "/etc/udev/rules.d/99-voxctrl.rules"
+    "/etc/udev/rules.d/99-voxctr.rules"
+    "/etc/udev/rules.d/99-voxctl.rules"
+)
+FOUND_LEGACY=()
+for rule in "${LEGACY_RULES[@]}"; do
+    [ -f "$rule" ] && FOUND_LEGACY+=("$rule")
 done
-if [ "$HOTKEYS_LIVE" = true ]; then
-    ok "Keyboard access is live — no logout required."
-else
-    warn "Keyboard access is not active in this shell yet. VoxCtrl picks it up on"
-    warn "its next start; only if that also fails do you need to log out."
-fi
-
-# Remove legacy rules if they exist to keep system clean
-if [ -f "/etc/udev/rules.d/99-voxctr.rules" ]; then
-    info "Removing legacy udev rule path (99-voxctr.rules)..."
-    sudo rm -f "/etc/udev/rules.d/99-voxctr.rules"
-fi
-if [ -f "/etc/udev/rules.d/99-voxctl.rules" ]; then
-    info "Removing legacy udev rule path (99-voxctl.rules)..."
-    sudo rm -f "/etc/udev/rules.d/99-voxctl.rules"
+if [ ${#FOUND_LEGACY[@]} -gt 0 ]; then
+    warn "An older VoxCtrl installed a udev rule granting read access to all input devices:"
+    for rule in "${FOUND_LEGACY[@]}"; do warn "    $rule"; done
+    warn "VoxCtrl no longer needs it. Removing it (requires sudo)."
+    sudo rm -f "${FOUND_LEGACY[@]}" || true
+    sudo udevadm control --reload-rules || true
+    sudo udevadm trigger --subsystem-match=input --action=change || true
+    ok "Removed. Other software you installed may still rely on 'input' group access."
+    if id -Gn "$USER" | tr ' ' '\n' | grep -qx input; then
+        info "You are still in the 'input' group from that older setup. VoxCtrl does not"
+        info "need it. To drop it too:  sudo gpasswd -d $USER input"
+    fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════

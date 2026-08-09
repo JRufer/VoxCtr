@@ -30,65 +30,76 @@ chmod +x VoxCtrl.AppImage
 # Run normally
 ./VoxCtrl-x86_64.AppImage
 
-# Or run the built-in installer for desktop integration and hardware permissions:
+# Or run the built-in installer for desktop integration and helper packages:
 ./VoxCtrl-x86_64.AppImage --install
 ```
 
 ### Setup Methods
 
-VoxCtrl supports two ways to perform system configuration (udev rules, input group, desktop shortcut, and high-res icon):
-1. **CLI Mode:** Run `./VoxCtrl-x86_64.AppImage --install` in a terminal. It will prompt for your administrator password via `sudo` and configure everything.
-2. **GUI Mode:** Launch the AppImage normally. If anything is missing, a **VoxCtrl Setup** window appears listing every step and its live status. Click **Grant keyboard access**; it securely prompts for your password via `pkexec` and configures everything in the background.
+VoxCtrl supports two ways to perform system configuration (desktop shortcut, high-res icon, and the helper packages used to type text into other windows):
+
+1. **CLI Mode:** Run `./VoxCtrl-x86_64.AppImage --install` in a terminal. It prompts for your administrator password via `sudo`.
+2. **GUI Mode:** Launch the AppImage normally. If anything is missing, a **VoxCtrl Setup** window appears listing every step and its live status.
 
 The built-in installer:
 1. Copies the application icon to `~/.local/share/icons/hicolor/128x128/apps/voxctrl.png`
 2. Registers a `.desktop` launcher file in `~/.local/share/applications/voxctrl.desktop` linking to the active AppImage path
-3. Establishes hardware udev rules (`/etc/udev/rules.d/99-voxctrl.rules`) to grant hotkey device permissions
-4. Adds your active user account to the system `input` group as a fallback
+3. Installs the host packages VoxCtrl needs to type transcriptions into the focused window (`wtype`, `xdotool`, clipboard helpers) and its runtime libraries
 
-### No logout required
+### Global shortcuts need no setup at all
 
-The udev rule tags input devices with systemd's `uaccess`, so `systemd-logind`
-grants your **active session** an ACL as soon as the rules are reloaded and the
-devices are re-triggered. That happens inside the setup itself, which is why
-hotkeys normally work the second the password prompt closes.
+There is **no keyboard permission step**, because VoxCtrl does not read your
+keyboard. Global shortcuts are registered with your desktop through the XDG
+`GlobalShortcuts` portal; your desktop owns the key grab and tells VoxCtrl only
+that its own shortcut fired.
 
-If a system cannot apply that (no logind, an unusual session), VoxCtrl falls
-back in order:
+That means:
 
-1. **Restart VoxCtrl** — offered as a button in the setup window, and done
-   automatically at startup when possible. VoxCtrl relaunches itself through
-   `sg input`, which picks up the group membership `usermod` just wrote without
-   a new login session.
-2. **Log out and back in** — only shown when neither of the above can work, and
-   stated explicitly rather than assumed.
+- No udev rule. No `input` group. No logout, no reboot, no relaunch.
+- Nothing to undo later, and no change to your machine's security posture.
+- VoxCtrl cannot see what you type in any other application — it is never given
+  the data, rather than choosing not to look at it.
+
+Earlier versions of VoxCtrl installed a udev rule granting read access to every
+`/dev/input/event*` device. **It no longer does, and never will** — that rule
+lets every program running as your user read every keystroke on the system, not
+just VoxCtrl. See [Hotkeys → Why this changed](hotkeys.md#why-this-changed) for
+the full reasoning.
+
+The administrator prompt during setup is for installing packages only.
+
+### If your desktop has no shortcuts portal
+
+The portal is implemented by KDE Plasma (5.27+), GNOME 48+, and Hyprland. If
+yours does not implement it, VoxCtrl **tells you at launch** and explains the
+options. It will not grant itself keyboard access to work around it.
+
+Your choices in that situation:
+
+- Use a desktop that implements the portal — shortcuts then work with no
+  permissions at all.
+- Start and stop dictation from the tray menu or the D-Bus API instead.
+- Grant input access yourself, knowingly, and accept that it applies to every
+  program you run — see [Hotkeys → evdev fallback](hotkeys.md#linux--evdev-fallback).
+  VoxCtrl will use that access if it already exists, but will never create it.
 
 ### Setup is verified, not assumed
 
-The setup window reports what is actually true: how many input devices exist,
-how many VoxCtrl can read, whether the installed rule is the current one, and
-whether the keystroke-injection helper (`wtype`/`xdotool`) is present. It polls
-while open, so finishing the setup — in the app or in a terminal — flips it to
-green without reopening anything.
-
-> **Robust Container / Sandbox Support:** VoxCtrl supports legacy rule files (`99-voxctrl.rules`, `99-voxctl.rules`, or `99-voxctr.rules`) and falls back to the system's NSS group database (`/etc/group`) when the current process session has not refreshed its group token, so the setup window does not reappear on every launch.
+The setup window reports what is actually true: which mechanism is delivering
+shortcuts, exactly which keys your desktop bound (which may differ from what you
+asked for — your desktop gets the final say), and whether the
+keystroke-injection helper (`wtype`/`xdotool`) is present. It polls while open,
+so a change made elsewhere flips it to green without reopening anything.
 
 ---
 
 ## Permissions Setup (Linux)
 
 ### Global Hotkeys
-VoxCtrl uses evdev to listen for global keyboard events. Your user must be in the `input` group:
 
-```bash
-sudo usermod -aG input $USER
-# Log out and back in
-```
-
-Verify:
-```bash
-groups $USER | grep input
-```
+Nothing to do. Shortcuts go through the desktop portal, which requires no
+permissions. If your desktop does not provide the portal, VoxCtrl says so at
+launch — see above.
 
 ### Wayland Text Injection
 For Wayland sessions, install `wtype`:
@@ -192,10 +203,15 @@ Pocket-TTS is a pure-Rust voice-cloning TTS engine (no system packages required)
 ## Uninstalling
 
 `scripts/uninstall.sh` reverts everything VoxCtrl's setup and runtime create —
-the udev rule, your `input` group membership, the menu launcher and icon,
-`~/.config/voxctrl/`, `~/.local/share/voxctrl/` (Whisper models, Piper engine
-and voices), the WebKit profile dirs, and the Pocket-TTS entries in the
-HuggingFace cache — returning the system to its pre-VoxCtrl state:
+the menu launcher and icon, `~/.config/voxctrl/`, `~/.local/share/voxctrl/`
+(Whisper models, Piper engine and voices), the WebKit profile dirs, and the
+Pocket-TTS entries in the HuggingFace cache — returning the system to its
+pre-VoxCtrl state.
+
+It also removes the udev rule and `input` group membership that **older**
+versions of VoxCtrl installed. Current versions create neither, so on a fresh
+install there is nothing there to remove; the step exists to clean up after an
+upgrade.
 
 ```bash
 # From a clone of this repository:
@@ -223,30 +239,42 @@ See [Development Guide](./development.md).
 ## Troubleshooting
 
 ### Hotkeys not working
+
 VoxCtrl tells you about this itself: the tray entry reads **⚠️ Finish setup —
-hotkeys inactive**, and a notification appears when it cannot read your
-keyboard. Open the setup window from the tray; its first step names the cause.
+hotkeys inactive**, and the setup window's first step names the cause. Open it
+from the tray.
 
-To check by hand:
-- `ls -l /dev/input/event*` — VoxCtrl needs read access to at least one of these
-- `getfacl /dev/input/event0 | grep $USER` — confirms the `uaccess` ACL applied
-- `groups | grep input` — the fallback path
-- If the rule predates this VoxCtrl version, re-run the setup: older rules only
-  granted access through the `input` group, which needs a fresh login.
+The usual causes, in order:
 
-### Permissions screen keeps reappearing (fresh Arch / CachyOS installs)
-The setup window reappears while global hotkeys still do not work:
-1. Click **Grant keyboard access** and enter your password. This writes the
-   udev rule and reloads it *first*; the optional host package installation
-   runs afterwards and is allowed to fail (stale pacman mirrors on a freshly
-   installed system are common — run `sudo pacman -Syu` later to fix them).
-2. That is normally the end of it. If the window still shows the step as
-   unfinished, it offers **Restart VoxCtrl to finish** — one click, no logout.
-3. Only if that button is absent does the window ask you to log out, and it
-   says so plainly.
+1. **Your desktop has no global-shortcuts portal.** The setup window says so
+   explicitly. Supported: KDE Plasma 5.27+, GNOME 48+, Hyprland. Not supported:
+   Sway and most other wlroots compositors. VoxCtrl will not grant itself
+   keyboard access to work around this.
+2. **Your desktop refused or reassigned the shortcut.** Settings → Hotkeys shows
+   the keys your desktop actually bound next to each binding, and flags any it
+   would not accept. Bindings on a bare modifier (a lone Super, say) usually
+   have to be chosen in your desktop's own shortcut settings, because a lone
+   modifier is not a valid accelerator.
+3. **`xdg-desktop-portal` is not running.** Check with
+   `systemctl --user status xdg-desktop-portal`, and confirm the interface is
+   present:
 
-If `pkexec` is unavailable, the window's **Set it up manually** link shows the
-exact commands to paste into a terminal.
+   ```bash
+   busctl --user introspect org.freedesktop.portal.Desktop \
+     /org/freedesktop/portal/desktop | grep GlobalShortcuts
+   ```
+
+### Setup window keeps reappearing
+
+The setup window opens when something genuinely stops dictation working
+end to end. Its steps say which. The two it cannot fix for you:
+
+- **No global-shortcuts portal** — see above. This is a property of your
+  desktop, not of the install.
+- **Host packages failed to install** — common on a freshly installed rolling
+  distro with stale mirrors. Run `sudo pacman -Syu` (or your distro's
+  equivalent) and use **Install it** again, or **Install it manually** for the
+  exact commands to paste into a terminal.
 
 ### Hotkey records but no text is typed (and no overlay)
 - Download a **Whisper model** first: Settings → Engine → Download. On a fresh

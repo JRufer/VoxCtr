@@ -139,23 +139,24 @@ You only need to transfer **one file** to the new machine:
 * `VoxCtrl-*-x86_64.AppImage` (the versioned executable)
 
 ### 2. Run the Unified Setup
-Run the built-in setup command once on the new machine to automatically pull in host runtime dependencies, register global hotkey udev rules, install desktop icons, and write a menu launcher:
+Run the built-in setup command once on the new machine to automatically pull in host runtime dependencies, install desktop icons, and write a menu launcher. Global shortcuts need no permissions — they go through the desktop portal:
 
 ```bash
 chmod +x VoxCtrl-*-x86_64.AppImage
 ./VoxCtrl-*-x86_64.AppImage --install
 ```
 
-Alternatively, you can just double-click or run the AppImage directly; VoxCtrl's setup window detects the missing permissions at startup and presents an interactive GUI button to configure the setup.
+Alternatively, you can just double-click or run the AppImage directly; VoxCtrl's setup window detects anything missing at startup and offers to install it.
 
 ### 3. Start Using It
-The installed udev rule tags input devices with `uaccess`, so `systemd-logind`
-grants your active session access as soon as the rules are reloaded — global
-hotkeys work immediately. No logout, no reboot.
+Global shortcuts work immediately. VoxCtrl registers them with your desktop
+through the XDG `GlobalShortcuts` portal, so there is no permission to grant, no
+udev rule, no group membership, no logout and no reboot — and VoxCtrl never
+reads your keyboard.
 
-If a system cannot apply that, the setup window offers a one-click **Restart
-VoxCtrl** (it relaunches through `sg input`), and only falls back to asking for
-a logout when neither path is available.
+If your desktop does not implement the portal, the setup window says so at
+launch and explains the options. VoxCtrl will not grant itself keyboard access
+to work around it.
 
 ---
 

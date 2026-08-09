@@ -416,51 +416,72 @@ def test_mcp_handshake_and_tools():
         sock.close()
 ```
 
-### Simulating and Testing udev Diagnostics
+### Simulating and Testing Hotkey Diagnostics
 
-Linux global hotkeys require specific udev permissions and user group memberships configured by `install.sh`. To make testing these startup states safe and easy, developers can use the `VOXCTRL_TEST_UDEV_STATUS` environment variable to mock various diagnostic outcomes without mutating their own user accounts or system rules.
+Global shortcuts go through the XDG `GlobalShortcuts` portal, which is a
+property of the user's desktop and awkward to vary on a dev machine. The
+`VOXCTRL_TEST_HOTKEY_STATUS` environment variable mocks the outcome so the
+first-launch UI can be exercised in every state.
 
-#### How Diagnostics Work (Linux)
-The application employs robust permission checks at startup and via the `check_udev_status` / `get_setup_status` Tauri IPC commands:
-1. **Rule File Compatibility:** The app checks for the existence of `/etc/udev/rules.d/99-voxctrl.rules`, `/etc/udev/rules.d/99-voxctl.rules` (legacy name), or `/etc/udev/rules.d/99-voxctr.rules` (legacy name). If any match, rules are recognized as configured. It additionally reads the current rule and reports `rule_is_current: false` for the pre-`uaccess` rule, which is the one that forced a logout.
-2. **Active vs NSS Group Database Verification:** It checks if the active process session belongs to the `input` group. If missing, it queries the NSS system group database (`id -Gn <username>`) as a fallback. This handles persistent containerized development environments (where process group tokens do not refresh) gracefully, preventing false warning windows once the installer has been run.
-3. **Device-level ground truth:** `count_input_devices()` opens `/dev/input/event*` directly, so the app can tell "this machine has no keyboard" apart from "VoxCtrl is not allowed to read one". `evdev::enumerate()` cannot: it silently drops every device it fails to open.
-4. **Listener health:** `voxctrl_hotkeys::ListenerHealth` reports how many keyboards the listener actually holds open. Permissions existing on disk is not the same as hotkeys working, and only the listener knows the difference.
-5. **Windows Exclusions:** Non-Linux environments (such as Windows builds) completely compile out udev diagnostic checks on startup and return fully bypassed success payloads (`is_configured: true`), ensuring the warning screen never displays on Windows.
+#### How diagnostics work
 
-#### Recovery paths, in order
-The setup flow avoids telling the user to log out unless nothing else can work:
-1. The `uaccess` udev rule applies to the active session on `udevadm trigger` — the common case, effective immediately.
-2. `installer::auto_relaunch_if_pending()` restarts the app through `sg input` at startup when the session lacks a membership that `/etc/group` already records. `sg` is probed first (`sg input -c 'id -Gn'`) so a password-protected group cannot leave the user with an app that exits and never returns.
-3. The listener rescans `/dev/input` every 2 s while blocked, so permissions granted by any means start working without an app restart.
-4. Only then does the UI mention logging out.
+`commands::hotkey_status()` reports what is actually happening rather than
+auditing configuration files:
 
-#### Why Test This?
-* **Onboarding Verification**: Ensure that new users are clearly prompted to install required dependencies.
-* **Recovery advice**: Verify that "Restart VoxCtrl" and "log out and back in" are never offered at the same time — they are mutually exclusive instructions.
-* **Layout Integrity**: Make sure the modal overlays perfectly on the dark obsidian theme on launch.
+1. **Backend** — `voxctrl_hotkeys::ListenerHealth::backend()` says which
+   mechanism is live: `Portal`, `Evdev`, `WindowsHook`, `Starting`, or `None`.
+   This is ground truth; nothing is inferred from what is on disk.
+2. **Privacy** — `is_private()` is true only for the portal and the Windows
+   hook, the two paths where VoxCtrl receives its own shortcuts and no raw
+   keystrokes. The UI states this in plain language, and only when true.
+3. **Bound shortcuts** — the portal returns what the compositor *actually*
+   bound, which may differ from what VoxCtrl requested. `BoundShortcut` carries
+   both, so the Hotkeys tab can show the real keys and flag anything refused.
+4. **Startup grace** — `Starting` reports as active. The portal handshake is
+   async, and flashing a failure for a few hundred milliseconds on every launch
+   would pop the setup window on a perfectly working install.
+5. **Device counts** — only probed on the evdev path. On the portal path
+   VoxCtrl opens no input devices, so reporting "0 of 8 readable" would be
+   accurate but deeply misleading.
 
-#### Mock Configurations
+#### What must never appear
 
-* **Simulate Missing Setup (Installer never run)**:
-  Simulates `/etc/udev/rules.d/99-voxctrl.rules` does not exist:
+VoxCtrl does not install a udev rule, does not run `usermod -aG input`, and
+offers no UI affordance to do either. `installer::build_privileged_setup_script`
+is package installation only, and both a Rust test
+(`the_privileged_script_never_touches_input_permissions`) and a Svelte test
+(`never offers to grant keyboard access`) fail if that regresses. See
+[Hotkeys → Why this changed](hotkeys.md#why-this-changed).
+
+#### Mock configurations
+
+* **Portal working (the normal case)**:
   ```bash
-  VOXCTRL_TEST_UDEV_STATUS=missing npm run tauri dev
+  VOXCTRL_TEST_HOTKEY_STATUS=portal npm run tauri dev
   ```
-  * **UI Outcome**: Spawns the standalone **VoxCtrl Setup** window (`udev-warning`) in the foreground, listing each step with live status and a **Grant keyboard access** button, plus a **Set it up manually** disclosure with copy-pasteable commands and a **Continue anyway** close pathway.
+  * **UI Outcome**: The setup window's first step is green and states that the
+    desktop owns the shortcuts and VoxCtrl cannot read the keyboard.
 
-* **Simulate Relogin Required (Installer run but session not updated)**:
-  Simulates that rules exist but the current shell process is missing `input` group permissions:
+* **evdev fallback (no portal, but input devices are already readable)**:
   ```bash
-  VOXCTRL_TEST_UDEV_STATUS=relogin npm run tauri dev
+  VOXCTRL_TEST_HOTKEY_STATUS=evdev npm run tauri dev
   ```
-  * **UI Outcome**: The setup window shows the keyboard-access step as unfinished. If `sg` can grant the group it offers **Restart VoxCtrl to finish**; the logout guidance appears only when it cannot.
+  * **UI Outcome**: Shortcuts report as working, with an amber note that every
+    keystroke passes through VoxCtrl in this mode and that the access was not
+    created by VoxCtrl.
 
-* **Simulate Normal/Configured State (Bypasses checks)**:
+* **Nothing available**:
   ```bash
-  VOXCTRL_TEST_UDEV_STATUS=ok npm run tauri dev
+  VOXCTRL_TEST_HOTKEY_STATUS=none npm run tauri dev
   ```
-  * **UI Outcome**: Spawns only the standard settings window; the diagnostic warning window remains completely hidden.
+  * **UI Outcome**: Spawns the standalone **VoxCtrl Setup** window
+    (`udev-warning`) in the foreground, explaining that the desktop provides no
+    shortcuts portal and why VoxCtrl will not grant itself keyboard access,
+    with a **Continue anyway** close pathway.
+
+To exercise the real evdev fallback on a desktop that *does* have the portal,
+set `VOXCTRL_DISABLE_PORTAL_HOTKEYS=1`.
+
 
 
 ---

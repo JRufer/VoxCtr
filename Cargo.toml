@@ -62,6 +62,10 @@ zbus = { version = "4", features = ["tokio"] }
 # Desktop notifications
 notify-rust = "4"
 
+# xdg-desktop-portal bindings (Linux)
+ashpd = "0.9"
+futures-util = "0.3"
+
 # Crypto (webhook HMAC)
 hmac = "0.12"
 sha2 = "0.10"
