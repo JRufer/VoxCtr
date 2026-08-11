@@ -296,7 +296,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.4.2",
  "serde",
- "tokio",
  "zbus 5.15.0",
 ]
 
@@ -11167,7 +11166,6 @@ dependencies = [
  "rustix 1.1.4",
  "serde",
  "serde_repr",
- "tokio",
  "tracing",
  "uds_windows",
  "uuid",

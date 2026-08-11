@@ -67,7 +67,23 @@ notify-rust = "4"
 # refuses a session from a host app that has not declared an application id.
 # Only the shortcuts portal is compiled in; 0.13 gates each portal behind a
 # feature, and pulling the rest in would add code VoxCtrl never calls.
-ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts"] }
+#
+# Deliberately NOT requesting ashpd's "tokio" feature. That feature exists only
+# to pick zbus's reactor (`zbus/tokio`) — neither `global_shortcuts` nor
+# `register_host_app` touch the `tokio` crate directly. Enabling it would still
+# flip zbus's reactor for every OTHER consumer of this same zbus 5.x build in
+# the dependency graph, via Cargo's feature unification — including
+# `tauri-plugin-single-instance`, whose Linux implementation calls
+# `zbus::blocking::connection::Builder::build()` during plugin setup (which
+# already runs inside Tauri's own ambient Tokio runtime). zbus's tokio-backed
+# blocking facade builds a brand-new multi-thread runtime internally
+# (`zbus::utils::block_on`) and panics with "Cannot start a runtime from
+# within a runtime" the moment that runs on a thread already driving one —
+# exactly what happened here. zbus's default `async-io` reactor has no such
+# problem: it runs its own background poller thread independent of whatever
+# executor polls the outer future, so it mixes safely with our Tokio-driven
+# code and never touches the plugin at all.
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "global_shortcuts"] }
 futures-util = "0.3"
 
 # Crypto (webhook HMAC)

@@ -48,6 +48,18 @@ VoxCtrl talks to `org.freedesktop.portal.GlobalShortcuts` over D-Bus:
    opens — so anything that touches a portal first spends that one chance.
    Portals older than 1.20 do not serve this interface, and its absence is not
    an error.
+
+   `ashpd` is built with its `async-io` feature, deliberately not `tokio`.
+   Enabling `tokio` selects `zbus`'s Tokio-backed reactor for the *entire*
+   zbus 5.x build in the dependency graph — including
+   `tauri-plugin-single-instance`'s own use of `zbus::blocking` during plugin
+   setup, which runs inside Tauri's ambient Tokio runtime. zbus's Tokio-backed
+   blocking facade builds a brand-new multi-thread runtime internally and
+   panics with "Cannot start a runtime from within a runtime" the moment that
+   happens on a thread already driving one. zbus's default `async-io` reactor
+   runs its own background poller thread independent of whatever executor
+   polls the outer future, so it mixes safely with Tokio and never touches the
+   plugin. Do not add `ashpd`'s `tokio` feature back without checking this.
 1. It opens a portal session.
 2. It registers its shortcuts, one per distinct key combination, with the keys you configured as a *preferred* trigger.
 3. Your desktop decides what to actually bind — it may confirm with you, and it may assign different keys. Whatever it decides wins, and VoxCtrl displays the result.
