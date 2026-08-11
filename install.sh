@@ -317,7 +317,9 @@ if [ $ICON_COPIED -eq 0 ]; then
 fi
 
 # Write desktop entry linked directly to the portable AppImage
-LAUNCHER_PATH="$LAUNCHER_DEST_DIR/voxctrl.desktop"
+# Named after the application id VoxCtrl declares to the desktop portal, so the
+# desktop can resolve global shortcuts back to a name and icon.
+LAUNCHER_PATH="$LAUNCHER_DEST_DIR/ai.voxctrl.app.desktop"
 ABS_APPIMAGE_PATH="$(readlink -f "$PORTABLE_APPIMAGE")"
 
 cat > "$LAUNCHER_PATH" <<EOF
@@ -337,9 +339,11 @@ EOF
 chmod +x "$LAUNCHER_PATH"
 ok "Desktop launcher integrated successfully: $LAUNCHER_PATH"
 
-# Clean up legacy launcher if it exists
+# Clean up the pre-rename launcher, which would otherwise show as a duplicate
+# VoxCtrl in the application menu.
 if [ -f "$LAUNCHER_DEST_DIR/voxctrl.desktop" ]; then
     rm -f "$LAUNCHER_DEST_DIR/voxctrl.desktop"
+    info "Removed the older launcher entry ($LAUNCHER_DEST_DIR/voxctrl.desktop)."
 fi
 
 echo ""

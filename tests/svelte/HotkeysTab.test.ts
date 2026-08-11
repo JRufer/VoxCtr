@@ -46,6 +46,7 @@ function hotkeyStatus(overrides: Record<string, unknown> = {}) {
     backend: "portal",
     is_private: true,
     portal_error: null,
+    portal_refused: false,
     shortcuts: [],
     session_type: "wayland",
     devices_total: 0,

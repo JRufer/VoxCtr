@@ -735,6 +735,9 @@ pub struct HotkeyStatusPayload {
     pub is_private: bool,
     /// Why the desktop portal is not in use, when it is not.
     pub portal_error: Option<String>,
+    /// The portal exists and refused VoxCtrl, rather than being absent. Needs
+    /// different advice: switching desktops would not help.
+    pub portal_refused: bool,
     /// What the compositor actually bound, which may differ from what VoxCtrl
     /// asked for — the user gets the final say in the portal's own dialog.
     pub shortcuts: Vec<voxctrl_hotkeys::BoundShortcut>,
@@ -847,6 +850,16 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
              works, but it means every keystroke passes through VoxCtrl."
         ),
         voxctrl_hotkeys::Backend::Starting => "Starting the shortcut listener…".to_string(),
+        voxctrl_hotkeys::Backend::None if health.portal_refused() => {
+            // The desktop has a shortcuts portal and turned VoxCtrl away. Almost
+            // always a version mismatch around the app-id requirement that
+            // xdg-desktop-portal 1.20 introduced.
+            "Your desktop has a global-shortcuts portal but refused VoxCtrl's request \
+             for one. This is a problem between VoxCtrl and xdg-desktop-portal, not \
+             something you configured — updating xdg-desktop-portal and its KDE/GNOME \
+             backend is the usual fix."
+                .to_string()
+        }
         voxctrl_hotkeys::Backend::None => {
             if devices_total == 0 {
                 "No global-shortcuts portal and no input devices were found, so VoxCtrl \
@@ -876,6 +889,7 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
         .to_string(),
         is_private: health.is_private(),
         portal_error: health.portal_error(),
+        portal_refused: health.portal_refused(),
         shortcuts,
         session_type: session_type(),
         devices_total,
@@ -893,6 +907,7 @@ fn test_override(value: &str) -> Option<HotkeyStatusPayload> {
         backend: "portal".to_string(),
         is_private: true,
         portal_error: None,
+        portal_refused: false,
         shortcuts: Vec::new(),
         session_type: "wayland".to_string(),
         devices_total: 0,
@@ -920,6 +935,20 @@ fn test_override(value: &str) -> Option<HotkeyStatusPayload> {
             devices_readable: 0,
             needs_attention: true,
             detail: "This desktop does not provide the XDG global-shortcuts portal.".to_string(),
+            ..base
+        }),
+        "refused" => Some(HotkeyStatusPayload {
+            is_active: false,
+            backend: "none".to_string(),
+            is_private: false,
+            portal_error: Some(
+                "org.freedesktop.portal.Error.NotAllowed: An app id is required".to_string(),
+            ),
+            portal_refused: true,
+            needs_attention: true,
+            detail: "Your desktop has a global-shortcuts portal but refused VoxCtrl's \
+                     request for one."
+                .to_string(),
             ..base
         }),
         _ => None,

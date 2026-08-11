@@ -125,6 +125,13 @@ fn run_command_status(runner: &str, args: &[&str]) -> Result<std::process::ExitS
         .map_err(|e| format!("Failed to spawn {}: {}", runner, e))
 }
 
+/// Desktop entry filename. Must stay in step with the portal application id, so
+/// the desktop can name and illustrate the shortcuts VoxCtrl registers.
+pub const DESKTOP_FILE_NAME: &str = "ai.voxctrl.app.desktop";
+
+/// What the entry was called before it had to match the application id.
+pub const LEGACY_DESKTOP_FILE_NAME: &str = "voxctrl.desktop";
+
 pub fn setup_desktop_integration() -> Result<(), String> {
     let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
     let launcher_dir = home_dir.join(".local/share/applications");
@@ -162,8 +169,19 @@ Keywords=whisper;voice;dictation;wayland;
         abs_path.to_string_lossy()
     );
 
-    let launcher_path = launcher_dir.join("voxctrl.desktop");
+    // Named after the application id VoxCtrl declares to the desktop portal
+    // (`voxctrl_hotkeys::portal::APP_ID`). That is how a desktop resolves the id
+    // it is handed for global shortcuts back to a name and icon — without the
+    // match, KDE's shortcut settings list a bare identifier.
+    let launcher_path = launcher_dir.join(DESKTOP_FILE_NAME);
     std::fs::write(&launcher_path, desktop_content).map_err(|e| e.to_string())?;
+
+    // An install from before the rename leaves a second entry behind, which
+    // shows up as a duplicate VoxCtrl in the application menu.
+    let legacy = launcher_dir.join(LEGACY_DESKTOP_FILE_NAME);
+    if legacy.exists() {
+        let _ = std::fs::remove_file(&legacy);
+    }
     
     // Make desktop entry executable
     #[cfg(unix)]
@@ -346,7 +364,7 @@ mod tests {
         let res = setup_desktop_integration();
         assert!(res.is_ok(), "desktop integration failed: {:?}", res);
 
-        let desktop_file = home_path.join(".local/share/applications/voxctrl.desktop");
+        let desktop_file = home_path.join(".local/share/applications/ai.voxctrl.app.desktop");
         let icon_file = home_path.join(".local/share/icons/hicolor/128x128/apps/voxctrl.png");
 
         assert!(desktop_file.exists(), "desktop file was not created");

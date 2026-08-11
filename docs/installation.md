@@ -27,24 +27,38 @@ curl -LO https://github.com/jrufer/voxctrl/releases/latest/download/VoxCtrl.AppI
 # Make executable
 chmod +x VoxCtrl.AppImage
 
-# Run normally
+# Run it. That is the whole installation.
 ./VoxCtrl-x86_64.AppImage
-
-# Or run the built-in installer for desktop integration and helper packages:
-./VoxCtrl-x86_64.AppImage --install
 ```
 
-### Setup Methods
+### Just run it
 
-VoxCtrl supports two ways to perform system configuration (desktop shortcut, high-res icon, and the helper packages used to type text into other windows):
+There is no required install step. Global shortcuts need no permissions, and on
+every Linux launch VoxCtrl writes its own desktop entry and icon into
+`~/.local/share/` — no privileges needed for either:
 
-1. **CLI Mode:** Run `./VoxCtrl-x86_64.AppImage --install` in a terminal. It prompts for your administrator password via `sudo`.
-2. **GUI Mode:** Launch the AppImage normally. If anything is missing, a **VoxCtrl Setup** window appears listing every step and its live status.
+- `~/.local/share/applications/ai.voxctrl.app.desktop` (menu launcher; the
+  filename matches the application id VoxCtrl declares to the desktop portal, so
+  your desktop's shortcut settings show "VoxCtrl" and its icon rather than a
+  bare identifier)
+- `~/.local/share/icons/hicolor/128x128/apps/voxctrl.png`
 
-The built-in installer:
-1. Copies the application icon to `~/.local/share/icons/hicolor/128x128/apps/voxctrl.png`
-2. Registers a `.desktop` launcher file in `~/.local/share/applications/voxctrl.desktop` linking to the active AppImage path
-3. Installs the host packages VoxCtrl needs to type transcriptions into the focused window (`wtype`, `xdotool`, clipboard helpers) and its runtime libraries
+An entry from before that rename (`voxctrl.desktop`) is removed at the same
+time, so the application menu does not end up with two VoxCtrls.
+
+### The one thing that may need a package manager
+
+Typing a transcription into another window uses `wtype` (Wayland) or `xdotool`
+(X11). Those are host packages, so installing them needs administrator rights —
+the one part VoxCtrl cannot do for itself.
+
+You do not need `--install` for it. Launch the AppImage; if a helper is missing,
+the setup window says so and offers **Install it** (via `pkexec`), or **Install
+it manually** for the exact command to paste into a terminal.
+
+`./VoxCtrl-x86_64.AppImage --install` remains available if you would rather do
+that step up front from a terminal. It installs those packages and nothing else
+— see [Privacy & Security](privacy.md#what-the-installer-touches).
 
 ### Global shortcuts need no setup at all
 

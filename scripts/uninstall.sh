@@ -12,7 +12,8 @@
 #     - (opt-in via --remove-packages) host packages the installer added
 #
 #   User:
-#     - ~/.local/share/applications/voxctrl.desktop   (menu launcher)
+#     - ~/.local/share/applications/ai.voxctrl.app.desktop   (menu launcher,
+#       plus the older voxctrl.desktop name)
 #     - ~/.local/share/icons/hicolor/128x128/apps/voxctrl.png
 #     - ~/.config/voxctrl/                            (config.json, targets.toml, bindings.toml)
 #     - ~/.local/share/voxctrl/                       (whisper models, piper engine+voices,
@@ -133,16 +134,21 @@ fi
 
 # ── 3. Desktop integration ────────────────────────────────────────────────────
 act "Removing desktop integration"
-LAUNCHER="$HOME/.local/share/applications/voxctrl.desktop"
+LAUNCHER="$HOME/.local/share/applications/ai.voxctrl.app.desktop"
+# Installs from before the entry was renamed to match the portal app id.
+LEGACY_LAUNCHER="$HOME/.local/share/applications/voxctrl.desktop"
 ICON="$HOME/.local/share/icons/hicolor/128x128/apps/voxctrl.png"
 
 # Remember where the AppImage lives (from the launcher) before deleting it.
 APPIMAGE_PATH=""
-if [ -f "$LAUNCHER" ]; then
-    APPIMAGE_PATH=$(sed -n 's/^Exec=//p' "$LAUNCHER" | head -1)
-fi
+for candidate in "$LAUNCHER" "$LEGACY_LAUNCHER"; do
+    if [ -f "$candidate" ]; then
+        APPIMAGE_PATH=$(sed -n 's/^Exec=//p' "$candidate" | head -1)
+        break
+    fi
+done
 
-for f in "$LAUNCHER" "$ICON"; do
+for f in "$LAUNCHER" "$LEGACY_LAUNCHER" "$ICON"; do
     if [ -e "$f" ]; then rm -f "$f" && ok "Removed $f"; else skip "Not present: $f"; fi
 done
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null

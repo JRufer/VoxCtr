@@ -200,20 +200,22 @@ text = "{TEXT}"                    # Custom arguments template (substitutes the 
 
 VoxCtrl runs natively on Linux (optimized for CachyOS/Arch, Ubuntu/Debian, Fedora, and openSUSE). We support seamless standalone execution using a portable **AppImage**, which features a built-in installer to handle system integration.
 
-### 1. Unified Setup & System Integration
-
-To install runtime dependencies and integrate VoxCtrl into your desktop environment launcher, run the AppImage with the `--install` flag:
+### 1. Just Run It
 
 ```bash
 chmod +x VoxCtrl-*-x86_64.AppImage
-./VoxCtrl-*-x86_64.AppImage --install
+./VoxCtrl-*-x86_64.AppImage
 ```
 
-Alternatively, just launch the AppImage normally. If anything is missing, a setup window appears listing every step with its live status.
+That is the whole installation. Global shortcuts need no permissions, and
+VoxCtrl registers its own `.desktop` entry and icon under `~/.local/share/` on
+every Linux launch — no privileges, no install step.
 
-#### What the built-in installer accomplishes automatically:
-* **System Runtime Packages**: Detects your package manager (`apt`, `pacman`, `dnf`, `zypper`) and installs WebKitGTK, OpenSSL, PortAudio, `wtype`, `xdotool`, and clipboard utilities.
-* **Desktop Menu Integration**: Registers a modern `.desktop` entry in `~/.local/share/applications/` and copies the application icon so VoxCtrl appears in your desktop application menus.
+The only thing that can need a package manager is the helper that types text
+into other windows (`wtype` on Wayland, `xdotool` on X11). If it is missing, the
+setup window says so and offers to install it, or shows you the command. You can
+also do that step up front with `./VoxCtrl-*-x86_64.AppImage --install`, which
+installs those packages and nothing else.
 
 > [!IMPORTANT]
 > **The installer does not touch keyboard permissions, and there is no step that does.**

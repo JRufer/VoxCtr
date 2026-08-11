@@ -56,6 +56,9 @@ pub struct ListenerHealth {
     backend: Mutex<Option<Backend>>,
     /// Why the portal could not be used, if it could not.
     portal_error: Mutex<Option<String>>,
+    /// The portal is present and answered, but refused the session. A different
+    /// problem from "this desktop has no portal", and it needs different advice.
+    portal_refused: AtomicBool,
     bound_shortcuts: Mutex<Vec<BoundShortcut>>,
 }
 
@@ -98,6 +101,13 @@ impl ListenerHealth {
     /// Why the portal backend was not used. `None` means it was.
     pub fn portal_error(&self) -> Option<String> {
         self.portal_error.lock().ok().and_then(|e| e.clone())
+    }
+
+    /// The desktop has a shortcuts portal and it turned VoxCtrl away, rather
+    /// than there being no portal at all. Telling the user to switch desktops
+    /// would be useless advice in this state.
+    pub fn portal_refused(&self) -> bool {
+        self.portal_refused.load(Ordering::Relaxed)
     }
 
     pub fn bound_shortcuts(&self) -> Vec<BoundShortcut> {
@@ -144,6 +154,10 @@ impl ListenerHealth {
         if let Ok(mut e) = self.portal_error.lock() {
             *e = Some(error);
         }
+    }
+
+    pub fn set_portal_refused(&self, refused: bool) {
+        self.portal_refused.store(refused, Ordering::Relaxed);
     }
 
     pub fn set_bound_shortcuts(&self, shortcuts: Vec<BoundShortcut>) {
@@ -243,6 +257,26 @@ mod tests {
         assert_eq!(h.backend(), Backend::Starting);
         assert!(h.is_active(), "startup must not flash a failure");
         assert!(!h.permission_blocked());
+    }
+
+    #[test]
+    fn a_refused_portal_is_distinguished_from_a_missing_one() {
+        // "Your desktop has no shortcuts portal" and "your desktop refused us"
+        // need different advice, so they cannot collapse into one state.
+        let h = ListenerHealth::default();
+        h.set_supported(true);
+        h.set_portal_error("An app id is required".to_string());
+        h.set_portal_refused(true);
+        h.set_backend(Backend::None);
+
+        assert!(h.portal_refused());
+        assert!(!h.is_active());
+
+        let missing = ListenerHealth::default();
+        missing.set_supported(true);
+        missing.set_portal_error("no such interface".to_string());
+        missing.set_backend(Backend::None);
+        assert!(!missing.portal_refused());
     }
 
     #[test]

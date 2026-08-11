@@ -100,6 +100,76 @@ fn shortcut_id(signature: &str) -> String {
     format!("voxctrl_{slug}")
 }
 
+/// The application id VoxCtrl declares to the desktop.
+///
+/// Matches the Tauri bundle identifier, the `StartupWMClass` in the desktop
+/// entry, and the installed `ai.voxctrl.app.desktop` file — which is how the
+/// desktop's own shortcut settings find a human-readable name and icon for the
+/// shortcuts registered below, instead of showing a bare D-Bus address.
+pub const APP_ID: &str = "ai.voxctrl.app";
+
+/// D-Bus errors that mean "this portal predates the host registry", as opposed
+/// to "the registration was refused".
+const REGISTRY_ABSENT: &[&str] = &[
+    "org.freedesktop.DBus.Error.UnknownMethod",
+    "org.freedesktop.DBus.Error.UnknownInterface",
+    "org.freedesktop.DBus.Error.UnknownObject",
+    "org.freedesktop.DBus.Error.ServiceUnknown",
+    "org.freedesktop.DBus.Error.NotSupported",
+];
+
+/// Tell xdg-desktop-portal who we are, before asking it for anything.
+///
+/// Sandboxed apps get an application id from their sandbox. A normal app on the
+/// host has none, and since xdg-desktop-portal 1.20 it is expected to declare
+/// one on its D-Bus connection through `org.freedesktop.host.portal.Registry`.
+/// From 1.21 the GlobalShortcuts portal refuses outright to create a session
+/// without one — that is exactly the
+/// `org.freedesktop.portal.Error.NotAllowed: An app id is required` a KDE
+/// session reports.
+///
+/// Two ordering rules come from the spec, and both are why this lives here
+/// rather than anywhere more convenient: registration happens **at most once
+/// per D-Bus connection**, and it must come **before the first portal method
+/// call**. `GlobalShortcuts::new()` only reads the interface's `version`
+/// property, so the first real call is still `CreateSession`, below.
+///
+/// Older portals derive the id from the process's systemd scope and do not
+/// serve this interface at all. That is not a failure: the registry is
+/// documented as something that may eventually be removed, so its absence and
+/// its refusal are both non-fatal and we let `CreateSession` deliver the real
+/// verdict.
+async fn register_host_app_id(connection: &ashpd::zbus::Connection) {
+    let options: HashMap<&str, ashpd::zvariant::Value<'_>> = HashMap::new();
+    let result = connection
+        .call_method(
+            Some("org.freedesktop.portal.Desktop"),
+            "/org/freedesktop/portal/desktop",
+            Some("org.freedesktop.host.portal.Registry"),
+            "Register",
+            &(APP_ID, options),
+        )
+        .await;
+
+    match result {
+        Ok(_) => tracing::debug!("Registered with the desktop portal as `{APP_ID}`"),
+        Err(ashpd::zbus::Error::MethodError(name, _, _))
+            if REGISTRY_ABSENT.contains(&name.as_str()) =>
+        {
+            tracing::debug!(
+                "This xdg-desktop-portal has no host app registry ({name}); it predates the \
+                 app-id requirement, so there is nothing to declare"
+            );
+        }
+        Err(e) => {
+            // Most likely "already registered" from a second listener start in
+            // the same process. Worth a line, never worth failing over: if the
+            // id really is missing, CreateSession says so far more precisely.
+            tracing::warn!("Could not declare `{APP_ID}` to the desktop portal: {e}");
+        }
+    }
+}
+
 /// Bring up a portal session and start dispatching shortcuts into `tx`.
 ///
 /// Returns once the session is bound; the listening loop runs on a spawned
@@ -114,10 +184,25 @@ pub async fn start(
         .await
         .map_err(|e| PortalError::Unavailable(format!("{e}")))?;
 
-    let session = portal
-        .create_session()
-        .await
-        .map_err(|e| PortalError::Unavailable(format!("{e}")))?;
+    // `GlobalShortcuts` derefs to the underlying `zbus::Proxy`, which is how we
+    // reach the one connection ashpd shares across the process. Registering on
+    // any other connection would declare the app id for the wrong D-Bus peer.
+    register_host_app_id(portal.connection()).await;
+
+    let session = portal.create_session().await.map_err(|e| {
+        let message = format!("{e}");
+        if message.contains("app id") {
+            // Distinct from "no portal here": the desktop is present and
+            // working, it just would not accept us.
+            PortalError::Rejected(format!(
+                "{message}. VoxCtrl declared itself as `{APP_ID}`, but this desktop did not \
+                 accept it — xdg-desktop-portal may be too old to support host app \
+                 registration while still requiring an app id."
+            ))
+        } else {
+            PortalError::Unavailable(message)
+        }
+    })?;
 
     let groups = group_bindings(&bindings);
     let bound = bind_groups(&portal, &session, &groups).await?;

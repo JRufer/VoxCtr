@@ -69,6 +69,7 @@ pub fn start(
                      input devices, which needs access this app will not request for you"
                 );
                 health.set_portal_error(e.to_string());
+                health.set_portal_refused(matches!(e, crate::portal::PortalError::Rejected(_)));
                 start_evdev(bindings, tx, device_path, rx_reload, health);
             }
         }

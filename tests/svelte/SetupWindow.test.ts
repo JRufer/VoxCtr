@@ -24,6 +24,7 @@ function setupStatus({ hotkeys = {}, status = {} }: Overrides = {}) {
       backend: "portal",
       is_private: true,
       portal_error: null,
+      portal_refused: false,
       shortcuts: [
         {
           binding_ids: ["default_hold"],
@@ -136,6 +137,30 @@ describe("Setup window", () => {
 
     expect(await screen.findByText(/will not grant itself keyboard access/i)).toBeTruthy();
     expect(await screen.findByText(/Portal reported: no such interface/i)).toBeTruthy();
+  });
+
+  test("says a refused portal is not a missing portal", async () => {
+    // KDE has the portal and turned VoxCtrl away — telling the user to switch
+    // desktops would be useless advice.
+    mockStatus({
+      hotkeys: {
+        is_active: false,
+        backend: "none",
+        is_private: false,
+        portal_error: "org.freedesktop.portal.Error.NotAllowed: An app id is required",
+        portal_refused: true,
+        shortcuts: [],
+        needs_attention: true,
+        detail: "Your desktop has a global-shortcuts portal but refused VoxCtrl's request.",
+      },
+      status: { hotkeys_active: false, is_complete: false },
+    });
+
+    render(UdevWarning);
+
+    expect(await screen.findByText(/switching desktops would not help/i)).toBeTruthy();
+    expect(screen.queryByText(/will not grant itself keyboard access/i)).toBeNull();
+    expect(await screen.findByText(/An app id is required/i)).toBeTruthy();
   });
 
   test("does not flash a failure while the portal handshake is still running", async () => {

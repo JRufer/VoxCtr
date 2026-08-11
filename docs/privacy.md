@@ -25,7 +25,7 @@ VoxCtrl needs to know when you press your dictation shortcut. There are two ways
 
 ### What VoxCtrl does: ask the desktop
 
-VoxCtrl registers its shortcuts with `org.freedesktop.portal.GlobalShortcuts`. Your desktop compositor grabs the keys and sends VoxCtrl a D-Bus signal — `Activated` or `Deactivated`, carrying a shortcut ID — when one fires.
+VoxCtrl identifies itself to the portal as `ai.voxctrl.app` and registers its shortcuts with `org.freedesktop.portal.GlobalShortcuts`. Your desktop compositor grabs the keys and sends VoxCtrl a D-Bus signal — `Activated` or `Deactivated`, carrying a shortcut ID — when one fires.
 
 That signal is the entire input. VoxCtrl does not receive, and cannot request, anything about keys it did not register. There is no filtering step to trust and no policy to get wrong: the data never arrives.
 
@@ -111,7 +111,7 @@ Once the app and its models are on disk, VoxCtrl runs fully air-gapped.
 The optional setup step (`--install`, or the button in the setup window) does exactly three things:
 
 1. Installs host packages via your package manager — WebKitGTK, OpenSSL, PortAudio, `wtype`, `xdotool`, clipboard helpers. These are what type transcriptions into your focused window.
-2. Writes `~/.local/share/applications/voxctrl.desktop` and an icon.
+2. Writes `~/.local/share/applications/ai.voxctrl.app.desktop` and an icon (the app does this itself on every launch too, without privileges — the installer is not needed for it).
 3. **Removes** the udev rule older VoxCtrl versions installed, if it finds one.
 
 It does not create system users, services, or permissions. `scripts/uninstall.sh` reverses everything, including leftovers from older versions.

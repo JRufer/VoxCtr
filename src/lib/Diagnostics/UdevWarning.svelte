@@ -15,6 +15,7 @@
     backend: string;
     is_private: boolean;
     portal_error: string | null;
+    portal_refused: boolean;
     shortcuts: BoundShortcut[];
     session_type: string;
     devices_total: number;
@@ -211,6 +212,15 @@
                 anywhere; if you would rather it did not happen at all, a desktop with
                 portal support (KDE Plasma, GNOME 48+, Hyprland) avoids it entirely.
               </p>
+            {:else if setup.hotkeys.portal_refused}
+              <p class="warn-note">
+                Your desktop <em>does</em> provide the shortcuts portal — it just declined
+                this request, so switching desktops would not help. This is a mismatch
+                between VoxCtrl and <code>xdg-desktop-portal</code>; updating it and its
+                desktop backend (<code>xdg-desktop-portal-kde</code> or
+                <code>-gnome</code>) is the usual fix. You can start and stop dictation
+                from the tray menu in the meantime.
+              </p>
             {:else if setup.hotkeys.backend !== "starting"}
               <p class="warn-note">
                 VoxCtrl will not grant itself keyboard access to work around this. Doing so
@@ -220,9 +230,14 @@
                 makes shortcuts work with no permissions at all. You can still start and
                 stop dictation from the tray menu in the meantime.
               </p>
-              {#if setup.hotkeys.portal_error}
-                <span class="step-detail muted">Portal reported: {setup.hotkeys.portal_error}</span>
-              {/if}
+            {/if}
+
+            <!-- Rendered outside the branch chain: whatever the desktop said is
+                 the most useful line on this screen for anyone diagnosing it,
+                 and it applies to a refusal just as much as to a missing
+                 portal. -->
+            {#if setup.hotkeys.portal_error && setup.hotkeys.backend !== "portal" && setup.hotkeys.backend !== "evdev"}
+              <span class="step-detail muted">Portal reported: {setup.hotkeys.portal_error}</span>
             {/if}
           </div>
         </li>

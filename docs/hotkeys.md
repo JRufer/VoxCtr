@@ -34,6 +34,15 @@ The Settings → Hotkeys tab and the setup window both state which of these is i
 
 VoxCtrl talks to `org.freedesktop.portal.GlobalShortcuts` over D-Bus:
 
+0. It declares its application id — `ai.voxctrl.app` — through
+   `org.freedesktop.host.portal.Registry`. A sandboxed app gets an id from its
+   sandbox; a normal app on the host has none, and since xdg-desktop-portal 1.20
+   it is expected to say who it is. From 1.21 the GlobalShortcuts portal refuses
+   a session without one, which is the
+   `org.freedesktop.portal.Error.NotAllowed: An app id is required` a KDE
+   session reports. The declaration must happen before the first portal method
+   call and only once per D-Bus connection. Portals older than 1.20 do not serve
+   this interface, and its absence is not an error.
 1. It opens a portal session.
 2. It registers its shortcuts, one per distinct key combination, with the keys you configured as a *preferred* trigger.
 3. Your desktop decides what to actually bind — it may confirm with you, and it may assign different keys. Whatever it decides wins, and VoxCtrl displays the result.
@@ -57,6 +66,16 @@ The key recorder in Settings → Hotkeys **refuses these while you are recording
 The rule is defined once, in `crates/voxctrl-hotkeys/src/trigger.rs`, and the settings UI validates against it over IPC — so what the recorder accepts and what the portal can register cannot drift apart.
 
 On the evdev fallback and on Windows, VoxCtrl watches the keys itself and a bare modifier genuinely works. There the recorder accepts it and shows a note that it will stop working if shortcut delivery ever moves to the portal, rather than blocking something that works on your machine today.
+
+#### If the portal refuses the session
+
+A refusal is not the same as a missing portal, and the app says which it hit.
+"Your desktop has a global-shortcuts portal but refused VoxCtrl's request"
+means the interface is there and answered — switching desktops will not help.
+The usual cause is a version mismatch around the app-id requirement above;
+updating `xdg-desktop-portal` and its backend (`xdg-desktop-portal-kde` or
+`xdg-desktop-portal-gnome`) is the fix. The exact D-Bus error is shown verbatim
+under **Portal reported:** in the setup window.
 
 #### Bindings from older versions
 

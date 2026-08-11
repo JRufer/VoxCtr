@@ -118,6 +118,7 @@
     backend: string;
     is_private: boolean;
     portal_error: string | null;
+    portal_refused: boolean;
     shortcuts: BoundShortcut[];
     session_type: string;
     devices_total: number;
