@@ -108,65 +108,47 @@ fn shortcut_id(signature: &str) -> String {
 /// shortcuts registered below, instead of showing a bare D-Bus address.
 pub const APP_ID: &str = "ai.voxctrl.app";
 
-/// D-Bus errors that mean "this portal predates the host registry", as opposed
-/// to "the registration was refused".
-const REGISTRY_ABSENT: &[&str] = &[
-    "org.freedesktop.DBus.Error.UnknownMethod",
-    "org.freedesktop.DBus.Error.UnknownInterface",
-    "org.freedesktop.DBus.Error.UnknownObject",
-    "org.freedesktop.DBus.Error.ServiceUnknown",
-    "org.freedesktop.DBus.Error.NotSupported",
-];
-
 /// Tell xdg-desktop-portal who we are, before asking it for anything.
 ///
-/// Sandboxed apps get an application id from their sandbox. A normal app on the
+/// A sandboxed app gets an application id from its sandbox. A normal app on the
 /// host has none, and since xdg-desktop-portal 1.20 it is expected to declare
-/// one on its D-Bus connection through `org.freedesktop.host.portal.Registry`.
-/// From 1.21 the GlobalShortcuts portal refuses outright to create a session
-/// without one — that is exactly the
-/// `org.freedesktop.portal.Error.NotAllowed: An app id is required` a KDE
-/// session reports.
+/// one through `org.freedesktop.host.portal.Registry`. From 1.21 the
+/// GlobalShortcuts portal refuses a session outright without one — that is
+/// exactly the `org.freedesktop.portal.Error.NotAllowed: An app id is required`
+/// a current KDE session reports.
 ///
-/// Two ordering rules come from the spec, and both are why this lives here
-/// rather than anywhere more convenient: registration happens **at most once
-/// per D-Bus connection**, and it must come **before the first portal method
-/// call**. `GlobalShortcuts::new()` only reads the interface's `version`
-/// property, so the first real call is still `CreateSession`, below.
+/// Order matters, and is the whole reason this runs before the shortcuts proxy
+/// is built: registration is allowed **once per D-Bus connection** and only
+/// **before the first portal call** on it. ashpd shares one connection across
+/// every portal it opens, so anything that touches a portal first can spend
+/// that one chance. `register_host_app` no-ops inside a sandbox, where the id
+/// already comes from elsewhere.
 ///
-/// Older portals derive the id from the process's systemd scope and do not
-/// serve this interface at all. That is not a failure: the registry is
-/// documented as something that may eventually be removed, so its absence and
-/// its refusal are both non-fatal and we let `CreateSession` deliver the real
-/// verdict.
-async fn register_host_app_id(connection: &ashpd::zbus::Connection) {
-    let options: HashMap<&str, ashpd::zvariant::Value<'_>> = HashMap::new();
-    let result = connection
-        .call_method(
-            Some("org.freedesktop.portal.Desktop"),
-            "/org/freedesktop/portal/desktop",
-            Some("org.freedesktop.host.portal.Registry"),
-            "Register",
-            &(APP_ID, options),
-        )
-        .await;
+/// Returns what happened, in the user's words, so a failure is visible in the
+/// setup window instead of only in a log nobody reads.
+async fn register_host_app_id() -> Result<(), String> {
+    let app_id = match ashpd::AppID::try_from(APP_ID) {
+        Ok(id) => id,
+        Err(e) => return Err(format!("`{APP_ID}` is not a usable application id: {e}")),
+    };
 
-    match result {
-        Ok(_) => tracing::debug!("Registered with the desktop portal as `{APP_ID}`"),
-        Err(ashpd::zbus::Error::MethodError(name, _, _))
-            if REGISTRY_ABSENT.contains(&name.as_str()) =>
-        {
+    match ashpd::register_host_app(app_id).await {
+        Ok(()) => {
+            tracing::debug!("Declared `{APP_ID}` to the desktop portal");
+            Ok(())
+        }
+        // A portal older than 1.20 does not serve this interface, and does not
+        // need it: it derives the id from the process's systemd scope. The
+        // registry is documented as something that may be removed again, so a
+        // missing interface has to stay non-fatal.
+        Err(ashpd::Error::PortalNotFound(_)) => {
             tracing::debug!(
-                "This xdg-desktop-portal has no host app registry ({name}); it predates the \
-                 app-id requirement, so there is nothing to declare"
+                "This xdg-desktop-portal has no host app registry; it predates the app-id \
+                 requirement, so there is nothing to declare"
             );
+            Ok(())
         }
-        Err(e) => {
-            // Most likely "already registered" from a second listener start in
-            // the same process. Worth a line, never worth failing over: if the
-            // id really is missing, CreateSession says so far more precisely.
-            tracing::warn!("Could not declare `{APP_ID}` to the desktop portal: {e}");
-        }
+        Err(e) => Err(format!("{e}")),
     }
 }
 
@@ -180,29 +162,17 @@ pub async fn start(
     rx_reload: ReloaderReceiver,
     health: Arc<ListenerHealth>,
 ) -> Result<(), PortalError> {
+    // Before the first portal call of any kind — see `register_host_app_id`.
+    let registration = register_host_app_id().await;
+
     let portal = GlobalShortcuts::new()
         .await
         .map_err(|e| PortalError::Unavailable(format!("{e}")))?;
 
-    // `GlobalShortcuts` derefs to the underlying `zbus::Proxy`, which is how we
-    // reach the one connection ashpd shares across the process. Registering on
-    // any other connection would declare the app id for the wrong D-Bus peer.
-    register_host_app_id(portal.connection()).await;
-
-    let session = portal.create_session().await.map_err(|e| {
-        let message = format!("{e}");
-        if message.contains("app id") {
-            // Distinct from "no portal here": the desktop is present and
-            // working, it just would not accept us.
-            PortalError::Rejected(format!(
-                "{message}. VoxCtrl declared itself as `{APP_ID}`, but this desktop did not \
-                 accept it — xdg-desktop-portal may be too old to support host app \
-                 registration while still requiring an app id."
-            ))
-        } else {
-            PortalError::Unavailable(message)
-        }
-    })?;
+    let session = portal
+        .create_session(Default::default())
+        .await
+        .map_err(|e| session_error(e, &registration))?;
 
     let groups = group_bindings(&bindings);
     let bound = bind_groups(&portal, &session, &groups).await?;
@@ -224,9 +194,31 @@ pub async fn start(
     Ok(())
 }
 
+/// Turn a refused session into something the user can act on.
+///
+/// The app-id case is worth separating: it is not "your desktop has no portal",
+/// and whether VoxCtrl managed to declare an id decides whether the next step is
+/// "update xdg-desktop-portal" or "here is why the declaration failed".
+fn session_error(e: ashpd::Error, registration: &Result<(), String>) -> PortalError {
+    let message = format!("{e}");
+    if !message.contains("app id") {
+        return PortalError::Unavailable(message);
+    }
+    PortalError::Rejected(match registration {
+        Err(why) => format!(
+            "{message}. VoxCtrl could not declare an application id to this desktop: {why}"
+        ),
+        Ok(()) => format!(
+            "{message}. VoxCtrl declared itself as `{APP_ID}` and the desktop accepted the \
+             declaration, then still refused the session — which points at a bug or a \
+             version mismatch in xdg-desktop-portal rather than anything you configured."
+        ),
+    })
+}
+
 async fn bind_groups(
-    portal: &GlobalShortcuts<'_>,
-    session: &Session<'_, GlobalShortcuts<'_>>,
+    portal: &GlobalShortcuts,
+    session: &Session<GlobalShortcuts>,
     groups: &[ShortcutGroup],
 ) -> Result<Vec<BoundShortcut>, PortalError> {
     let shortcuts: Vec<NewShortcut> = groups
@@ -242,7 +234,7 @@ async fn bind_groups(
     }
 
     let request = portal
-        .bind_shortcuts(session, &shortcuts, &Default::default())
+        .bind_shortcuts(session, &shortcuts, None, Default::default())
         .await
         .map_err(|e| PortalError::Rejected(format!("{e}")))?;
 
@@ -274,8 +266,8 @@ fn describe(groups: &[ShortcutGroup], shortcuts: &[Shortcut]) -> Vec<BoundShortc
 
 #[allow(clippy::too_many_arguments)]
 async fn run(
-    portal: GlobalShortcuts<'_>,
-    session: Session<'_, GlobalShortcuts<'_>>,
+    portal: GlobalShortcuts,
+    session: Session<GlobalShortcuts>,
     bindings: Vec<HotkeyBinding>,
     mut groups: Vec<ShortcutGroup>,
     tx: GestureSender,

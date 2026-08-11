@@ -35,14 +35,19 @@ The Settings → Hotkeys tab and the setup window both state which of these is i
 VoxCtrl talks to `org.freedesktop.portal.GlobalShortcuts` over D-Bus:
 
 0. It declares its application id — `ai.voxctrl.app` — through
-   `org.freedesktop.host.portal.Registry`. A sandboxed app gets an id from its
-   sandbox; a normal app on the host has none, and since xdg-desktop-portal 1.20
-   it is expected to say who it is. From 1.21 the GlobalShortcuts portal refuses
-   a session without one, which is the
-   `org.freedesktop.portal.Error.NotAllowed: An app id is required` a KDE
-   session reports. The declaration must happen before the first portal method
-   call and only once per D-Bus connection. Portals older than 1.20 do not serve
-   this interface, and its absence is not an error.
+   `org.freedesktop.host.portal.Registry`, via `ashpd::register_host_app`. A
+   sandboxed app gets an id from its sandbox; a normal app on the host has none,
+   and since xdg-desktop-portal 1.20 it is expected to say who it is. From 1.21
+   the GlobalShortcuts portal refuses a session without one, which is the
+   `org.freedesktop.portal.Error.NotAllowed: An app id is required` a current
+   KDE session reports.
+
+   This is the **first** thing VoxCtrl does, before any portal proxy exists. The
+   declaration is allowed once per D-Bus connection and only before the first
+   portal call on it, and ashpd shares one connection across every portal it
+   opens — so anything that touches a portal first spends that one chance.
+   Portals older than 1.20 do not serve this interface, and its absence is not
+   an error.
 1. It opens a portal session.
 2. It registers its shortcuts, one per distinct key combination, with the keys you configured as a *preferred* trigger.
 3. Your desktop decides what to actually bind — it may confirm with you, and it may assign different keys. Whatever it decides wins, and VoxCtrl displays the result.
@@ -72,10 +77,20 @@ On the evdev fallback and on Windows, VoxCtrl watches the keys itself and a bare
 A refusal is not the same as a missing portal, and the app says which it hit.
 "Your desktop has a global-shortcuts portal but refused VoxCtrl's request"
 means the interface is there and answered — switching desktops will not help.
-The usual cause is a version mismatch around the app-id requirement above;
-updating `xdg-desktop-portal` and its backend (`xdg-desktop-portal-kde` or
-`xdg-desktop-portal-gnome`) is the fix. The exact D-Bus error is shown verbatim
-under **Portal reported:** in the setup window.
+The message distinguishes the two app-id cases, because they need different
+answers:
+
+- *"VoxCtrl could not declare an application id to this desktop: …"* — the
+  declaration itself failed, and the reason is quoted. Usually an
+  `xdg-desktop-portal` too old to serve the registry while new enough to demand
+  an id.
+- *"…declared itself as `ai.voxctrl.app` and the desktop accepted the
+  declaration, then still refused the session"* — the handshake worked and the
+  portal still said no, which points at a portal bug rather than anything you
+  configured.
+
+The exact D-Bus error is shown verbatim under **Portal reported:** in the setup
+window either way.
 
 #### Bindings from older versions
 

@@ -62,8 +62,12 @@ zbus = { version = "4", features = ["tokio"] }
 # Desktop notifications
 notify-rust = "4"
 
-# xdg-desktop-portal bindings (Linux)
-ashpd = "0.9"
+# xdg-desktop-portal bindings (Linux). 0.13+ is required for
+# `register_host_app`: since xdg-desktop-portal 1.21 the GlobalShortcuts portal
+# refuses a session from a host app that has not declared an application id.
+# Only the shortcuts portal is compiled in; 0.13 gates each portal behind a
+# feature, and pulling the rest in would add code VoxCtrl never calls.
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "global_shortcuts"] }
 futures-util = "0.3"
 
 # Crypto (webhook HMAC)
