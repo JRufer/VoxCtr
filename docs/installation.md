@@ -260,16 +260,23 @@ from the tray.
 
 The usual causes, in order:
 
-1. **Your desktop has no global-shortcuts portal.** The setup window says so
+1. **On KDE, the shortcuts are registered but not enabled.** This is the most
+   common cause on KDE Plasma: an upstream bug
+   ([#483639](https://bugs.kde.org/show_bug.cgi?id=483639)) leaves
+   portal-registered shortcuts unticked in System Settings. Settings →
+   Hotkeys shows a notice with an **Open Shortcut Settings** button when this
+   applies — see
+   [Hotkeys → KDE registers shortcuts disabled by default](hotkeys.md#kde-registers-shortcuts-disabled-by-default).
+2. **Your desktop has no global-shortcuts portal.** The setup window says so
    explicitly. Supported: KDE Plasma 5.27+, GNOME 48+, Hyprland. Not supported:
    Sway and most other wlroots compositors. VoxCtrl will not grant itself
    keyboard access to work around this.
-2. **Your desktop refused or reassigned the shortcut.** Settings → Hotkeys shows
+3. **Your desktop refused or reassigned the shortcut.** Settings → Hotkeys shows
    the keys your desktop actually bound next to each binding, and flags any it
    would not accept. Bindings on a bare modifier (a lone Super, say) usually
    have to be chosen in your desktop's own shortcut settings, because a lone
    modifier is not a valid accelerator.
-3. **`xdg-desktop-portal` is not running.** Check with
+4. **`xdg-desktop-portal` is not running.** Check with
    `systemctl --user status xdg-desktop-portal`, and confirm the interface is
    present:
 

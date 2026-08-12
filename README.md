@@ -27,6 +27,11 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 > explains the trade-off — it will not grant itself keyboard access to work
 > around it, because that access would apply to every program you run, not just
 > this one.
+>
+> On KDE Plasma specifically, an upstream bug leaves portal shortcuts
+> registered but unticked in System Settings until you enable them yourself.
+> VoxCtrl detects this and shows a one-click **Open Shortcut Settings** button
+> — see [KDE registers shortcuts disabled by default](docs/hotkeys.md#kde-registers-shortcuts-disabled-by-default).
 
 ---
 
