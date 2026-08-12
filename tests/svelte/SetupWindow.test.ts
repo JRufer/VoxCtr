@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, fireEvent } from "@testing-library/svelte";
 import UdevWarning from "../../src/lib/Diagnostics/UdevWarning.svelte";
 
 const invoke = vi.fn();
@@ -37,6 +37,8 @@ function setupStatus({ hotkeys = {}, status = {} }: Overrides = {}) {
       devices_total: 0,
       devices_readable: 0,
       needs_attention: false,
+      needs_manual_enable: false,
+      manual_enable_hint: null,
       detail: "Your desktop is handling VoxCtrl's global shortcuts.",
       ...hotkeys,
     },
@@ -55,6 +57,7 @@ function setupStatus({ hotkeys = {}, status = {} }: Overrides = {}) {
 function mockStatus(overrides?: Overrides) {
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === "get_setup_status") return setupStatus(overrides);
+    if (cmd === "open_shortcut_settings") return null;
     return {};
   });
 }
@@ -215,6 +218,59 @@ describe("Setup window", () => {
 
     expect(await screen.findByText(/no action needed/i)).toBeTruthy();
     expect(screen.queryByText("Download tiny")).toBeNull();
+  });
+
+  test("flags shortcuts KDE registered but left disabled, with a button to fix it", async () => {
+    mockStatus({
+      hotkeys: {
+        needs_manual_enable: true,
+        manual_enable_hint:
+          "KDE registers VoxCtrl's shortcuts disabled by default (KDE bug 483639). Open Shortcut Settings, tick the box next to each VoxCtrl shortcut, and press Apply.",
+      },
+      status: { hotkeys_active: false, is_complete: false },
+    });
+
+    render(UdevWarning);
+
+    expect(await screen.findByText(/One more step on KDE/i)).toBeTruthy();
+    expect(await screen.findByText(/KDE bug 483639/i)).toBeTruthy();
+    const btn = await screen.findByRole("button", { name: /Open Shortcut Settings/i });
+    await fireEvent.click(btn);
+
+    expect(invoke).toHaveBeenCalledWith("open_shortcut_settings", undefined);
+  });
+
+  test("shows an error if opening shortcut settings fails", async () => {
+    const overrides: Overrides = {
+      hotkeys: {
+        needs_manual_enable: true,
+        manual_enable_hint: "Open Shortcut Settings and enable VoxCtrl's shortcuts.",
+      },
+      status: { hotkeys_active: false, is_complete: false },
+    };
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_setup_status") return setupStatus(overrides);
+      if (cmd === "open_shortcut_settings") {
+        throw new Error("Could not find a way to open your desktop's shortcut settings automatically.");
+      }
+      return {};
+    });
+
+    render(UdevWarning);
+
+    const btn = await screen.findByRole("button", { name: /Open Shortcut Settings/i });
+    await fireEvent.click(btn);
+
+    expect(await screen.findByText(/Could not find a way to open/i)).toBeTruthy();
+  });
+
+  test("does not show the manual-enable notice when the desktop needs no extra step", async () => {
+    mockStatus();
+
+    render(UdevWarning);
+
+    await screen.findByText("Global shortcuts");
+    expect(screen.queryByText(/One more step on KDE/i)).toBeNull();
   });
 
   test("reports a finished setup", async () => {

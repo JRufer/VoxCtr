@@ -8,6 +8,8 @@ let mockTargets: OutputTarget[] = [];
 let mockHotkeyStatus: Record<string, unknown> = {};
 let mockKeysChecks: Array<Record<string, unknown>> = [];
 let keysCheckCalls: string[][] = [];
+let openShortcutSettingsCalls = 0;
+let openShortcutSettingsResult: "ok" | string = "ok";
 
 // Mock tauri invoke
 vi.mock("@tauri-apps/api/core", () => ({
@@ -24,6 +26,13 @@ vi.mock("@tauri-apps/api/core", () => ({
     if (cmd === "check_hotkey_keys") {
       keysCheckCalls.push([...((args as { keys: string[] })?.keys ?? [])]);
       return mockKeysChecks.shift() ?? { accepted: true, enforced: false, accelerator: null, problem: null, message: null };
+    }
+    if (cmd === "open_shortcut_settings") {
+      openShortcutSettingsCalls += 1;
+      if (openShortcutSettingsResult !== "ok") {
+        throw new Error(openShortcutSettingsResult);
+      }
+      return null;
     }
     return {};
   }),
@@ -52,6 +61,8 @@ function hotkeyStatus(overrides: Record<string, unknown> = {}) {
     devices_total: 0,
     devices_readable: 0,
     needs_attention: false,
+    needs_manual_enable: false,
+    manual_enable_hint: null,
     detail: "Your desktop is handling VoxCtrl's global shortcuts.",
     ...overrides,
   };
@@ -76,6 +87,8 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     mockHotkeyStatus = hotkeyStatus();
     mockKeysChecks = [];
     keysCheckCalls = [];
+    openShortcutSettingsCalls = 0;
+    openShortcutSettingsResult = "ok";
   });
 
   test("refuses a bare-modifier capture and says why", async () => {
@@ -373,6 +386,44 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     render(HotkeysTab);
 
     expect(await screen.findByText("Reading input devices directly")).toBeTruthy();
+  });
+
+  test("flags shortcuts KDE registered but left disabled, with a button to fix it", async () => {
+    mockHotkeyStatus = hotkeyStatus({
+      needs_manual_enable: true,
+      manual_enable_hint:
+        "KDE registers VoxCtrl's shortcuts disabled by default (KDE bug 483639). Open Shortcut Settings, tick the box next to each VoxCtrl shortcut, and press Apply.",
+    });
+
+    render(HotkeysTab);
+
+    expect(await screen.findByText(/One more step on KDE/i)).toBeTruthy();
+    expect(await screen.findByText(/KDE bug 483639/i)).toBeTruthy();
+    const btn = await screen.findByRole("button", { name: /Open Shortcut Settings/i });
+    await fireEvent.click(btn);
+
+    expect(openShortcutSettingsCalls).toBe(1);
+  });
+
+  test("shows an error if opening shortcut settings fails", async () => {
+    mockHotkeyStatus = hotkeyStatus({
+      needs_manual_enable: true,
+      manual_enable_hint: "Open Shortcut Settings and enable VoxCtrl's shortcuts.",
+    });
+    openShortcutSettingsResult = "Could not find a way to open your desktop's shortcut settings automatically.";
+
+    render(HotkeysTab);
+
+    const btn = await screen.findByRole("button", { name: /Open Shortcut Settings/i });
+    await fireEvent.click(btn);
+
+    expect(await screen.findByText(/Could not find a way to open/i)).toBeTruthy();
+  });
+
+  test("does not show the manual-enable notice when the desktop needs no extra step", async () => {
+    render(HotkeysTab);
+
+    expect(screen.queryByText(/One more step on KDE/i)).toBeNull();
   });
 
   test("does not show conflict warnings when there are no conflicts", async () => {

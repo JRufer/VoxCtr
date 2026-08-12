@@ -125,15 +125,34 @@
     devices_readable: number;
     needs_attention: boolean;
     detail: string;
+    // KDE registers portal shortcuts disabled and gives no way to check that
+    // over D-Bus, so this is a standing warning on KDE rather than a detected
+    // fact about any one shortcut. See docs/hotkeys.md.
+    needs_manual_enable: boolean;
+    manual_enable_hint: string | null;
   };
 
   let hotkeyStatus = $state<HotkeyStatus | null>(null);
+  let openingShortcutSettings = $state(false);
+  let openShortcutSettingsError = $state<string | null>(null);
 
   async function refreshHotkeyStatus() {
     try {
       hotkeyStatus = await invoke<HotkeyStatus>("check_hotkey_status");
     } catch (e) {
       console.error("Failed to read hotkey status:", e);
+    }
+  }
+
+  async function openShortcutSettings() {
+    openingShortcutSettings = true;
+    openShortcutSettingsError = null;
+    try {
+      await invoke("open_shortcut_settings");
+    } catch (e: any) {
+      openShortcutSettingsError = e?.toString() ?? "Could not open shortcut settings.";
+    } finally {
+      openingShortcutSettings = false;
     }
   }
 
@@ -566,6 +585,28 @@
     </div>
   {/if}
 
+  {#if hotkeyStatus?.needs_manual_enable}
+    <div class="manual-enable-banner">
+      <span class="backend-icon">🔧</span>
+      <span class="backend-body">
+        <strong>One more step on KDE: enable these shortcuts yourself</strong>
+        <span class="backend-detail">{hotkeyStatus.manual_enable_hint}</span>
+        <div class="manual-enable-actions">
+          <button
+            class="btn-action primary"
+            onclick={openShortcutSettings}
+            disabled={openingShortcutSettings}
+          >
+            {openingShortcutSettings ? "Opening…" : "Open Shortcut Settings"}
+          </button>
+        </div>
+        {#if openShortcutSettingsError}
+          <span class="backend-detail error">{openShortcutSettingsError}</span>
+        {/if}
+      </span>
+    </div>
+  {/if}
+
   <button class="btn-add-wide" onclick={addNewBinding}>
     ＋ Add New Hotkey Binding
   </button>
@@ -947,6 +988,46 @@
 
 <style>
   @reference "tailwindcss";
+
+  .backend-banner {
+    @apply flex items-start gap-2.5 rounded-[var(--radius)] p-3 px-3.5 mb-1 border bg-white/[0.03] border-[var(--border)];
+  }
+
+  .backend-banner.private {
+    @apply bg-emerald-500/6 border-emerald-500/25;
+  }
+
+  .backend-banner.warn {
+    @apply bg-amber-500/6 border-amber-500/25;
+  }
+
+  .backend-banner.broken {
+    @apply bg-red-500/6 border-red-500/25;
+  }
+
+  .backend-icon {
+    @apply text-base leading-none shrink-0 mt-0.5;
+  }
+
+  .backend-body {
+    @apply flex flex-col gap-1 min-w-0 flex-1 text-[12.5px];
+  }
+
+  .backend-detail {
+    @apply text-[var(--text-muted)] leading-relaxed;
+  }
+
+  .backend-detail.error {
+    @apply text-red-400;
+  }
+
+  .manual-enable-banner {
+    @apply flex items-start gap-2.5 rounded-[var(--radius)] p-3 px-3.5 mb-1 border bg-amber-500/6 border-amber-500/25;
+  }
+
+  .manual-enable-actions {
+    @apply mt-1;
+  }
 
   .keys-rejected {
     @apply flex items-start gap-2 p-2.5 rounded-md bg-red-500/10 border border-red-500/25 text-[12px] leading-relaxed text-red-300;

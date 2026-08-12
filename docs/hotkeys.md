@@ -104,6 +104,28 @@ answers:
 The exact D-Bus error is shown verbatim under **Portal reported:** in the setup
 window either way.
 
+#### KDE registers shortcuts disabled by default
+
+On KDE Plasma, `xdg-desktop-portal-kde` accepts VoxCtrl's `BindShortcuts`
+request and lists the shortcuts in System Settings → Shortcuts, but leaves
+them **unticked**. Nothing delivers until you open that panel, check the box
+next to each VoxCtrl shortcut, and press Apply. This is a confirmed upstream
+bug — [bugs.kde.org #483639](https://bugs.kde.org/show_bug.cgi?id=483639) —
+not something wrong with your configuration, and it is the most common reason
+a freshly-set-up shortcut on KDE does nothing.
+
+There is no D-Bus API that reports whether a registered shortcut is ticked, so
+VoxCtrl cannot detect completion of this step or complete it on your behalf —
+doing either would require an interface the portal does not expose. What it
+does instead: when the backend is the portal and the desktop is KDE, the
+Hotkeys tab and the setup window show a standing notice explaining the step,
+with an **Open Shortcut Settings** button that launches
+`kcmshell6`/`kcmshell5 kcm_globalaccel` (falling back to `systemsettings(6)`)
+directly to the right panel. This notice does not block `is_complete` or
+`hotkeys_active` — the portal gives no way to tell whether you have already
+done it, so treating it as a hard requirement would leave the app reporting
+"incomplete" forever for KDE users who already ticked the boxes.
+
 #### Bindings from older versions
 
 A binding saved before this rule existed is not deleted and not silently broken. It is flagged **needs a regular key** in the Hotkeys tab, and VoxCtrl still registers it with the portal without a preferred trigger — which asks your desktop to let you pick the keys in its own settings. Editing the binding and choosing a valid combination is the clean fix.

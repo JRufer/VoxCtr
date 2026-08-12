@@ -21,6 +21,8 @@
     devices_total: number;
     devices_readable: number;
     needs_attention: boolean;
+    needs_manual_enable: boolean;
+    manual_enable_hint: string | null;
     detail: string;
   };
 
@@ -44,6 +46,8 @@
   let errorMsg = $state<string | null>(null);
   let showManual = $state(false);
   let copied = $state(false);
+  let openingShortcutSettings = $state(false);
+  let openShortcutSettingsError = $state<string | null>(null);
 
   // Polled rather than fetched once: the portal handshake finishes a moment
   // after launch, and the user may grant or change a shortcut in their
@@ -108,6 +112,18 @@
       await invoke("open_settings_tab", { tab: "engine" });
     } catch (err) {
       console.error("Failed to open the Engine settings tab:", err);
+    }
+  }
+
+  async function openShortcutSettings() {
+    openingShortcutSettings = true;
+    openShortcutSettingsError = null;
+    try {
+      await invoke("open_shortcut_settings");
+    } catch (err: any) {
+      openShortcutSettingsError = err?.toString() ?? "Could not open shortcut settings.";
+    } finally {
+      openingShortcutSettings = false;
     }
   }
 
@@ -202,6 +218,24 @@
                     </li>
                   {/each}
                 </ul>
+              {/if}
+
+              {#if setup.hotkeys.needs_manual_enable}
+                <p class="warn-note">
+                  🔧 One more step on KDE: {setup.hotkeys.manual_enable_hint}
+                </p>
+                <div class="step-actions">
+                  <button
+                    class="btn-primary"
+                    onclick={openShortcutSettings}
+                    disabled={openingShortcutSettings}
+                  >
+                    {openingShortcutSettings ? "Opening…" : "Open Shortcut Settings"}
+                  </button>
+                </div>
+                {#if openShortcutSettingsError}
+                  <p class="warn-note">{openShortcutSettingsError}</p>
+                {/if}
               {/if}
             {:else if setup.hotkeys.backend === "evdev"}
               <p class="warn-note">

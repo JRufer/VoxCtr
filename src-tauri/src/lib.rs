@@ -1194,6 +1194,7 @@ pub fn run() {
             cuda_enabled,
             check_hotkey_status,
             check_hotkey_keys,
+            open_shortcut_settings,
             install_system_integration,
             get_setup_status,
             download_configured_model,
@@ -1710,6 +1711,138 @@ mod tests {
         assert!(!res.is_private);
         assert!(!res.needs_attention, "shortcuts do work in this state");
         assert!(res.portal_error.is_some());
+    }
+
+    #[test]
+    fn hotkey_status_flags_kde_for_the_manual_enable_bug() {
+        // xdg-desktop-portal-kde registers shortcuts disabled and gives VoxCtrl
+        // no way to see that — this is the standing warning that fills the gap,
+        // scoped to the one desktop the bug is confirmed on (bugs.kde.org
+        // #483639) so it does not cry wolf where binding really is instant.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("XDG_CURRENT_DESKTOP", "KDE");
+
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert!(res.needs_manual_enable);
+        let hint = res.manual_enable_hint.expect("must explain the fix");
+        assert!(hint.contains("Apply"), "{hint}");
+        assert!(hint.contains("483639"), "{hint}");
+
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+    }
+
+    #[test]
+    fn hotkey_status_does_not_flag_desktops_without_the_bug() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("XDG_CURRENT_DESKTOP", "GNOME");
+        std::env::remove_var("KDE_FULL_SESSION");
+
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert!(!res.needs_manual_enable);
+        assert!(res.manual_enable_hint.is_none());
+
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+    }
+
+    #[test]
+    fn hotkey_status_scopes_the_kde_warning_to_the_portal_backend() {
+        // The bug is specifically in how xdg-desktop-portal-kde hands off
+        // BindShortcuts; the evdev fallback never goes near it.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("XDG_CURRENT_DESKTOP", "KDE");
+
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_portal_error("no such interface".to_string());
+        health.set_backend(voxctrl_hotkeys::Backend::Evdev);
+        health.set_keyboards_open(1);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert!(!res.needs_manual_enable, "the evdev path never hits this bug");
+
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+    }
+
+    #[test]
+    fn hotkey_status_recognises_kde_via_the_legacy_full_session_variable() {
+        // Some Plasma sessions do not populate XDG_CURRENT_DESKTOP as "KDE";
+        // KDE_FULL_SESSION is the older, still-set fallback signal.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+        std::env::set_var("KDE_FULL_SESSION", "true");
+
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert!(res.needs_manual_enable);
+
+        std::env::remove_var("KDE_FULL_SESSION");
+    }
+
+    #[test]
+    fn hotkey_status_honours_the_kde_manual_enable_test_override() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+
+        std::env::set_var("VOXCTRL_TEST_HOTKEY_STATUS", "kde_manual_enable");
+        let res = crate::commands::hotkey_status(&health);
+        assert!(res.needs_manual_enable);
+        assert!(res.manual_enable_hint.is_some());
+
+        std::env::remove_var("VOXCTRL_TEST_HOTKEY_STATUS");
+    }
+
+    #[tokio::test]
+    async fn open_shortcut_settings_prefers_the_kde_module_when_available() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("VOXCTRL_FAKE_COMMANDS", "kcmshell6,gnome-control-center");
+        std::env::set_var("VOXCTRL_INSTALLER_TEST_MOCK", "1");
+
+        let res = crate::commands::open_shortcut_settings().await;
+        assert!(res.is_ok(), "{res:?}");
+
+        std::env::remove_var("VOXCTRL_FAKE_COMMANDS");
+        std::env::remove_var("VOXCTRL_INSTALLER_TEST_MOCK");
+    }
+
+    #[tokio::test]
+    async fn open_shortcut_settings_falls_back_down_the_candidate_list() {
+        // Only the last-resort GNOME panel is "installed" — the command must
+        // still succeed by walking past every unavailable candidate first,
+        // not give up at the first miss.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("VOXCTRL_FAKE_COMMANDS", "gnome-control-center");
+        std::env::set_var("VOXCTRL_INSTALLER_TEST_MOCK", "1");
+
+        let res = crate::commands::open_shortcut_settings().await;
+        assert!(res.is_ok(), "{res:?}");
+
+        std::env::remove_var("VOXCTRL_FAKE_COMMANDS");
+        std::env::remove_var("VOXCTRL_INSTALLER_TEST_MOCK");
+    }
+
+    #[tokio::test]
+    async fn open_shortcut_settings_explains_itself_when_nothing_is_installed() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("VOXCTRL_FAKE_COMMANDS", "");
+        std::env::set_var("VOXCTRL_INSTALLER_TEST_MOCK", "1");
+
+        let err = crate::commands::open_shortcut_settings().await.unwrap_err();
+        assert!(err.contains("System Settings"), "{err}");
+
+        std::env::remove_var("VOXCTRL_FAKE_COMMANDS");
+        std::env::remove_var("VOXCTRL_INSTALLER_TEST_MOCK");
     }
 
     #[test]

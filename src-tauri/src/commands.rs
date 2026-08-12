@@ -751,6 +751,43 @@ pub struct HotkeyStatusPayload {
     pub needs_attention: bool,
     /// One-line, human-readable explanation of the state above.
     pub detail: String,
+    /// KDE registers portal shortcuts into System Settings in a *disabled*
+    /// state — the user must open Shortcuts, tick each one, and click Apply
+    /// before it fires. This is a confirmed upstream xdg-desktop-portal-kde
+    /// bug (bugs.kde.org #483639), not something VoxCtrl's registration got
+    /// wrong, and the portal protocol has no "enabled" bit for VoxCtrl to
+    /// check — so this is a standing warning on KDE + portal, not a detected
+    /// fact about any particular shortcut.
+    pub needs_manual_enable: bool,
+    /// What to tell the user about `needs_manual_enable`, and how to fix it.
+    /// `None` when `needs_manual_enable` is false.
+    pub manual_enable_hint: Option<String>,
+}
+
+/// `XDG_CURRENT_DESKTOP` is a colon-separated list (e.g. `ubuntu:GNOME`); any
+/// entry can match. `KDE_FULL_SESSION` is a legacy fallback Plasma still sets
+/// when the desktop-name entry is missing or non-standard.
+#[cfg(target_os = "linux")]
+fn desktop_environment() -> Option<String> {
+    let current = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    if current.split(':').any(|d| d.eq_ignore_ascii_case("KDE")) {
+        return Some("KDE".to_string());
+    }
+    if std::env::var_os("KDE_FULL_SESSION").is_some() {
+        return Some("KDE".to_string());
+    }
+    if current.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")) {
+        return Some("GNOME".to_string());
+    }
+    current
+        .split(':')
+        .find(|d| !d.is_empty())
+        .map(|d| d.to_string())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn desktop_environment() -> Option<String> {
+    None
 }
 
 #[cfg(target_os = "linux")]
@@ -817,6 +854,12 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
     }
 
     let backend = health.backend();
+    let desktop = desktop_environment();
+    // Only KDE is a confirmed case of this bug at the time of writing. Scoping
+    // the warning to it, rather than showing it on every portal backend,
+    // keeps it from crying wolf on desktops where binding really is instant.
+    let needs_manual_enable = backend == voxctrl_hotkeys::Backend::Portal
+        && desktop.as_deref() == Some("KDE");
     let (devices_total, devices_readable) = match backend {
         // Nothing was opened and nothing needs to be; probing /dev/input here
         // would only invite a misleading "0 readable" in the UI.
@@ -896,6 +939,15 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
         devices_readable,
         needs_attention: !health.is_active(),
         detail,
+        needs_manual_enable,
+        manual_enable_hint: needs_manual_enable.then(|| {
+            "KDE registers VoxCtrl's shortcuts as disabled until you turn them on yourself: \
+             open Shortcuts, find VoxCtrl, tick the box next to each shortcut, and click \
+             Apply. This is a known KDE bug (xdg-desktop-portal-kde #483639), not something \
+             VoxCtrl's setup missed — the portal gives VoxCtrl no way to tell whether a \
+             shortcut is enabled, so this step cannot be automated or skipped."
+                .to_string()
+        }),
     }
 }
 
@@ -914,9 +966,21 @@ fn test_override(value: &str) -> Option<HotkeyStatusPayload> {
         devices_readable: 0,
         needs_attention: false,
         detail: "Your desktop is handling VoxCtrl's global shortcuts.".to_string(),
+        needs_manual_enable: false,
+        manual_enable_hint: None,
     };
     match value {
         "portal" => Some(base),
+        "kde_manual_enable" => Some(HotkeyStatusPayload {
+            needs_manual_enable: true,
+            manual_enable_hint: Some(
+                "KDE registers VoxCtrl's shortcuts as disabled until you turn them on \
+                 yourself: open Shortcuts, find VoxCtrl, tick the box next to each \
+                 shortcut, and click Apply."
+                    .to_string(),
+            ),
+            ..base
+        }),
         "evdev" => Some(HotkeyStatusPayload {
             backend: "evdev".to_string(),
             is_private: false,
@@ -953,6 +1017,79 @@ fn test_override(value: &str) -> Option<HotkeyStatusPayload> {
         }),
         _ => None,
     }
+}
+
+/// Launch the desktop's own global-shortcuts settings panel, best-effort.
+///
+/// Exists for the KDE `needs_manual_enable` case — there is no D-Bus verb that
+/// flips a portal shortcut from disabled to enabled, so the fix genuinely is
+/// "open this panel yourself". Tries the KDE System Settings module directly
+/// first (skips the home screen the user would otherwise have to navigate
+/// through by hand, which is the whole point of the button), then falls back
+/// to whatever System Settings binary exists, then to GNOME's keyboard panel
+/// on the off chance this is ever needed there too.
+///
+/// Errors only when nothing in the list is installed — a real signal the user
+/// is not actually on the desktop this feature assumes, worth surfacing
+/// rather than silently doing nothing.
+#[tauri::command]
+pub async fn open_shortcut_settings() -> Result<(), String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        return Err("Opening system shortcut settings is only supported on Linux.".to_string());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        for (bin, args) in shortcut_settings_candidates() {
+            if !crate::installer::command_exists(bin) {
+                continue;
+            }
+            match spawn_shortcut_settings(bin, args) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    tracing::warn!("Found `{bin}` but failed to launch it: {e}");
+                    continue;
+                }
+            }
+        }
+
+        Err("Could not find a way to open your desktop's shortcut settings automatically. \
+             Open System Settings yourself and look for Shortcuts → VoxCtrl."
+            .to_string())
+    }
+}
+
+/// Tried in order: the KDE System Settings module directly (skips the home
+/// screen the user would otherwise navigate through by hand — the whole point
+/// of the button), then whichever System Settings binary exists, then GNOME's
+/// keyboard panel on the off chance this is ever needed there too.
+#[cfg(target_os = "linux")]
+fn shortcut_settings_candidates() -> &'static [(&'static str, &'static [&'static str])] {
+    &[
+        ("kcmshell6", &["kcm_globalaccel"]),
+        ("kcmshell5", &["kcm_globalaccel"]),
+        ("systemsettings6", &["kcm_globalaccel"]),
+        ("systemsettings", &["kcm_globalaccel"]),
+        ("gnome-control-center", &["keyboard"]),
+    ]
+}
+
+/// Fire-and-forget: these are GUI apps meant to stay open long after this
+/// command returns, so there is nothing useful to await here.
+#[cfg(target_os = "linux")]
+fn spawn_shortcut_settings(bin: &str, args: &[&str]) -> Result<(), String> {
+    #[cfg(test)]
+    {
+        if std::env::var_os("VOXCTRL_INSTALLER_TEST_MOCK").is_some() {
+            return Ok(());
+        }
+    }
+    std::process::Command::new(bin)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Verdict on a key combination the user just recorded.

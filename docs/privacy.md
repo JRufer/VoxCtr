@@ -42,6 +42,8 @@ pub struct GestureEvent {
 
 No key names. No timing of individual presses. Nothing about what you typed. This is the only hotkey data that reaches the rest of the app, and the only thing the UI layer ever sees.
 
+On KDE Plasma, the portal accepts these shortcuts but leaves them disabled in System Settings until you tick a box and press Apply — an upstream KDE bug, not a VoxCtrl privacy question. See [KDE registers shortcuts disabled by default](hotkeys.md#kde-registers-shortcuts-disabled-by-default).
+
 ### What VoxCtrl deliberately stopped doing: reading `/dev/input`
 
 Earlier versions read `/dev/input/event*` directly, which requires a udev rule tagging input devices with `uaccess`:
