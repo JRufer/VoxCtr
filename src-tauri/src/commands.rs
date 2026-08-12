@@ -1067,10 +1067,10 @@ pub async fn open_shortcut_settings() -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn shortcut_settings_candidates() -> &'static [(&'static str, &'static [&'static str])] {
     &[
-        ("kcmshell6", &["kcm_globalaccel"]),
-        ("kcmshell5", &["kcm_globalaccel"]),
-        ("systemsettings6", &["kcm_globalaccel"]),
-        ("systemsettings", &["kcm_globalaccel"]),
+        ("kcmshell6", &["kcm_keys"]),
+        ("kcmshell5", &["kcm_keys"]),
+        ("systemsettings6", &["kcm_keys"]),
+        ("systemsettings", &["kcm_keys"]),
         ("gnome-control-center", &["keyboard"]),
     ]
 }

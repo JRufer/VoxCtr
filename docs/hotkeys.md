@@ -120,7 +120,7 @@ doing either would require an interface the portal does not expose. What it
 does instead: when the backend is the portal and the desktop is KDE, the
 Hotkeys tab and the setup window show a standing notice explaining the step,
 with an **Open Shortcut Settings** button that launches
-`kcmshell6`/`kcmshell5 kcm_globalaccel` (falling back to `systemsettings(6)`)
+`kcmshell6`/`kcmshell5 kcm_keys` (falling back to `systemsettings(6)`)
 directly to the right panel. This notice does not block `is_complete` or
 `hotkeys_active` — the portal gives no way to tell whether you have already
 done it, so treating it as a hard requirement would leave the app reporting
