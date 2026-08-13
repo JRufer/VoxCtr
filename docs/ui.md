@@ -43,7 +43,7 @@ The main configuration interface. Organized into a sidebar with nine tabs:
 - Visual editor for `targets.toml` — add/edit/delete output targets
 - Per-target fields: label, delivery type, type-specific options
 - Per-target processing override controls
-- Hotkey binding management (add/edit/delete bindings, key combo recorder, gesture selector)
+- Hotkey binding management (add/edit/delete bindings, key combo recorder, gesture selector). Shows which mechanism is delivering shortcuts and, on the portal path, the keys your desktop actually bound for each binding — which may differ from what was requested, since your desktop gets the final say. The key recorder captures inside VoxCtrl's own focused window using ordinary browser key events; it is not a global listener. It refuses combinations no desktop can bind — modifiers with no regular key, or two regular keys — explains why while you are still recording, and leaves the existing shortcut in place.
 
 ### Visual Tab
 - Preview and selection of overlay animation styles

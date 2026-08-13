@@ -39,14 +39,15 @@ const SETUP_WINDOW: &str = "udev-warning";
 /// push-to-talk key does not produce a wall of toasts.
 const SETUP_NOTICE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// How often the setup watcher re-checks permissions. Short enough that
-/// finishing the setup — in the app, in a terminal, anywhere — visibly flips
-/// the app to working within a couple of seconds.
+/// How often the setup watcher re-checks the listener. Short enough that a
+/// change made elsewhere — the portal coming up, a shortcut reassigned in the
+/// desktop's settings — visibly flips the app to working within a couple of
+/// seconds.
 const SETUP_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Re-alert cadence while VoxCtrl cannot read the keyboard at all. In that
-/// state no shortcut can reach the app, so this is the only way the user hears
-/// about it while they are pressing keys and getting nothing.
+/// Re-alert cadence while nothing can deliver shortcuts at all. In that state
+/// no shortcut can reach the app, so this is the only way the user hears about
+/// it while they are pressing keys and getting nothing.
 const BLIND_ALERT_INTERVAL: Duration = Duration::from_secs(300);
 
 /// The tray entry that doubles as the setup indicator.
@@ -54,7 +55,7 @@ static SETUP_MENU_ITEM: std::sync::OnceLock<tauri::menu::MenuItem<tauri::Wry>> =
     std::sync::OnceLock::new();
 
 const TRAY_SETUP_OK: &str = "🩺  Setup & Diagnostics";
-const TRAY_SETUP_BROKEN: &str = "⚠️  Finish setup — hotkeys inactive";
+const TRAY_SETUP_BROKEN: &str = "⚠️  Global shortcuts unavailable";
 
 /// Reflect setup state in the tray, which is the one piece of VoxCtrl UI that
 /// is always on screen.
@@ -69,7 +70,7 @@ fn update_tray_for_setup(app: &tauri::AppHandle, ok: bool) {
             let _ = tray.set_tooltip(Some(if ok {
                 "VoxCtrl"
             } else {
-                "VoxCtrl — setup unfinished, global hotkeys are inactive"
+                "VoxCtrl — global shortcuts are unavailable"
             }));
         }
     });
@@ -220,14 +221,6 @@ pub fn run() {
         let _ = registry.with(fl).try_init();
     } else {
         let _ = registry.try_init();
-    }
-
-    // Before anything is built: if setup already ran but this login session
-    // never picked up the new input permissions, restart into a process that
-    // has them. This is what used to be "log out and log back in".
-    #[cfg(target_os = "linux")]
-    if crate::installer::auto_relaunch_if_pending() {
-        return;
     }
 
     let config = Config::load();
@@ -399,7 +392,6 @@ pub fn run() {
             target_ids: vec![],
             tap_ms: 250,
             hold_threshold_ms: 0,
-            subkey: None,
             disabled: false,
             openai_enabled: Some(false),
             openai_model: None,
@@ -754,7 +746,7 @@ pub fn run() {
                         if active && was_active == Some(false) {
                             voxctrl_inject::show_notification(
                                 "VoxCtrl",
-                                "Keyboard permissions are active — your global shortcuts work now.",
+                                "Your global shortcuts are registered and working now.",
                             );
                         }
 
@@ -773,9 +765,10 @@ pub fn run() {
                                     show_setup_window();
                                 } else {
                                     voxctrl_inject::show_notification(
-                                        "VoxCtrl — setup unfinished",
-                                        "VoxCtrl still cannot read your keyboard, so global \
-                                         shortcuts do nothing. Open VoxCtrl to finish setup.",
+                                        "VoxCtrl — global shortcuts unavailable",
+                                        "Nothing on this desktop can deliver VoxCtrl's \
+                                         shortcuts, so pressing them does nothing. Open \
+                                         VoxCtrl to see why.",
                                     );
                                 }
                             }
@@ -1199,9 +1192,10 @@ pub fn run() {
             check_directory_exists,
             test_openai,
             cuda_enabled,
-            check_udev_status,
+            check_hotkey_status,
+            check_hotkey_keys,
+            open_shortcut_settings,
             install_system_integration,
-            restart_for_permissions,
             get_setup_status,
             download_configured_model,
             open_settings_tab,
@@ -1589,108 +1583,319 @@ mod tests {
         let _ = std::fs::remove_file(&path_b);
     }
 
-    #[tokio::test]
-    async fn test_check_udev_status_env_overrides() {
-        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
-        std::env::set_var("VOXCTRL_TEST_UDEV_STATUS", "missing");
-        let res = check_udev_status().await.unwrap();
-        assert!(!res.is_configured);
-        assert!(!res.rule_exists);
-        assert!(!res.in_group);
-        assert!(!res.needs_relogin);
+    #[test]
+    fn bare_modifier_shortcuts_are_refused_on_the_portal() {
+        // The case the settings recorder has to catch. A lone Super reads as a
+        // perfectly good hotkey to a user and no desktop can bind it, so the
+        // rejection has to name the rule and say what to press instead.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
 
-        std::env::set_var("VOXCTRL_TEST_UDEV_STATUS", "relogin");
-        let res = check_udev_status().await.unwrap();
-        assert!(!res.is_configured);
-        assert!(res.rule_exists);
-        assert!(!res.in_group);
-        assert!(res.needs_relogin);
-
-        std::env::set_var("VOXCTRL_TEST_UDEV_STATUS", "ok");
-        let res = check_udev_status().await.unwrap();
-        assert!(res.is_configured);
-        assert!(res.rule_exists);
-        assert!(res.in_group);
-        assert!(!res.needs_relogin);
-
-        std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
-    }
-
-    #[tokio::test]
-    async fn test_check_udev_status_session_semantics() {
-        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
-        #[cfg(target_os = "linux")]
-        {
-            std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
-            let res = check_udev_status().await.unwrap();
-
-            // in_group must reflect the ACTIVE session: process groups or
-            // actually-readable /dev/input devices. Database-only membership
-            // (usermod ran, no relogin yet) must NOT count — the evdev
-            // listener would still fail — it maps to needs_relogin instead.
-            let session_has_input = match std::process::Command::new("id").args(&["-Gn"]).output() {
-                Ok(o) => {
-                    let s = String::from_utf8_lossy(&o.stdout);
-                    s.split_whitespace().any(|g| g == "input")
-                }
-                Err(_) => false,
-            };
-            if session_has_input {
-                assert!(res.in_group, "session has input group; in_group must be true");
-            }
-
-            // needs_relogin and is_configured are mutually exclusive, and
-            // needs_relogin requires the udev rule to already exist.
-            assert!(!(res.needs_relogin && res.is_configured));
-            if res.needs_relogin {
-                assert!(res.rule_exists);
-                assert!(!res.in_group);
-            }
-            if res.is_configured {
-                assert!(res.rule_exists && res.in_group);
-            }
-        }
-
-        // On non-Linux (e.g. Windows), check should always succeed
-        #[cfg(not(target_os = "linux"))]
-        {
-            std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
-            let res = check_udev_status().await.unwrap();
-            assert!(res.is_configured);
-            assert!(res.rule_exists);
-            assert!(res.in_group);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_udev_status_never_offers_both_recovery_paths() {
-        // "Restart VoxCtrl" and "log out and back in" are mutually exclusive
-        // instructions. Showing both is how a user ends up doing the slow one.
-        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
-        std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
-
-        let res = check_udev_status().await.unwrap();
-        assert!(
-            !(res.can_relaunch && res.is_configured),
-            "a working setup must not ask to be restarted"
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_LEFTMETA".to_string()],
+            &health,
         );
+        assert!(!check.accepted);
+        assert!(check.enforced);
+        assert_eq!(check.problem.as_deref(), Some("modifiers_only"));
+        let message = check.message.expect("a rejection must explain itself");
+        assert!(message.contains("regular key"), "{message}");
+        assert!(
+            message.contains("Super+Space") || message.contains("Ctrl+Alt"),
+            "the user needs an example of what does work: {message}"
+        );
+    }
+
+    #[test]
+    fn a_valid_combination_reports_what_the_desktop_will_bind() {
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_LEFTMETA".to_string(), "KEY_SPACE".to_string()],
+            &health,
+        );
+        assert!(check.accepted);
+        assert_eq!(check.accelerator.as_deref(), Some("LOGO+space"));
+        assert!(check.problem.is_none());
+    }
+
+    #[test]
+    fn bare_modifiers_are_allowed_where_voxctrl_watches_the_keyboard() {
+        // On the evdev fallback a lone Super genuinely works. Refusing it there
+        // would break a working setup to satisfy a constraint that does not
+        // apply — but it is still worth telling the user it is fragile.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Evdev);
+        health.set_keyboards_open(1);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_LEFTMETA".to_string()],
+            &health,
+        );
+        assert!(check.accepted, "this combination works on this machine");
+        assert!(!check.enforced);
+        assert_eq!(check.problem.as_deref(), Some("modifiers_only"));
+        assert!(check
+            .message
+            .expect("an advisory still needs wording")
+            .contains("stop working"));
+    }
+
+    #[test]
+    fn two_regular_keys_are_refused_with_their_own_reason() {
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_A".to_string(), "KEY_B".to_string()],
+            &health,
+        );
+        assert!(!check.accepted);
+        assert_eq!(check.problem.as_deref(), Some("multiple_keys"));
+    }
+
+    #[test]
+    fn validation_is_enforced_before_the_backend_has_answered() {
+        // The portal is the default path, so an unfinished handshake must not
+        // be a window in which an unbindable shortcut can be saved.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        assert_eq!(health.backend(), voxctrl_hotkeys::Backend::Starting);
+
+        let check = crate::commands::check_hotkey_keys_with(
+            &["KEY_LEFTMETA".to_string()],
+            &health,
+        );
+        assert!(!check.accepted);
+        assert!(check.enforced);
+    }
+
+    #[test]
+    fn hotkey_status_reports_the_portal_as_active_and_private() {
+        // The state the app is built for: the compositor owns the keys and
+        // VoxCtrl has no access to input devices at all.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert_eq!(res.backend, "portal");
+        assert!(res.is_active);
+        assert!(res.is_private);
+        assert!(!res.needs_attention);
+        assert_eq!(
+            res.devices_readable, 0,
+            "the portal path must not probe input devices at all"
+        );
+        assert!(!res.detail.is_empty(), "every state needs an explanation");
+    }
+
+    #[test]
+    fn hotkey_status_marks_the_evdev_fallback_as_not_private() {
+        // It works, but every keystroke on the machine passes through VoxCtrl,
+        // and the user is entitled to know that.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_portal_error("no such interface".to_string());
+        health.set_backend(voxctrl_hotkeys::Backend::Evdev);
+        health.set_keyboards_open(1);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert_eq!(res.backend, "evdev");
+        assert!(res.is_active);
+        assert!(!res.is_private);
+        assert!(!res.needs_attention, "shortcuts do work in this state");
+        assert!(res.portal_error.is_some());
+    }
+
+    #[test]
+    fn hotkey_status_flags_kde_for_the_manual_enable_bug() {
+        // xdg-desktop-portal-kde registers shortcuts disabled and gives VoxCtrl
+        // no way to see that — this is the standing warning that fills the gap,
+        // scoped to the one desktop the bug is confirmed on (bugs.kde.org
+        // #483639) so it does not cry wolf where binding really is instant.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("XDG_CURRENT_DESKTOP", "KDE");
+
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert!(res.needs_manual_enable);
+        let hint = res.manual_enable_hint.expect("must explain the fix");
+        assert!(hint.contains("Apply"), "{hint}");
+        assert!(hint.contains("483639"), "{hint}");
+
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+    }
+
+    #[test]
+    fn hotkey_status_does_not_flag_desktops_without_the_bug() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("XDG_CURRENT_DESKTOP", "GNOME");
+        std::env::remove_var("KDE_FULL_SESSION");
+
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert!(!res.needs_manual_enable);
+        assert!(res.manual_enable_hint.is_none());
+
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+    }
+
+    #[test]
+    fn hotkey_status_scopes_the_kde_warning_to_the_portal_backend() {
+        // The bug is specifically in how xdg-desktop-portal-kde hands off
+        // BindShortcuts; the evdev fallback never goes near it.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("XDG_CURRENT_DESKTOP", "KDE");
+
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_portal_error("no such interface".to_string());
+        health.set_backend(voxctrl_hotkeys::Backend::Evdev);
+        health.set_keyboards_open(1);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert!(!res.needs_manual_enable, "the evdev path never hits this bug");
+
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+    }
+
+    #[test]
+    fn hotkey_status_recognises_kde_via_the_legacy_full_session_variable() {
+        // Some Plasma sessions do not populate XDG_CURRENT_DESKTOP as "KDE";
+        // KDE_FULL_SESSION is the older, still-set fallback signal.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::remove_var("XDG_CURRENT_DESKTOP");
+        std::env::set_var("KDE_FULL_SESSION", "true");
+
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert!(res.needs_manual_enable);
+
+        std::env::remove_var("KDE_FULL_SESSION");
+    }
+
+    #[test]
+    fn hotkey_status_honours_the_kde_manual_enable_test_override() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+
+        std::env::set_var("VOXCTRL_TEST_HOTKEY_STATUS", "kde_manual_enable");
+        let res = crate::commands::hotkey_status(&health);
+        assert!(res.needs_manual_enable);
+        assert!(res.manual_enable_hint.is_some());
+
+        std::env::remove_var("VOXCTRL_TEST_HOTKEY_STATUS");
+    }
+
+    #[tokio::test]
+    async fn open_shortcut_settings_prefers_the_kde_module_when_available() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("VOXCTRL_FAKE_COMMANDS", "kcmshell6,gnome-control-center");
+        std::env::set_var("VOXCTRL_INSTALLER_TEST_MOCK", "1");
+
+        let res = crate::commands::open_shortcut_settings().await;
+        assert!(res.is_ok(), "{res:?}");
+
+        std::env::remove_var("VOXCTRL_FAKE_COMMANDS");
+        std::env::remove_var("VOXCTRL_INSTALLER_TEST_MOCK");
+    }
+
+    #[tokio::test]
+    async fn open_shortcut_settings_falls_back_down_the_candidate_list() {
+        // Only the last-resort GNOME panel is "installed" — the command must
+        // still succeed by walking past every unavailable candidate first,
+        // not give up at the first miss.
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("VOXCTRL_FAKE_COMMANDS", "gnome-control-center");
+        std::env::set_var("VOXCTRL_INSTALLER_TEST_MOCK", "1");
+
+        let res = crate::commands::open_shortcut_settings().await;
+        assert!(res.is_ok(), "{res:?}");
+
+        std::env::remove_var("VOXCTRL_FAKE_COMMANDS");
+        std::env::remove_var("VOXCTRL_INSTALLER_TEST_MOCK");
+    }
+
+    #[tokio::test]
+    async fn open_shortcut_settings_explains_itself_when_nothing_is_installed() {
+        let _lock = crate::test_utils::get_env_lock().lock().unwrap();
+        std::env::set_var("VOXCTRL_FAKE_COMMANDS", "");
+        std::env::set_var("VOXCTRL_INSTALLER_TEST_MOCK", "1");
+
+        let err = crate::commands::open_shortcut_settings().await.unwrap_err();
+        assert!(err.contains("System Settings"), "{err}");
+
+        std::env::remove_var("VOXCTRL_FAKE_COMMANDS");
+        std::env::remove_var("VOXCTRL_INSTALLER_TEST_MOCK");
+    }
+
+    #[test]
+    fn hotkey_status_asks_for_attention_when_nothing_can_deliver_shortcuts() {
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_portal_error("no such interface".to_string());
+        health.set_backend(voxctrl_hotkeys::Backend::None);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert_eq!(res.backend, "none");
+        assert!(!res.is_active);
+        assert!(res.needs_attention);
+        assert!(!res.detail.is_empty());
         assert!(
             res.devices_readable <= res.devices_total,
             "readable ({}) cannot exceed total ({})",
             res.devices_readable,
             res.devices_total
         );
-        assert!(!res.detail.is_empty(), "every state needs an explanation");
     }
 
-    #[tokio::test]
-    async fn test_udev_status_detail_explains_a_blocked_setup() {
+    #[test]
+    fn hotkey_status_does_not_flash_a_failure_during_startup() {
+        // The portal handshake is async. Reporting "broken" for the few hundred
+        // milliseconds before it answers would pop the setup window on every
+        // launch of a perfectly working install.
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+
+        let res = crate::commands::hotkey_status(&health);
+        assert_eq!(res.backend, "starting");
+        assert!(res.is_active);
+        assert!(!res.needs_attention);
+    }
+
+    #[test]
+    fn hotkey_status_honours_the_test_override() {
         let _lock = crate::test_utils::get_env_lock().lock().unwrap();
-        std::env::set_var("VOXCTRL_TEST_UDEV_STATUS", "missing");
-        let res = check_udev_status().await.unwrap();
-        assert!(!res.is_configured);
-        assert!(!res.detail.is_empty());
-        std::env::remove_var("VOXCTRL_TEST_UDEV_STATUS");
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+
+        std::env::set_var("VOXCTRL_TEST_HOTKEY_STATUS", "none");
+        let res = crate::commands::hotkey_status(&health);
+        assert_eq!(res.backend, "none");
+        assert!(res.needs_attention);
+
+        std::env::set_var("VOXCTRL_TEST_HOTKEY_STATUS", "portal");
+        let res = crate::commands::hotkey_status(&health);
+        assert_eq!(res.backend, "portal");
+        assert!(res.is_private);
+
+        std::env::remove_var("VOXCTRL_TEST_HOTKEY_STATUS");
     }
 
     #[tokio::test]

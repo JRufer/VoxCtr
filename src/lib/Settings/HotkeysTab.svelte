@@ -12,7 +12,7 @@
   // Hotkey Modal state
   let editingBinding = $state<HotkeyBinding | null>(null);
   let isEditingBindingNew = $state(false);
-  let recordingTarget = $state<"keys" | "subkey" | null>(null);
+  let recordingTarget = $state<"keys" | null>(null);
   let confirmDeleteBindingId = $state<string | null>(null);
 
   // Nested Target Modal state inside Hotkey Binding creation
@@ -29,10 +29,16 @@
   let editOpenaiSystemPrompt = $state("");
 
   // Helper to construct a canonical signature for a binding's key combination and gesture type
-  function getBindingSignature(keys: string[], gesture: string, subkey?: string): string {
+  function getBindingSignature(keys: string[], gesture: string): string {
     const sortedKeys = [...keys].sort().join(",");
-    const subkeyPart = gesture === "chord" && subkey ? `+${subkey}` : "";
-    return `${gesture}:${sortedKeys}${subkeyPart}`;
+    return `${gesture}:${sortedKeys}`;
+  }
+
+  // Keys alone, ignoring the gesture. double_tap and double_tap_hold on the
+  // same keys are a supported pairing rather than a conflict, and on the portal
+  // backend they are registered as a single system shortcut.
+  function getTriggerSignature(keys: string[]): string {
+    return [...keys].sort().join(",");
   }
 
   // Derived set of signatures that are shared by two or more bindings (regardless of disabled state)
@@ -40,7 +46,7 @@
     const sigCounts = new Map<string, number>();
     for (const b of bindings) {
       if (b.keys && b.keys.length > 0) {
-        const sig = getBindingSignature(b.keys, b.gesture, b.subkey);
+        const sig = getBindingSignature(b.keys, b.gesture);
         sigCounts.set(sig, (sigCounts.get(sig) || 0) + 1);
       }
     }
@@ -58,7 +64,7 @@
     const activeSigCounts = new Map<string, number>();
     for (const b of bindings) {
       if (!b.disabled && b.keys && b.keys.length > 0) {
-        const sig = getBindingSignature(b.keys, b.gesture, b.subkey);
+        const sig = getBindingSignature(b.keys, b.gesture);
         activeSigCounts.set(sig, (activeSigCounts.get(sig) || 0) + 1);
       }
     }
@@ -74,8 +80,8 @@
   // Derived check: does the current edited binding in the modal conflict with another existing binding?
   let editingBindingConflict = $derived.by(() => {
     if (!editingBinding || !editingBinding.keys || editingBinding.keys.length === 0) return false;
-    const editSig = getBindingSignature(editingBinding.keys, editingBinding.gesture, editingBinding.subkey);
-    return bindings.some(b => b.id !== editingBinding!.id && getBindingSignature(b.keys, b.gesture, b.subkey) === editSig);
+    const editSig = getBindingSignature(editingBinding.keys, editingBinding.gesture);
+    return bindings.some(b => b.id !== editingBinding!.id && getBindingSignature(b.keys, b.gesture) === editSig);
   });
 
   // Reusable Svelte action to auto-resize textareas dynamically to fit their contents
@@ -98,9 +104,72 @@
     };
   }
 
+  // How shortcuts are actually reaching the app. Shown in the UI because the
+  // answer decides what VoxCtrl can see: on the portal it is told only that its
+  // own shortcut fired, and the keys are chosen and owned by the desktop.
+  type BoundShortcut = {
+    binding_ids: string[];
+    requested: string | null;
+    trigger_description: string;
+    bound: boolean;
+  };
+  type HotkeyStatus = {
+    is_active: boolean;
+    backend: string;
+    is_private: boolean;
+    portal_error: string | null;
+    portal_refused: boolean;
+    shortcuts: BoundShortcut[];
+    session_type: string;
+    devices_total: number;
+    devices_readable: number;
+    needs_attention: boolean;
+    detail: string;
+    // KDE registers portal shortcuts disabled and gives no way to check that
+    // over D-Bus, so this is a standing warning on KDE rather than a detected
+    // fact about any one shortcut. See docs/hotkeys.md.
+    needs_manual_enable: boolean;
+    manual_enable_hint: string | null;
+  };
+
+  let hotkeyStatus = $state<HotkeyStatus | null>(null);
+  let openingShortcutSettings = $state(false);
+  let openShortcutSettingsError = $state<string | null>(null);
+
+  async function refreshHotkeyStatus() {
+    try {
+      hotkeyStatus = await invoke<HotkeyStatus>("check_hotkey_status");
+    } catch (e) {
+      console.error("Failed to read hotkey status:", e);
+    }
+  }
+
+  async function openShortcutSettings() {
+    openingShortcutSettings = true;
+    openShortcutSettingsError = null;
+    try {
+      await invoke("open_shortcut_settings");
+    } catch (e: any) {
+      openShortcutSettingsError = e?.toString() ?? "Could not open shortcut settings.";
+    } finally {
+      openingShortcutSettings = false;
+    }
+  }
+
+  // The compositor may rename or reject a shortcut when bindings are saved, so
+  // the panel is refreshed after every write rather than only on mount.
+  let shortcutByBinding = $derived.by(() => {
+    const map = new Map<string, BoundShortcut>();
+    for (const s of hotkeyStatus?.shortcuts ?? []) {
+      for (const id of s.binding_ids) map.set(id, s);
+    }
+    return map;
+  });
+
   onMount(async () => {
     targets = await invoke<OutputTarget[]>("get_targets");
     bindings = await invoke<HotkeyBinding[]>("get_bindings");
+    await refreshHotkeyStatus();
   });
 
   async function persistTargets() {
@@ -116,6 +185,7 @@
     try {
       await invoke("save_bindings", { bindings });
       console.log("Bindings auto-saved successfully!");
+      await refreshHotkeyStatus();
     } catch (e) {
       console.error("Failed to save bindings:", e);
     }
@@ -141,6 +211,7 @@
       return;
     }
     isEditingBindingNew = true;
+    keysCheck = null;
     editOpenaiEnabled = false;
     editOpenaiModel = "";
     editOpenaiMode = "custom";
@@ -154,8 +225,7 @@
       target_id: targets[0].id,
       target_ids: [targets[0].id],
       tap_ms: 300,
-      hold_threshold_ms: 1000,
-      subkey: "",
+      hold_threshold_ms: 200,
       disabled: false,
       openai_enabled: false,
       openai_model: "",
@@ -167,6 +237,7 @@
 
   function editBinding(b: HotkeyBinding) {
     isEditingBindingNew = false;
+    keysCheck = null;
     const clone = JSON.parse(JSON.stringify(b));
     if (!clone.target_ids) {
       clone.target_ids = clone.target_id ? [clone.target_id] : [];
@@ -209,11 +280,22 @@
       alert("Please capture at least one hotkey before saving.");
       return;
     }
-    if (editingBinding.gesture === "chord" && (!editingBinding.subkey || editingBinding.subkey.trim() === "")) {
-      alert("Please capture a subkey trigger for the chord combo before saving.");
-      return;
-    }
 
+    // Re-checked here, not just at capture time: a binding created by an older
+    // VoxCtrl (or on a machine without the desktop portal) can be sitting in
+    // the editor without ever passing through the recorder.
+    try {
+      const check = await invoke<KeysCheck>("check_hotkey_keys", {
+        keys: editingBinding.keys,
+      });
+      if (!check.accepted) {
+        keysCheck = check;
+        alert(check.message ?? "This key combination cannot be used as a shortcut.");
+        return;
+      }
+    } catch (e) {
+      console.error("Failed to validate hotkey keys before saving:", e);
+    }
     if (editOpenaiEnabled) {
       if (editOpenaiMode === "custom") {
         if (!editOpenaiPrompt.includes("{text}")) {
@@ -294,6 +376,69 @@
 
   let currentlyPressedKeys = $state<string[]>([]);
 
+  // Result of validating the last captured combination. The rules live in Rust
+  // (`voxctrl_hotkeys::accelerator`) and are reached over IPC, so the recorder
+  // and the portal registration cannot disagree about what is bindable.
+  type KeysCheck = {
+    accepted: boolean;
+    enforced: boolean;
+    accelerator: string | null;
+    problem: string | null;
+    message: string | null;
+  };
+  let keysCheck = $state<KeysCheck | null>(null);
+
+  // Presentational only — used for the live "keep going" hint while keys are
+  // still held, and for the badge on saved bindings. The authoritative verdict
+  // always comes from the backend, so drift here cannot let an invalid
+  // combination through.
+  const MODIFIER_KEYS = new Set([
+    "KEY_LEFTCTRL", "KEY_RIGHTCTRL",
+    "KEY_LEFTALT", "KEY_RIGHTALT",
+    "KEY_LEFTSHIFT", "KEY_RIGHTSHIFT",
+    "KEY_LEFTMETA", "KEY_RIGHTMETA",
+  ]);
+
+  function isModifiersOnly(keys: string[]): boolean {
+    return keys.length > 0 && keys.every(k => MODIFIER_KEYS.has(k));
+  }
+
+  // Whether a bare-modifier binding is actually broken on this machine, as
+  // opposed to merely fragile. Only the portal cannot deliver them.
+  let portalEnforced = $derived(
+    hotkeyStatus === null ||
+    hotkeyStatus.backend === "portal" ||
+    hotkeyStatus.backend === "starting",
+  );
+
+  // A shortcut needs a regular key. Say so while the user is still holding
+  // modifiers, rather than letting them lift and get rejected.
+  let liveCaptureHint = $derived.by(() => {
+    if (recordingTarget !== "keys") return null;
+    if (!isModifiersOnly(currentlyPressedKeys)) return null;
+    if (!portalEnforced) return null;
+    return "Keep holding and add a regular key — modifiers alone cannot be a shortcut.";
+  });
+
+  /// Validate a captured combination and commit it if the backend allows.
+  async function commitCapture(keys: string[]): Promise<void> {
+    if (!editingBinding || keys.length === 0) return;
+    let check: KeysCheck;
+    try {
+      check = await invoke<KeysCheck>("check_hotkey_keys", { keys });
+    } catch (e) {
+      console.error("Failed to validate hotkey keys:", e);
+      // A validation call that fails must not silently discard the user's
+      // capture; the save-time check still guards the real constraint.
+      editingBinding.keys = [...keys];
+      return;
+    }
+    keysCheck = check;
+    if (check.accepted && editingBinding) {
+      editingBinding.keys = [...keys];
+    }
+  }
+
   function handleRecordKeyDown(e: KeyboardEvent) {
     if (!recordingTarget || !editingBinding) return;
     e.preventDefault();
@@ -305,13 +450,11 @@
         currentlyPressedKeys = [...currentlyPressedKeys, evdevKey];
       }
       if (e.key === "Escape") {
-        editingBinding.keys = [...currentlyPressedKeys];
+        const captured = [...currentlyPressedKeys];
         currentlyPressedKeys = [];
         recordingTarget = null;
+        void commitCapture(captured);
       }
-    } else if (recordingTarget === "subkey") {
-      editingBinding.subkey = evdevKey;
-      recordingTarget = null;
     }
   }
 
@@ -321,19 +464,23 @@
     e.stopPropagation();
 
     if (recordingTarget === "keys") {
-      if (currentlyPressedKeys.length > 0) {
-        editingBinding.keys = [...currentlyPressedKeys];
-      }
+      const captured = [...currentlyPressedKeys];
       currentlyPressedKeys = [];
+      // Deliberately leaves recording mode even when the capture is refused.
+      // Dropping straight back into "press your combination now" would hide the
+      // shortcut the binding still has, and the user needs to see that their
+      // working keybind survived the rejection.
       recordingTarget = null;
+      void commitCapture(captured);
     }
   }
 
   function handleRecordKeyBlur() {
     if (!recordingTarget) return;
-    if (recordingTarget === "keys" && currentlyPressedKeys.length > 0 && editingBinding) {
-      editingBinding.keys = [...currentlyPressedKeys];
+    if (recordingTarget === "keys" && currentlyPressedKeys.length > 0) {
+      const captured = [...currentlyPressedKeys];
       currentlyPressedKeys = [];
+      void commitCapture(captured);
     }
     recordingTarget = null;
   }
@@ -398,9 +545,67 @@
   <div class="section-header">
     <div>
       <h2>Hotkey Bindings</h2>
-      <p class="description">Bind physical keyboard combinations to your output targets. Each hotkey supports customizable triggers (double-taps, holding keys, etc.)</p>
+      <p class="description">Bind keyboard combinations to your output targets. Each hotkey supports customizable triggers (double-taps, holding keys, etc.)</p>
     </div>
   </div>
+
+  {#if hotkeyStatus}
+    <div
+      class="backend-banner"
+      class:private={hotkeyStatus.is_private}
+      class:warn={!hotkeyStatus.is_private && hotkeyStatus.is_active}
+      class:broken={!hotkeyStatus.is_active}
+    >
+      <span class="backend-icon">
+        {hotkeyStatus.is_private ? "🔒" : hotkeyStatus.is_active ? "⚠️" : "⛔"}
+      </span>
+      <span class="backend-body">
+        <strong>
+          {#if hotkeyStatus.backend === "portal"}
+            Your desktop is handling these shortcuts
+          {:else if hotkeyStatus.backend === "windows_hook"}
+            Global shortcuts are active
+          {:else if hotkeyStatus.backend === "evdev"}
+            Reading input devices directly
+          {:else if hotkeyStatus.backend === "starting"}
+            Starting up…
+          {:else}
+            Global shortcuts are not available
+          {/if}
+        </strong>
+        <span class="backend-detail">{hotkeyStatus.detail}</span>
+        {#if hotkeyStatus.backend === "portal"}
+          <span class="backend-detail">
+            Your desktop decides which keys VoxCtrl may claim, and may ask you to confirm them.
+            If a shortcut below shows different keys than you chose, that is your desktop's
+            choice and it wins.
+          </span>
+        {/if}
+      </span>
+    </div>
+  {/if}
+
+  {#if hotkeyStatus?.needs_manual_enable}
+    <div class="manual-enable-banner">
+      <span class="backend-icon">🔧</span>
+      <span class="backend-body">
+        <strong>One more step on KDE: enable these shortcuts yourself</strong>
+        <span class="backend-detail">{hotkeyStatus.manual_enable_hint}</span>
+        <div class="manual-enable-actions">
+          <button
+            class="btn-action primary"
+            onclick={openShortcutSettings}
+            disabled={openingShortcutSettings}
+          >
+            {openingShortcutSettings ? "Opening…" : "Open Shortcut Settings"}
+          </button>
+        </div>
+        {#if openShortcutSettingsError}
+          <span class="backend-detail error">{openShortcutSettingsError}</span>
+        {/if}
+      </span>
+    </div>
+  {/if}
 
   <button class="btn-add-wide" onclick={addNewBinding}>
     ＋ Add New Hotkey Binding
@@ -420,17 +625,17 @@
       <div
         class="binding-item glass"
         class:disabled={b.disabled}
-        class:has-conflict={b.keys && b.keys.length > 0 && conflictingSignatures.has(getBindingSignature(b.keys, b.gesture, b.subkey))}
-        class:active-conflict={!b.disabled && b.keys && b.keys.length > 0 && activeConflictingSignatures.has(getBindingSignature(b.keys, b.gesture, b.subkey))}
+        class:has-conflict={b.keys && b.keys.length > 0 && conflictingSignatures.has(getBindingSignature(b.keys, b.gesture))}
+        class:active-conflict={!b.disabled && b.keys && b.keys.length > 0 && activeConflictingSignatures.has(getBindingSignature(b.keys, b.gesture))}
       >
-        {#if !b.disabled && b.keys && b.keys.length > 0 && activeConflictingSignatures.has(getBindingSignature(b.keys, b.gesture, b.subkey))}
+        {#if !b.disabled && b.keys && b.keys.length > 0 && activeConflictingSignatures.has(getBindingSignature(b.keys, b.gesture))}
           <span class="conflict-marker">CONFLICT</span>
         {/if}
         <div class="binding-content">
           <div class="binding-header-row">
             <div
               class="binding-title"
-              class:has-conflict={!b.disabled && b.keys && b.keys.length > 0 && activeConflictingSignatures.has(getBindingSignature(b.keys, b.gesture, b.subkey))}
+              class:has-conflict={!b.disabled && b.keys && b.keys.length > 0 && activeConflictingSignatures.has(getBindingSignature(b.keys, b.gesture))}
             >
               {b.label || b.id}
             </div>
@@ -443,12 +648,28 @@
               {#each b.keys as k}
                 <kbd>{k.replace("KEY_", "")}</kbd>
               {/each}
-              {#if b.gesture === "chord" && b.subkey}
-                <span class="text-white/40 font-bold my-0 mx-1 align-middle self-center">＋</span>
-                <kbd class="border-[var(--accent2)]! text-[var(--accent2)]! font-bold">{b.subkey.replace("KEY_", "")}</kbd>
-              {/if}
             </div>
             <span class="badge gesture">{b.gesture}</span>
+            {#if portalEnforced && isModifiersOnly(b.keys)}
+              <span
+                class="badge unbound"
+                title="Modifiers on their own cannot be registered with your desktop. Edit this binding and add a regular key."
+              >
+                needs a regular key
+              </span>
+            {/if}
+            {#if hotkeyStatus?.backend === "portal" && !b.disabled && shortcutByBinding.get(b.id)}
+              {@const sc = shortcutByBinding.get(b.id)!}
+              {#if !sc.bound}
+                <span class="badge unbound" title="Your desktop did not accept this shortcut.">
+                  not bound by your desktop
+                </span>
+              {:else if sc.trigger_description}
+                <span class="badge bound" title="The keys your desktop actually assigned.">
+                  desktop: {sc.trigger_description}
+                </span>
+              {/if}
+            {/if}
           </div>
           <div class="binding-targets">{formatBindingTargets(b)}</div>
           <div class="binding-actions">
@@ -581,8 +802,7 @@
               { value: "hold", label: "Hold keys to dictate (Release to transcribe)" },
               { value: "toggle", label: "Tap once to start recording, tap again to finish" },
               { value: "double_tap", label: "Double-tap hotkey to trigger recording" },
-              { value: "double_tap_hold", label: "Double-tap & hold keys to dictate (Release to transcribe)" },
-              { value: "chord", label: "Chord combo (Held base keys + sub key)" }
+              { value: "double_tap_hold", label: "Double-tap & hold keys to dictate (Release to transcribe)" }
             ]}
           />
         </label>
@@ -591,8 +811,12 @@
         {#if editingBinding.gesture === "hold" || editingBinding.gesture === "double_tap_hold"}
           <label class="field morph-section">
             <span>Hold Threshold (ms)</span>
-            <input type="number" bind:value={editingBinding.hold_threshold_ms} placeholder="1000" />
-            <span class="hint">Minimum duration to keep keys pressed to count as a 'hold'.</span>
+            <input type="number" bind:value={editingBinding.hold_threshold_ms} placeholder="200" />
+            <span class="hint">
+              {editingBinding.gesture === "double_tap_hold"
+                ? "How long the second tap must stay held before recording starts. Keeps a plain double-tap from being read as a double-tap-and-hold."
+                : "Minimum duration to keep keys pressed to count as a 'hold'."}
+            </span>
           </label>
         {/if}
 
@@ -600,7 +824,10 @@
           <label class="field morph-section">
             <span>Double-Tap Interval (ms)</span>
             <input type="number" bind:value={editingBinding.tap_ms} placeholder="300" />
-            <span class="hint">Maximum millisecond window between key presses to count as a double-tap.</span>
+            <span class="hint">
+              Longest gap between releasing the first tap and pressing the second. Raise it if
+              double-taps get missed; lower it if they fire when you did not mean them to.
+            </span>
           </label>
         {/if}
 
@@ -608,7 +835,7 @@
         <div class="border-t border-white/5 pt-[14px] flex flex-col gap-3">
           <div class="flex flex-col gap-1.5">
             <h5 class="text-[11px] font-bold uppercase text-accent-blue tracking-[0.06em]">
-              {editingBinding.gesture === "chord" ? "Base Combo (Held Keys)" : "Hotkey Keybind Selection"}
+              Hotkey Keybind Selection
             </h5>
             <div
               class={[
@@ -637,6 +864,9 @@
                       : "Press your physical shortcut combination now..."}
                   </span>
                 </div>
+                {#if liveCaptureHint}
+                  <span class="text-[11px] text-amber-300/90 mt-1.5">{liveCaptureHint}</span>
+                {/if}
               {:else}
                 <span class="text-[12px] text-obsidian-300 flex flex-col gap-1.5 items-center">
                   {#if editingBinding.keys.length > 0}
@@ -654,46 +884,23 @@
             </div>
           </div>
 
-          {#if editingBinding.gesture === "chord"}
-            <div class="flex flex-col gap-1.5">
-              <h5 class="text-[11px] font-bold uppercase text-accent-blue tracking-[0.06em]">Subkey Trigger (Pressed Key)</h5>
-              <div
-                class={[
-                  "border-2 rounded-desktop p-4 text-center cursor-pointer outline-none transition-all duration-200 flex flex-col items-center justify-center min-h-[70px]",
-                  recordingTarget === "subkey"
-                    ? "border-solid border-[#f43f5e] bg-[rgba(244,63,94,0.05)] animate-border-pulse"
-                    : (editingBindingConflict
-                      ? "border-solid border-[#fbbf24] bg-[rgba(251,191,36,0.05)] hover:border-[#fbbf24]/80"
-                      : "border-dashed border-white/5 bg-black/25 hover:border-accent-blue hover:bg-black/35 focus:border-accent-blue focus:bg-black/35")
-                ].join(" ")}
-                tabindex="0"
-                role="button"
-                aria-label="Subkey recorder input"
-                onclick={() => recordingTarget = "subkey"}
-                onfocus={() => recordingTarget = "subkey"}
-                onblur={() => handleRecordKeyBlur()}
-                onkeydown={handleRecordKeyDown}
-                onkeyup={handleRecordKeyUp}
-              >
-                {#if recordingTarget === "subkey"}
-                  <div class="flex items-center gap-[10px]">
-                    <span class="w-2 h-2 bg-accent-blue rounded-full animate-flash"></span>
-                    <span class="text-[13px] font-semibold text-accent-blue">
-                      Press the trigger key now...
-                    </span>
-                  </div>
-                {:else}
-                  <span class="text-[12px] text-obsidian-300 flex flex-col gap-1.5 items-center">
-                    {#if editingBinding.subkey}
-                      <kbd class="px-1.5! py-0.5! text-[12px]! bg-accent-blue! text-black! border-none! font-extrabold! rounded!">{editingBinding.subkey.replace("KEY_", "")}</kbd>
-                      <span class="text-[10px] text-accent-blue opacity-80">(Click / Tab here to change trigger key)</span>
-                    {:else}
-                      ⚠️ Click/Focus here to press the trigger key!
-                    {/if}
-                  </span>
-                {/if}
-              </div>
+          {#if keysCheck && !keysCheck.accepted}
+            <div class="keys-rejected" role="alert">
+              <span class="shrink-0">🚫</span>
+              <span>
+                <strong>That combination was not accepted.</strong>
+                {keysCheck.message}
+              </span>
             </div>
+          {:else if keysCheck && keysCheck.problem}
+            <div class="keys-fragile" role="status">
+              <span class="shrink-0">⚠️</span>
+              <span>{keysCheck.message}</span>
+            </div>
+          {:else if keysCheck?.accelerator && portalEnforced}
+            <span class="keys-accepted">
+              Your desktop will register this as <code>{keysCheck.accelerator}</code>.
+            </span>
           {/if}
 
           {#if editingBindingConflict}
@@ -781,6 +988,62 @@
 
 <style>
   @reference "tailwindcss";
+
+  .backend-banner {
+    @apply flex items-start gap-2.5 rounded-[var(--radius)] p-3 px-3.5 mb-1 border bg-white/[0.03] border-[var(--border)];
+  }
+
+  .backend-banner.private {
+    @apply bg-emerald-500/6 border-emerald-500/25;
+  }
+
+  .backend-banner.warn {
+    @apply bg-amber-500/6 border-amber-500/25;
+  }
+
+  .backend-banner.broken {
+    @apply bg-red-500/6 border-red-500/25;
+  }
+
+  .backend-icon {
+    @apply text-base leading-none shrink-0 mt-0.5;
+  }
+
+  .backend-body {
+    @apply flex flex-col gap-1 min-w-0 flex-1 text-[12.5px];
+  }
+
+  .backend-detail {
+    @apply text-[var(--text-muted)] leading-relaxed;
+  }
+
+  .backend-detail.error {
+    @apply text-red-400;
+  }
+
+  .manual-enable-banner {
+    @apply flex items-start gap-2.5 rounded-[var(--radius)] p-3 px-3.5 mb-1 border bg-amber-500/6 border-amber-500/25;
+  }
+
+  .manual-enable-actions {
+    @apply mt-1;
+  }
+
+  .keys-rejected {
+    @apply flex items-start gap-2 p-2.5 rounded-md bg-red-500/10 border border-red-500/25 text-[12px] leading-relaxed text-red-300;
+  }
+
+  .keys-fragile {
+    @apply flex items-start gap-2 p-2.5 rounded-md bg-amber-500/10 border border-amber-500/25 text-[12px] leading-relaxed text-amber-200;
+  }
+
+  .keys-accepted {
+    @apply text-[11.5px] text-emerald-300/90;
+  }
+
+  .keys-accepted code {
+    @apply bg-white/5 px-1.5 py-0.5 rounded font-mono;
+  }
 
   .hotkeys-section {
     @apply flex flex-col gap-5 pb-10;

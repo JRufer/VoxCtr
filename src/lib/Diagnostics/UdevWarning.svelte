@@ -3,28 +3,38 @@
   import { invoke } from "@tauri-apps/api/core";
   import { getCurrentWindow } from "@tauri-apps/api/window";
 
-  type Permissions = {
-    is_configured: boolean;
-    rule_exists: boolean;
-    in_group: boolean;
-    needs_relogin: boolean;
-    rule_is_current: boolean;
+  type BoundShortcut = {
+    binding_ids: string[];
+    requested: string | null;
+    trigger_description: string;
+    bound: boolean;
+  };
+
+  type HotkeyStatus = {
+    is_active: boolean;
+    backend: string;
+    is_private: boolean;
+    portal_error: string | null;
+    portal_refused: boolean;
+    shortcuts: BoundShortcut[];
+    session_type: string;
     devices_total: number;
     devices_readable: number;
-    can_relaunch: boolean;
-    pkexec_available: boolean;
-    session_type: string;
+    needs_attention: boolean;
+    needs_manual_enable: boolean;
+    manual_enable_hint: string | null;
     detail: string;
-    manual_commands: string;
   };
 
   type SetupStatus = {
-    permissions: Permissions;
+    hotkeys: HotkeyStatus;
     hotkeys_active: boolean;
     model_ready: boolean;
     model_size: string;
     model_auto_downloads: boolean;
     missing_injection_tool: string | null;
+    pkexec_available: boolean;
+    manual_package_commands: string;
     is_complete: boolean;
   };
 
@@ -32,15 +42,17 @@
 
   let setup = $state<SetupStatus | null>(null);
   let installing = $state(false);
-  let restarting = $state(false);
   let downloading = $state(false);
   let errorMsg = $state<string | null>(null);
   let showManual = $state(false);
   let copied = $state(false);
+  let openingShortcutSettings = $state(false);
+  let openShortcutSettingsError = $state<string | null>(null);
 
-  // Polled rather than fetched once: permissions can start working while this
-  // window is open — the user runs the setup, or fixes it in a terminal — and
-  // a stale "not configured" screen is exactly the confusion to avoid.
+  // Polled rather than fetched once: the portal handshake finishes a moment
+  // after launch, and the user may grant or change a shortcut in their
+  // desktop's settings while this window is open. A stale screen is exactly the
+  // confusion to avoid.
   let poll: ReturnType<typeof setInterval> | undefined;
 
   async function refresh() {
@@ -75,21 +87,10 @@
       await invoke("install_system_integration");
       await refresh();
     } catch (err: any) {
-      errorMsg = err?.toString() ?? "Setup failed";
+      errorMsg = err?.toString() ?? "Install failed";
       showManual = true;
     } finally {
       installing = false;
-    }
-  }
-
-  async function handleRestart() {
-    restarting = true;
-    errorMsg = null;
-    try {
-      await invoke("restart_for_permissions");
-    } catch (err: any) {
-      restarting = false;
-      errorMsg = err?.toString() ?? "Restart failed";
     }
   }
 
@@ -114,10 +115,22 @@
     }
   }
 
+  async function openShortcutSettings() {
+    openingShortcutSettings = true;
+    openShortcutSettingsError = null;
+    try {
+      await invoke("open_shortcut_settings");
+    } catch (err: any) {
+      openShortcutSettingsError = err?.toString() ?? "Could not open shortcut settings.";
+    } finally {
+      openingShortcutSettings = false;
+    }
+  }
+
   async function copyManual() {
     if (!setup) return;
     try {
-      await navigator.clipboard.writeText(setup.permissions.manual_commands);
+      await navigator.clipboard.writeText(setup.manual_package_commands);
       copied = true;
       setTimeout(() => (copied = false), 2000);
     } catch (err) {
@@ -125,10 +138,16 @@
     }
   }
 
-  // Permissions only count as done once the listener actually holds a
-  // keyboard; the rule being on disk is not the same as hotkeys working.
-  const permissionState = $derived<StepState>(
-    !setup ? "busy" : setup.permissions.is_configured && setup.hotkeys_active ? "ok" : "todo",
+  // Shortcuts count as done when something is actually delivering them. The
+  // portal is the good case; the evdev fallback works but is worth a note.
+  const hotkeyState = $derived<StepState>(
+    !setup
+      ? "busy"
+      : setup.hotkeys.backend === "starting"
+        ? "busy"
+        : setup.hotkeys_active
+          ? "ok"
+          : "todo",
   );
   const injectionState = $derived<StepState>(
     !setup ? "busy" : setup.missing_injection_tool ? "todo" : "ok",
@@ -143,15 +162,11 @@
 </script>
 
 <div class="diagnostic-window">
-  {#if installing || restarting}
+  {#if installing}
     <div class="loading-container">
       <div class="spinner"></div>
-      <span class="loading-label">
-        {restarting ? "Restarting VoxCtrl with keyboard access…" : "Configuring hotkey permissions…"}
-      </span>
-      {#if installing}
-        <p class="hint">You may be prompted for your administrator password.</p>
-      {/if}
+      <span class="loading-label">Installing the helper packages…</span>
+      <p class="hint">You may be prompted for your administrator password.</p>
     </div>
   {:else if !setup}
     <div class="loading-container">
@@ -167,56 +182,96 @@
           <p class="subtitle">
             {setup.is_complete
               ? "Press your shortcut anywhere to dictate."
-              : "Global shortcuts stay inactive until the steps below are done."}
+              : "Dictation is not ready yet — the steps below say why."}
           </p>
         </div>
       </header>
 
       <ol class="steps">
-        <!-- 1 · Keyboard access -->
-        <li class="step" class:done={permissionState === "ok"}>
-          <span class="step-icon">{icon(permissionState)}</span>
+        <!-- 1 · How global shortcuts are delivered -->
+        <li class="step" class:done={hotkeyState === "ok"}>
+          <span class="step-icon">{icon(hotkeyState)}</span>
           <div class="step-body">
-            <span class="step-title">Keyboard access for global shortcuts</span>
-            <span class="step-detail">{setup.permissions.detail}</span>
+            <span class="step-title">Global shortcuts</span>
+            <span class="step-detail">{setup.hotkeys.detail}</span>
 
-            {#if permissionState !== "ok"}
-              <div class="step-actions">
-                {#if setup.permissions.can_relaunch}
-                  <button class="btn-primary" onclick={handleRestart}>
-                    Restart VoxCtrl to finish
-                  </button>
-                {:else if setup.permissions.pkexec_available}
-                  <button class="btn-primary" onclick={handleSetup}>
-                    Grant keyboard access
-                  </button>
-                {/if}
-                <button class="btn-link" onclick={() => (showManual = !showManual)}>
-                  {showManual ? "Hide manual commands" : "Set it up manually"}
-                </button>
-              </div>
+            {#if setup.hotkeys.backend === "portal"}
+              <!-- The reassurance that matters most, stated plainly and only
+                   when it is actually true. -->
+              <p class="privacy-note">
+                🔒 VoxCtrl asked your desktop to register its shortcuts and is told nothing
+                else. It does not read your keyboard, cannot see what you type in other
+                applications, and needed no special permissions to set up.
+              </p>
 
-              {#if setup.permissions.needs_relogin && !setup.permissions.can_relaunch}
-                <p class="warn-note">
-                  VoxCtrl could not apply the new permissions to this session by itself. Log out and
-                  back in (or reboot) and they will take effect.
-                </p>
+              {#if setup.hotkeys.shortcuts.length > 0}
+                <ul class="shortcut-list">
+                  {#each setup.hotkeys.shortcuts as sc}
+                    <li class:unbound={!sc.bound}>
+                      {#if sc.bound}
+                        <span class="shortcut-keys">
+                          {sc.trigger_description || sc.requested || "chosen in your desktop settings"}
+                        </span>
+                      {:else}
+                        <span class="shortcut-keys">not accepted by your desktop</span>
+                      {/if}
+                    </li>
+                  {/each}
+                </ul>
               {/if}
-            {:else if !setup.permissions.rule_is_current && setup.permissions.rule_exists}
+
+              {#if setup.hotkeys.needs_manual_enable}
+                <p class="warn-note">
+                  🔧 One more step on KDE: {setup.hotkeys.manual_enable_hint}
+                </p>
+                <div class="step-actions">
+                  <button
+                    class="btn-primary"
+                    onclick={openShortcutSettings}
+                    disabled={openingShortcutSettings}
+                  >
+                    {openingShortcutSettings ? "Opening…" : "Open Shortcut Settings"}
+                  </button>
+                </div>
+                {#if openShortcutSettingsError}
+                  <p class="warn-note">{openShortcutSettingsError}</p>
+                {/if}
+              {/if}
+            {:else if setup.hotkeys.backend === "evdev"}
               <p class="warn-note">
-                This machine still has VoxCtrl's older permission rule. Re-running
-                <button class="btn-link inline" onclick={handleSetup}>the setup</button>
-                stops access from depending on a fresh login.
+                Your desktop does not offer the global-shortcuts portal, so VoxCtrl is
+                falling back to reading input devices — access this machine already had,
+                which VoxCtrl neither requested nor configured. Shortcuts work, but in this
+                mode every keystroke passes through VoxCtrl. Nothing is stored or sent
+                anywhere; if you would rather it did not happen at all, a desktop with
+                portal support (KDE Plasma, GNOME 48+, Hyprland) avoids it entirely.
+              </p>
+            {:else if setup.hotkeys.portal_refused}
+              <p class="warn-note">
+                Your desktop <em>does</em> provide the shortcuts portal — it just declined
+                this request, so switching desktops would not help. This is a mismatch
+                between VoxCtrl and <code>xdg-desktop-portal</code>; updating it and its
+                desktop backend (<code>xdg-desktop-portal-kde</code> or
+                <code>-gnome</code>) is the usual fix. You can start and stop dictation
+                from the tray menu in the meantime.
+              </p>
+            {:else if setup.hotkeys.backend !== "starting"}
+              <p class="warn-note">
+                VoxCtrl will not grant itself keyboard access to work around this. Doing so
+                means letting every program you run read everything you type, system-wide
+                and permanently — a trade this app will not make on your behalf. Switching
+                to a desktop that implements the portal (KDE Plasma, GNOME 48+, Hyprland)
+                makes shortcuts work with no permissions at all. You can still start and
+                stop dictation from the tray menu in the meantime.
               </p>
             {/if}
 
-            {#if showManual}
-              <div class="manual">
-                <pre>{setup.permissions.manual_commands}</pre>
-                <button class="btn-link" onclick={copyManual}>
-                  {copied ? "Copied" : "Copy commands"}
-                </button>
-              </div>
+            <!-- Rendered outside the branch chain: whatever the desktop said is
+                 the most useful line on this screen for anyone diagnosing it,
+                 and it applies to a refusal just as much as to a missing
+                 portal. -->
+            {#if setup.hotkeys.portal_error && setup.hotkeys.backend !== "portal" && setup.hotkeys.backend !== "evdev"}
+              <span class="step-detail muted">Portal reported: {setup.hotkeys.portal_error}</span>
             {/if}
           </div>
         </li>
@@ -229,11 +284,33 @@
             <span class="step-detail">
               {#if setup.missing_injection_tool}
                 <code>{setup.missing_injection_tool}</code> is missing, so transcriptions cannot be
-                typed into the focused window. Running the setup above installs it.
+                typed into the focused window.
               {:else}
                 Ready — transcriptions can be typed straight into the focused window.
               {/if}
             </span>
+
+            {#if setup.missing_injection_tool}
+              <div class="step-actions">
+                {#if setup.pkexec_available && setup.manual_package_commands}
+                  <button class="btn-primary" onclick={handleSetup}>Install it</button>
+                {/if}
+                {#if setup.manual_package_commands}
+                  <button class="btn-link" onclick={() => (showManual = !showManual)}>
+                    {showManual ? "Hide manual commands" : "Install it manually"}
+                  </button>
+                {/if}
+              </div>
+
+              {#if showManual}
+                <div class="manual">
+                  <pre>{setup.manual_package_commands}</pre>
+                  <button class="btn-link" onclick={copyManual}>
+                    {copied ? "Copied" : "Copy commands"}
+                  </button>
+                </div>
+              {/if}
+            {/if}
           </div>
         </li>
 
@@ -341,6 +418,26 @@
 
   .warn-note {
     @apply text-[12px] leading-relaxed text-amber-300/90 mt-1;
+  }
+
+  .privacy-note {
+    @apply text-[12px] leading-relaxed text-emerald-300/90 mt-1;
+  }
+
+  .muted {
+    @apply text-[11px] text-[var(--color-obsidian-400)] mt-1;
+  }
+
+  .shortcut-list {
+    @apply flex flex-wrap gap-1.5 list-none p-0 mt-2;
+  }
+
+  .shortcut-keys {
+    @apply inline-block px-1.5 py-0.5 rounded bg-white/5 font-mono text-[11px] text-[var(--color-accent-blue)];
+  }
+
+  .shortcut-list li.unbound .shortcut-keys {
+    @apply text-amber-300/90;
   }
 
   .step-actions {

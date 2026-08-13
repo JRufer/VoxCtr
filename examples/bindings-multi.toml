@@ -47,11 +47,11 @@ target_id = "code"
 tap_ms = 250
 hold_threshold_ms = 200
 
-# ── Double-tap Ctrl → clipboard with AI cleanup ───────────────────────────────
+# ── Double-tap Ctrl+Shift+V → clipboard with AI cleanup ──────────────────────
 [[binding]]
 id = "clipboard_dt"
-label = "AI Clipboard (Double-tap)"
-keys = ["KEY_LEFTCTRL"]
+label = "AI Clipboard (Double-tap Ctrl+Shift+V)"
+keys = ["KEY_LEFTCTRL", "KEY_LEFTSHIFT", "KEY_V"]
 gesture = "double_tap"
 target_id = "clipboard_clean"
 tap_ms = 300

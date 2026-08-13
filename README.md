@@ -12,10 +12,26 @@ VoxCtrl acts as an intelligent desktop voice gateway, routing your speech to any
 ## 🔒 Privacy First & Fully On-Device
 
 In an era of cloud processing, VoxCtrl is built from the ground up to guarantee absolute data sovereignty:
+* **VoxCtrl does not read your keyboard**: Global shortcuts are registered with your desktop through the XDG `GlobalShortcuts` portal. Your desktop owns the key grab and tells VoxCtrl exactly one thing — that its own shortcut fired. VoxCtrl cannot see what you type in your browser, your terminal, or your password manager, because it is never given the data.
+* **No permissions to grant**: No udev rule, no `input` group, no logout, no reboot. There is nothing to undo later, and installing VoxCtrl does not change your machine's security posture. *(Earlier versions installed a udev rule granting read access to every input device. That has been removed — see [why](docs/hotkeys.md#why-this-changed).)*
 * **No Cloud API Keys Required**: VoxCtrl relies exclusively on OpenAI's Whisper models (via native CPU/GPU accelerated `whisper-rs`) running directly on your local hardware.
 * **No Telemetry**: Your ambient microphone data never leaves your machine. There are no hidden tracking scripts or analytical pings.
 * **Air-Gapped Ready**: Once the application and models are downloaded, VoxCtrl requires zero internet access to function.
 * **Local Neural Voices**: All text-to-speech feedback is generated offline by a local engine — Piper, Pocket-TTS, Inflect-Micro-v2, or eSpeak-NG.
+
+**Full detail, including how to verify each claim yourself: [docs/privacy.md](docs/privacy.md).**
+
+> **The app tells you which of these is true, live.** Settings → Hotkeys shows
+> exactly how shortcuts are reaching VoxCtrl and which keys your desktop bound.
+> If your desktop provides no shortcuts portal, VoxCtrl says so at launch and
+> explains the trade-off — it will not grant itself keyboard access to work
+> around it, because that access would apply to every program you run, not just
+> this one.
+>
+> On KDE Plasma specifically, an upstream bug leaves portal shortcuts
+> registered but unticked in System Settings until you enable them yourself.
+> VoxCtrl detects this and shows a one-click **Open Shortcut Settings** button
+> — see [KDE registers shortcuts disabled by default](docs/hotkeys.md#kde-registers-shortcuts-disabled-by-default).
 
 ---
 
@@ -25,7 +41,7 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 * **Modern GUI & Tray System**: A sleek Svelte-based user interface with dedicated, swappable, fully animated overlays (Ocean Wave, Voice Card, Waveform, and Pulse Ring), a searchable transcription history panel, and a native desktop System Tray utility.
 * **Low-Latency Audio Loop**: Streamlined recording and VAD (Voice Activity Detection) built using `cpal` to minimize capture latency.
 * **Built-in Model Context Protocol (MCP) Server**: Exposes voice dictation and speech synthesis as high-level JSON-RPC tools to AI clients (like Claude Desktop or Cursor) via local secure sockets—keeping integrations fully local.
-* **Linux evdev Global Hotkeys**: Low-level event loop listener bypassing desktop environments to bind global hold-to-talk, toggle-to-talk, double-tap, double-tap & hold, or chord combo gestures directly to any keyboard.
+* **Privacy-Preserving Global Hotkeys**: Shortcuts are registered with your desktop through the XDG `GlobalShortcuts` portal (KDE Plasma, GNOME 48+, Hyprland), so VoxCtrl receives its own shortcuts and never reads a keystroke. Bind hold-to-talk, toggle-to-talk, double-tap, or double-tap & hold gestures. Works identically on Wayland and X11, with no permission setup at all.
 * **DBus Dictation Service**: Exposes `ai.voxctrl.Dictation` on the local Linux session bus, letting you script recording states securely without network exposure.
 * **Neural Text-to-Speech (TTS)**: Built-in local voice feedback with a choice of four engines — **Piper** (neural, high quality), **Pocket-TTS** (neural, clones a voice from a reference clip), **Inflect-Micro-v2** (neural, 38 MB ONNX), and **eSpeak-NG** (lightweight, always available) — with automatic local package installation and an in-app model downloader. All four are compiled in by default, so any build can use them.
 * **Intelligent Post-Processing & LLM Rewriting**: Real-time automatic filler-word cleanup (e.g. stripping "um", "uh", "hmm") to sanitize dictation, combined with optional post-processing through any **OpenAI-compatible API server** (a local [Ollama](https://ollama.ai/) or LM Studio instance, or a hosted provider) for real-time grammar correction, tone rewriting, or custom formatting. Point it at any URL and supply an API key when the server requires one.
@@ -66,7 +82,15 @@ Below are the 11 target types supported by VoxCtrl and what they are used for:
 
 ```
                   ┌──────────────────────────────┐
-                  │    evdev Input Listener      │
+                  │  Desktop Shortcuts Portal    │
+                  │  org.freedesktop.portal.*    │
+                  │  GlobalShortcuts             │
+                  └──────────────┬───────────────┘
+                                 │ "your shortcut fired"
+                                 │  (no keystroke data)
+                                 ▼
+                  ┌──────────────────────────────┐
+                  │      Gesture Recognizer      │
                   │  (Hold / Toggle / Double)    │
                   └──────────────┬───────────────┘
                                  │ on_press(target_id)
@@ -179,28 +203,39 @@ text = "{TEXT}"                    # Custom arguments template (substitutes the 
 
 ## 📦 Portable AppImage & Installation
 
-VoxCtrl runs natively on Linux (optimized for CachyOS/Arch, Ubuntu/Debian, Fedora, and openSUSE). We support seamless standalone execution using a portable **AppImage**, which features a built-in installer to handle system integration and hardware hotkey permissions.
+VoxCtrl runs natively on Linux (optimized for CachyOS/Arch, Ubuntu/Debian, Fedora, and openSUSE). We support seamless standalone execution using a portable **AppImage**, which features a built-in installer to handle system integration.
 
-### 1. Unified Setup & System Integration
-
-To install runtime dependencies, configure global hotkey permissions, and integrate VoxCtrl into your desktop environment launcher, run the AppImage with the `--install` flag:
+### 1. Just Run It
 
 ```bash
 chmod +x VoxCtrl-*-x86_64.AppImage
-./VoxCtrl-*-x86_64.AppImage --install
+./VoxCtrl-*-x86_64.AppImage
 ```
 
-Alternatively, you can just launch the AppImage normally. If the application detects missing permissions, a diagnostic window will appear with a **🔧 Setup System Integration** button to automatically run the setup.
+That is the whole installation. Global shortcuts need no permissions, and
+VoxCtrl registers its own `.desktop` entry and icon under `~/.local/share/` on
+every Linux launch — no privileges, no install step.
 
-#### What the built-in installer accomplishes automatically:
-* **System Runtime Packages**: Detects your package manager (`apt`, `pacman`, `dnf`, `zypper`) and installs WebKitGTK, OpenSSL, PortAudio, `wtype`, `xdotool`, and clipboard utilities.
-* **Low-Level Hardware Hotkeys**: Creates the `/etc/udev/rules.d/99-voxctrl.rules` rule so the evdev key listener works globally without running the application as root. The rule uses systemd's `uaccess` tag, which grants access to your active session **immediately** — no logout, no reboot. (`input` group membership is still added as a fallback for systems without logind.)
-* **Desktop Menu Integration**: Registers a modern `.desktop` entry in `~/.local/share/applications/` and copies the application icon so VoxCtrl appears in your desktop application menus.
+The only thing that can need a package manager is the helper that types text
+into other windows (`wtype` on Wayland, `xdotool` on X11). If it is missing, the
+setup window says so and offers to install it, or shows you the command. You can
+also do that step up front with `./VoxCtrl-*-x86_64.AppImage --install`, which
+installs those packages and nothing else.
+
+> [!IMPORTANT]
+> **The installer does not touch keyboard permissions, and there is no step that does.**
+> Global shortcuts go through the XDG desktop portal, so nothing needs granting.
+> The administrator prompt is for installing the packages above and nothing else.
+>
+> Older VoxCtrl versions wrote `/etc/udev/rules.d/99-voxctrl.rules`, which let
+> every program running as your user read every keystroke on your system. The
+> installer now **removes** that rule if it finds it, and never creates it.
+> [Why](docs/hotkeys.md#why-this-changed).
 
 > [!NOTE]
-> Setup takes effect right away. If a system somehow can't apply the new permissions to the running session, VoxCtrl offers a one-click **Restart VoxCtrl** instead — it relaunches itself with the right group. Logging out is now only a last resort, and VoxCtrl tells you explicitly if it comes to that.
->
-> VoxCtrl also keeps watching: if it cannot read your keyboard it says so in the tray and in a notification rather than silently ignoring your shortcut, and it starts working the moment permissions appear — without an app restart.
+> VoxCtrl keeps watching: if shortcuts cannot reach it, it says so in the tray
+> and in a notification rather than silently ignoring your keypress, and it
+> starts working the moment the situation changes — without an app restart.
 
 ---
 
@@ -282,13 +317,18 @@ target_id = "default"                        # Backward compatibility fallback (
 target_ids = ["default", "notes"]            # Sequential delivery to both targets!
 
 [[binding]]
-id = "chord_dictation"
-label = "Chord Dictation"
-keys = ["KEY_LEFTCTRL", "KEY_LEFTMETA"]
-subkey = "KEY_Z"
-gesture = "chord"
+id = "double_tap_dictation"
+label = "Double-Tap & Hold to Dictate"
+keys = ["KEY_LEFTMETA", "KEY_SPACE"]
+gesture = "double_tap_hold"
+tap_ms = 300                                 # Gap allowed between the two taps
+hold_threshold_ms = 200                      # Hold on the second tap before recording
 target_ids = ["default"]
 ```
+
+Supported gestures are `hold`, `toggle`, `double_tap` and `double_tap_hold`.
+See [docs/hotkeys.md](docs/hotkeys.md) for how each behaves and how to tune the
+double-tap timings.
 
 ### Multi-Target Hotkey Bindings
 VoxCtrl supports routing your speech to **multiple output targets simultaneously** using a single hotkey gesture! 

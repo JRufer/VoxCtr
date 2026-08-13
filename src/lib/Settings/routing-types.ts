@@ -58,7 +58,6 @@ export interface HotkeyBinding {
   tap_ms: number;
   hold_threshold_ms: number;
   label: string;
-  subkey?: string;
   disabled: boolean;
   openai_enabled?: boolean;
   openai_model?: string;

@@ -432,18 +432,17 @@ target_ids = ["code_editor"]
 [[binding]]
 id = "double_tap_hold_dictate"
 label = "Double-Tap & Hold to Dictate"
-keys = ["KEY_LEFTMETA"]
+keys = ["KEY_LEFTMETA", "KEY_SPACE"]
 gesture = "double_tap_hold"
-tap_ms = 250
+tap_ms = 300
 hold_threshold_ms = 200        # Hold threshold on the second tap
 target_ids = ["default"]
 
 [[binding]]
-id = "chord_dictation"
-label = "Chord Dictation"
-keys = ["KEY_LEFTCTRL", "KEY_LEFTMETA"]
-subkey = "KEY_Z"
-gesture = "chord"
+id = "toggle_dictation"
+label = "Toggle Dictation"
+keys = ["KEY_LEFTCTRL", "KEY_LEFTMETA", "KEY_SPACE"]
+gesture = "toggle"
 target_ids = ["default"]
 ```
 
@@ -453,13 +452,12 @@ target_ids = ["default"]
 |---|---|---|---|---|
 | `id` | string | Yes | | Unique identifier |
 | `label` | string | Yes | `""` | Display name |
-| `keys` | string[] | Yes | | Key names (evdev format). For chord gestures, this defines the base combo keys. |
-| `subkey` | string | No | | Trigger key for chord gestures (e.g. `"KEY_Z"`). Pressed after base keys are held. |
-| `gesture` | string | Yes | | `"hold"`, `"toggle"`, `"double_tap"`, `"double_tap_hold"`, or `"chord"` |
+| `keys` | string[] | Yes | | Key names (evdev format, on every platform). Any number of modifiers plus exactly one regular key — see [Hotkeys](hotkeys.md#what-can-be-a-shortcut) |
+| `gesture` | string | Yes | | `"hold"`, `"toggle"`, `"double_tap"`, or `"double_tap_hold"` |
 | `target_ids` | string[] | Yes | | Ordered list of target IDs to route to |
 | `target_id` | string | No | | Single target (legacy; use `target_ids`) |
 | `hold_threshold_ms` | integer | No | `200` | Min hold duration in ms for hold / double-tap-hold gesture |
-| `tap_ms` | integer | No | `250` | Double-tap inter-press window in ms |
+| `tap_ms` | integer | No | `300` | Longest gap between the first tap's release and the second tap's press, in ms |
 | `disabled` | bool | No | `false` | Disable without deleting |
 | `openai_enabled` | bool | No | `null` | Enable/disable LLM post-processing specifically for this hotkey (null = inherit global config) |
 | `openai_model` | string | No | `null` | LLM model override specifically for this hotkey |

@@ -307,13 +307,12 @@ Defined in `~/.config/voxctrl/bindings.toml`. Each `[[binding]]` block maps a ke
 |---|---|---|---|
 | `id` | string | required | Unique identifier |
 | `label` | string | `""` | Display name in UI |
-| `keys` | string[] | required | Key names (evdev format on Linux). For chord gestures, this defines the base combo keys. |
-| `subkey` | string | | Single trigger key for chord gestures (e.g. `"KEY_Z"`), pressed after base keys are held |
-| `gesture` | string | required | `"hold"`, `"toggle"`, `"double_tap"`, `"double_tap_hold"`, or `"chord"` |
+| `keys` | string[] | required | Key names (evdev format, on every platform). Any number of modifiers plus exactly one regular key — see [Hotkeys](hotkeys.md#what-can-be-a-shortcut) |
+| `gesture` | string | required | `"hold"`, `"toggle"`, `"double_tap"`, or `"double_tap_hold"` |
 | `target_ids` | string[] | required | Ordered list of targets to route to |
 | `target_id` | string | | Single target (legacy; resolved if `target_ids` is empty) |
 | `hold_threshold_ms` | integer | `200` | Minimum hold / double-tap-hold duration in ms |
-| `tap_ms` | integer | `250` | Double-tap inter-press window in ms |
+| `tap_ms` | integer | `300` | Longest gap between the first tap's release and the second tap's press, in ms |
 | `disabled` | bool | `false` | Disable without removing |
 
 ### Gesture Types
@@ -322,9 +321,10 @@ Defined in `~/.config/voxctrl/bindings.toml`. Each `[[binding]]` block maps a ke
 |---|---|
 | `hold` | Recording starts on press, stops on release |
 | `toggle` | First press starts, second press stops |
-| `double_tap` | Two rapid presses within `tap_ms` trigger a toggle session |
-| `double_tap_hold` | Double-tap and keep held on the second press (enforces `hold_threshold_ms` and has a 2-minute safety timeout), release to stop |
-| `chord` | Hold the base `keys` and press the `subkey` trigger to start recording; release any of the base keys to stop |
+| `double_tap` | Two taps within `tap_ms` toggle a session. Starts on the second press, unless a `double_tap_hold` shares the same keys — then it resolves on the release, to tell the two apart |
+| `double_tap_hold` | Double-tap and keep held on the second press (`hold_threshold_ms` before recording starts). Releasing always stops it; a 2-minute timeout is a backstop for a release that never arrives |
+
+`chord` was removed — see [Hotkeys → Migrating from `chord`](hotkeys.md#migrating-from-chord). Existing bindings load as `hold` automatically.
 
 ### Key Names (evdev format)
 
@@ -366,18 +366,17 @@ tap_ms = 300
 [[binding]]
 id = "double_tap_hold_dictate"
 label = "Double-Tap & Hold to Dictate"
-keys = ["KEY_LEFTMETA"]
+keys = ["KEY_LEFTMETA", "KEY_SPACE"]
 gesture = "double_tap_hold"
-tap_ms = 250
+tap_ms = 300
 hold_threshold_ms = 200
 target_ids = ["default"]
 
 [[binding]]
-id = "chord_dictate"
-label = "Chord Dictation"
-keys = ["KEY_LEFTCTRL", "KEY_LEFTMETA"]
-subkey = "KEY_Z"
-gesture = "chord"
+id = "toggle_dictate"
+label = "Toggle Dictation"
+keys = ["KEY_LEFTCTRL", "KEY_LEFTMETA", "KEY_SPACE"]
+gesture = "toggle"
 target_ids = ["default"]
 ```
 
@@ -388,6 +387,8 @@ When `target_ids` contains multiple entries, VoxCtrl delivers to each target **s
 ### Superset Shadowing
 
 If binding A's keys are a proper subset of binding B's keys (e.g. `META+SPACE` vs `CTRL+META+SPACE`), and both are pressed, only binding B fires. This prevents shorter combos from accidentally triggering when a longer combo is intended.
+
+Shadowing is resolved when a key goes *down*. Releasing `CTRL` part-way through a `CTRL+META+SPACE` gesture therefore does not start a `META+SPACE` recording.
 
 ---
 

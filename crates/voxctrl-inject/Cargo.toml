@@ -11,7 +11,3 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 arboard = { workspace = true }
 notify-rust = { workspace = true }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-# ashpd provides safe bindings to xdg-desktop-portal (Wayland fallback)
-ashpd = "0.9"

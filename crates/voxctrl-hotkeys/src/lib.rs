@@ -1,8 +1,12 @@
 pub mod gestures;
 mod health;
+mod keys;
+pub mod trigger;
 
 #[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "linux")]
+pub mod portal;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -12,7 +16,8 @@ use tokio::sync::mpsc;
 use voxctrl_routing::HotkeyBinding;
 
 pub use gestures::{GestureEvent, GestureKind};
-pub use health::ListenerHealth;
+pub use health::{Backend, BoundShortcut, ListenerHealth};
+pub use trigger::{accelerator, is_modifier, TriggerProblem};
 
 /// Callback channel: the listener sends GestureEvents to the app coordinator.
 pub type GestureSender = mpsc::UnboundedSender<GestureEvent>;
@@ -25,13 +30,18 @@ pub fn channel() -> (GestureSender, GestureReceiver) {
     mpsc::unbounded_channel()
 }
 
-/// Start the platform-specific hotkey listener on a dedicated OS thread.
-/// Bindings can be updated at runtime via `reload_bindings`.
+/// Start the global hotkey listener. Bindings can be updated at runtime through
+/// the returned handle.
 ///
-/// On Linux the listener supervises itself: it keeps rescanning `/dev/input`
-/// in the background, so hotkeys start working the moment the user gains
-/// access to the input devices (or plugs in a keyboard) — without restarting
-/// the app. `ListenerHandle::health` reports whether that has happened yet.
+/// On Linux this prefers the XDG desktop portal, where the compositor owns the
+/// key grab and VoxCtrl is told nothing except that its own shortcut fired. The
+/// evdev fallback is only used when the portal is unavailable *and* the user
+/// has already given this process access to input devices — VoxCtrl never asks
+/// for that access, because granting it lets every program running as the user
+/// read the keyboard, not just this one.
+///
+/// `ListenerHandle::health` reports which of those happened, so the app can say
+/// so at launch instead of failing silently.
 pub fn start_listener(
     bindings: Vec<HotkeyBinding>,
     tx: GestureSender,
@@ -52,6 +62,7 @@ pub fn start_listener(
     #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = (bindings, tx, device_path, reloader_rx);
+        health.set_supported(false);
         tracing::warn!("Hotkey listener not supported on this platform");
     }
 

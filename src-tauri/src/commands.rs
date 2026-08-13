@@ -151,7 +151,6 @@ pub async fn save_config(
                 target_ids: vec![],
                 tap_ms: 250,
                 hold_threshold_ms: 0,
-                subkey: None,
                 disabled: false,
                 openai_enabled: Some(false),
                 openai_model: None,
@@ -272,7 +271,6 @@ pub async fn save_bindings(
                 target_ids: vec![],
                 tap_ms: 250,
                 hold_threshold_ms: 0,
-                subkey: None,
                 disabled: false,
                 openai_enabled: Some(false),
                 openai_model: None,
@@ -726,64 +724,92 @@ pub async fn test_openai(
 }
 
 #[derive(serde::Serialize, Clone)]
-pub struct UdevStatusPayload {
-    /// Hotkeys can be captured right now.
-    pub is_configured: bool,
-    pub rule_exists: bool,
-    /// The active session can read input devices (group membership or ACL).
-    pub in_group: bool,
-    /// Setup has run but this session cannot use it yet.
-    pub needs_relogin: bool,
-    /// The installed rule is the current, logout-free one. Older VoxCtrl
-    /// versions wrote a rule that only worked after a fresh login.
-    pub rule_is_current: bool,
-    /// `/dev/input/event*` nodes present, and how many VoxCtrl can open.
+pub struct HotkeyStatusPayload {
+    /// Global shortcuts can fire right now.
+    pub is_active: bool,
+    /// Which mechanism is delivering them: `portal`, `evdev`, `windows_hook`,
+    /// `starting` or `none`.
+    pub backend: String,
+    /// VoxCtrl receives only its own shortcuts and can read no keystrokes.
+    /// True on the portal and the Windows hook; false on the evdev fallback.
+    pub is_private: bool,
+    /// Why the desktop portal is not in use, when it is not.
+    pub portal_error: Option<String>,
+    /// The portal exists and refused VoxCtrl, rather than being absent. Needs
+    /// different advice: switching desktops would not help.
+    pub portal_refused: bool,
+    /// What the compositor actually bound, which may differ from what VoxCtrl
+    /// asked for — the user gets the final say in the portal's own dialog.
+    pub shortcuts: Vec<voxctrl_hotkeys::BoundShortcut>,
+    /// `wayland`, `x11` or whatever `XDG_SESSION_TYPE` says.
+    pub session_type: String,
+    /// `/dev/input/event*` nodes present, and how many VoxCtrl could open.
+    /// Only meaningful for the evdev fallback.
     pub devices_total: u32,
     pub devices_readable: u32,
-    /// VoxCtrl can pick the permissions up by restarting itself — no logout.
-    pub can_relaunch: bool,
-    /// Graphical privilege escalation is available for the one-click setup.
-    pub pkexec_available: bool,
-    pub session_type: String,
+    /// The user has to do something outside VoxCtrl for shortcuts to work.
+    pub needs_attention: bool,
     /// One-line, human-readable explanation of the state above.
     pub detail: String,
-    /// Copy-pasteable commands for when the automated setup cannot run.
-    pub manual_commands: String,
+    /// KDE registers portal shortcuts into System Settings in a *disabled*
+    /// state — the user must open Shortcuts, tick each one, and click Apply
+    /// before it fires. This is a confirmed upstream xdg-desktop-portal-kde
+    /// bug (bugs.kde.org #483639), not something VoxCtrl's registration got
+    /// wrong, and the portal protocol has no "enabled" bit for VoxCtrl to
+    /// check — so this is a standing warning on KDE + portal, not a detected
+    /// fact about any particular shortcut.
+    pub needs_manual_enable: bool,
+    /// What to tell the user about `needs_manual_enable`, and how to fix it.
+    /// `None` when `needs_manual_enable` is false.
+    pub manual_enable_hint: Option<String>,
 }
 
-impl UdevStatusPayload {
-    fn fully_working() -> Self {
-        Self {
-            is_configured: true,
-            rule_exists: true,
-            in_group: true,
-            needs_relogin: false,
-            rule_is_current: true,
-            devices_total: 1,
-            devices_readable: 1,
-            can_relaunch: false,
-            pkexec_available: true,
-            session_type: String::new(),
-            detail: "Global hotkeys are active.".to_string(),
-            manual_commands: String::new(),
-        }
-    }
-}
-
-/// Ground truth for whether the evdev hotkey listener can work in THIS
-/// process: at least one `/dev/input/event*` device is readable. Covers setups
-/// that grant access via ACLs (systemd uaccess) rather than the input group.
+/// `XDG_CURRENT_DESKTOP` is a colon-separated list (e.g. `ubuntu:GNOME`); any
+/// entry can match. `KDE_FULL_SESSION` is a legacy fallback Plasma still sets
+/// when the desktop-name entry is missing or non-standard.
 #[cfg(target_os = "linux")]
-pub fn any_input_device_readable() -> bool {
-    count_input_devices().1 > 0
+fn desktop_environment() -> Option<String> {
+    let current = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    if current.split(':').any(|d| d.eq_ignore_ascii_case("KDE")) {
+        return Some("KDE".to_string());
+    }
+    if std::env::var_os("KDE_FULL_SESSION").is_some() {
+        return Some("KDE".to_string());
+    }
+    if current.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")) {
+        return Some("GNOME".to_string());
+    }
+    current
+        .split(':')
+        .find(|d| !d.is_empty())
+        .map(|d| d.to_string())
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn any_input_device_readable() -> bool {
-    true
+fn desktop_environment() -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn session_type() -> String {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        "wayland".to_string()
+    } else if std::env::var_os("DISPLAY").is_some() {
+        "x11".to_string()
+    } else {
+        std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".to_string())
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn session_type() -> String {
+    std::env::consts::OS.to_string()
 }
 
 /// Returns `(total, readable)` counts of `/dev/input/event*` nodes.
+///
+/// Only used to explain the evdev fallback. On the portal path VoxCtrl opens
+/// none of these.
 #[cfg(target_os = "linux")]
 fn count_input_devices() -> (u32, u32) {
     let Ok(entries) = std::fs::read_dir("/dev/input") else {
@@ -808,182 +834,385 @@ fn count_input_devices() -> (u32, u32) {
     (total, readable)
 }
 
-#[cfg(target_os = "linux")]
-fn session_type() -> String {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        "wayland".to_string()
-    } else if std::env::var_os("DISPLAY").is_some() {
-        "x11".to_string()
-    } else {
-        std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".to_string())
-    }
+#[cfg(not(target_os = "linux"))]
+fn count_input_devices() -> (u32, u32) {
+    (0, 0)
 }
 
-/// Shared udev/permission status check used by both the `check_udev_status`
-/// IPC command and the startup diagnostics gate in `lib.rs`.
+/// How VoxCtrl is receiving global shortcuts, and what — if anything — is
+/// stopping it.
 ///
-/// `in_group` reflects whether hotkeys can work in the CURRENT session (process
-/// groups via `id -Gn`, or actually-readable input devices). Membership that
-/// only exists in the system group database (NSS `/etc/group`) — i.e. `usermod
-/// -aG input` ran but the user has not logged out yet — does NOT count as
-/// working; it sets `needs_relogin` instead so the UI can show the "log out and
-/// back in" message rather than pretending everything is configured while the
-/// evdev listener silently fails.
-pub fn check_udev_status_sync() -> UdevStatusPayload {
-    // 1. Check for developer override via environment variable
-    if let Ok(override_val) = std::env::var("VOXCTRL_TEST_UDEV_STATUS") {
-        match override_val.as_str() {
-            "missing" => {
-                return UdevStatusPayload {
-                    is_configured: false,
-                    rule_exists: false,
-                    in_group: false,
-                    needs_relogin: false,
-                    rule_is_current: false,
-                    devices_readable: 0,
-                    detail: "Setup has not been run yet.".to_string(),
-                    ..UdevStatusPayload::fully_working()
-                };
-            }
-            "relogin" => {
-                return UdevStatusPayload {
-                    is_configured: false,
-                    in_group: false,
-                    needs_relogin: true,
-                    devices_readable: 0,
-                    detail: "Setup has run but this session cannot read the keyboard yet."
-                        .to_string(),
-                    ..UdevStatusPayload::fully_working()
-                };
-            }
-            "ok" => {
-                return UdevStatusPayload::fully_working();
-            }
-            _ => {}
+/// This replaced a udev/`input`-group audit. VoxCtrl no longer configures
+/// keyboard access at all, so the question is no longer "did our setup run?"
+/// but "does this desktop offer the shortcuts portal, and if not, can we fall
+/// back to access the user has already granted themselves?".
+pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPayload {
+    if let Ok(override_val) = std::env::var("VOXCTRL_TEST_HOTKEY_STATUS") {
+        if let Some(payload) = test_override(&override_val) {
+            return payload;
         }
     }
 
-    // 2. Platform-specific checks
+    let backend = health.backend();
+    let desktop = desktop_environment();
+    // Only KDE is a confirmed case of this bug at the time of writing. Scoping
+    // the warning to it, rather than showing it on every portal backend,
+    // keeps it from crying wolf on desktops where binding really is instant.
+    let needs_manual_enable = backend == voxctrl_hotkeys::Backend::Portal
+        && desktop.as_deref() == Some("KDE");
+    let (devices_total, devices_readable) = match backend {
+        // Nothing was opened and nothing needs to be; probing /dev/input here
+        // would only invite a misleading "0 readable" in the UI.
+        voxctrl_hotkeys::Backend::Portal | voxctrl_hotkeys::Backend::WindowsHook => (0, 0),
+        _ => count_input_devices(),
+    };
+    let shortcuts = health.bound_shortcuts();
+
+    let detail = match backend {
+        voxctrl_hotkeys::Backend::Portal => {
+            let unbound = shortcuts.iter().filter(|s| !s.bound).count();
+            if unbound > 0 {
+                format!(
+                    "Your desktop registered VoxCtrl's shortcuts, but {unbound} of {} could \
+                     not be bound. Pick different keys for those, or set them in your \
+                     desktop's own shortcut settings.",
+                    shortcuts.len()
+                )
+            } else {
+                "Your desktop is handling VoxCtrl's global shortcuts. VoxCtrl cannot read \
+                 your keyboard — it is only told when its own shortcut fires."
+                    .to_string()
+            }
+        }
+        voxctrl_hotkeys::Backend::WindowsHook => {
+            "Global shortcuts are active.".to_string()
+        }
+        voxctrl_hotkeys::Backend::Evdev => format!(
+            "This desktop does not offer the global-shortcuts portal, so VoxCtrl is reading \
+             input devices directly ({devices_readable} of {devices_total} readable). That \
+             works, but it means every keystroke passes through VoxCtrl."
+        ),
+        voxctrl_hotkeys::Backend::Starting => "Starting the shortcut listener…".to_string(),
+        voxctrl_hotkeys::Backend::None if health.portal_refused() => {
+            // The desktop has a shortcuts portal and turned VoxCtrl away. Almost
+            // always a version mismatch around the app-id requirement that
+            // xdg-desktop-portal 1.20 introduced.
+            "Your desktop has a global-shortcuts portal but refused VoxCtrl's request \
+             for one. This is a problem between VoxCtrl and xdg-desktop-portal, not \
+             something you configured — updating xdg-desktop-portal and its KDE/GNOME \
+             backend is the usual fix."
+                .to_string()
+        }
+        voxctrl_hotkeys::Backend::None => {
+            if devices_total == 0 {
+                "No global-shortcuts portal and no input devices were found, so VoxCtrl \
+                 cannot receive shortcuts on this system."
+                    .to_string()
+            } else {
+                format!(
+                    "This desktop does not provide the XDG global-shortcuts portal, so \
+                     VoxCtrl has no way to receive its shortcuts. VoxCtrl will not grant \
+                     itself keyboard access to work around it: doing so would let every \
+                     program you run read everything you type. None of the {devices_total} \
+                     input devices on this system is readable."
+                )
+            }
+        }
+    };
+
+    HotkeyStatusPayload {
+        is_active: health.is_active(),
+        backend: match backend {
+            voxctrl_hotkeys::Backend::Portal => "portal",
+            voxctrl_hotkeys::Backend::Evdev => "evdev",
+            voxctrl_hotkeys::Backend::WindowsHook => "windows_hook",
+            voxctrl_hotkeys::Backend::Starting => "starting",
+            voxctrl_hotkeys::Backend::None => "none",
+        }
+        .to_string(),
+        is_private: health.is_private(),
+        portal_error: health.portal_error(),
+        portal_refused: health.portal_refused(),
+        shortcuts,
+        session_type: session_type(),
+        devices_total,
+        devices_readable,
+        needs_attention: !health.is_active(),
+        detail,
+        needs_manual_enable,
+        manual_enable_hint: needs_manual_enable.then(|| {
+            "KDE registers VoxCtrl's shortcuts as disabled until you turn them on yourself: \
+             open Shortcuts, find VoxCtrl, tick the box next to each shortcut, and click \
+             Apply. This is a known KDE bug (xdg-desktop-portal-kde #483639), not something \
+             VoxCtrl's setup missed — the portal gives VoxCtrl no way to tell whether a \
+             shortcut is enabled, so this step cannot be automated or skipped."
+                .to_string()
+        }),
+    }
+}
+
+/// Developer/test override so the setup window can be exercised in every state
+/// without a desktop session to match.
+fn test_override(value: &str) -> Option<HotkeyStatusPayload> {
+    let base = HotkeyStatusPayload {
+        is_active: true,
+        backend: "portal".to_string(),
+        is_private: true,
+        portal_error: None,
+        portal_refused: false,
+        shortcuts: Vec::new(),
+        session_type: "wayland".to_string(),
+        devices_total: 0,
+        devices_readable: 0,
+        needs_attention: false,
+        detail: "Your desktop is handling VoxCtrl's global shortcuts.".to_string(),
+        needs_manual_enable: false,
+        manual_enable_hint: None,
+    };
+    match value {
+        "portal" => Some(base),
+        "kde_manual_enable" => Some(HotkeyStatusPayload {
+            needs_manual_enable: true,
+            manual_enable_hint: Some(
+                "KDE registers VoxCtrl's shortcuts as disabled until you turn them on \
+                 yourself: open Shortcuts, find VoxCtrl, tick the box next to each \
+                 shortcut, and click Apply."
+                    .to_string(),
+            ),
+            ..base
+        }),
+        "evdev" => Some(HotkeyStatusPayload {
+            backend: "evdev".to_string(),
+            is_private: false,
+            portal_error: Some("no such interface".to_string()),
+            devices_total: 6,
+            devices_readable: 6,
+            detail: "VoxCtrl is reading input devices directly.".to_string(),
+            ..base
+        }),
+        "none" => Some(HotkeyStatusPayload {
+            is_active: false,
+            backend: "none".to_string(),
+            is_private: false,
+            portal_error: Some("no such interface".to_string()),
+            devices_total: 6,
+            devices_readable: 0,
+            needs_attention: true,
+            detail: "This desktop does not provide the XDG global-shortcuts portal.".to_string(),
+            ..base
+        }),
+        "refused" => Some(HotkeyStatusPayload {
+            is_active: false,
+            backend: "none".to_string(),
+            is_private: false,
+            portal_error: Some(
+                "org.freedesktop.portal.Error.NotAllowed: An app id is required".to_string(),
+            ),
+            portal_refused: true,
+            needs_attention: true,
+            detail: "Your desktop has a global-shortcuts portal but refused VoxCtrl's \
+                     request for one."
+                .to_string(),
+            ..base
+        }),
+        _ => None,
+    }
+}
+
+/// Launch the desktop's own global-shortcuts settings panel, best-effort.
+///
+/// Exists for the KDE `needs_manual_enable` case — there is no D-Bus verb that
+/// flips a portal shortcut from disabled to enabled, so the fix genuinely is
+/// "open this panel yourself". Tries the KDE System Settings module directly
+/// first (skips the home screen the user would otherwise have to navigate
+/// through by hand, which is the whole point of the button), then falls back
+/// to whatever System Settings binary exists, then to GNOME's keyboard panel
+/// on the off chance this is ever needed there too.
+///
+/// Errors only when nothing in the list is installed — a real signal the user
+/// is not actually on the desktop this feature assumes, worth surfacing
+/// rather than silently doing nothing.
+#[tauri::command]
+pub async fn open_shortcut_settings() -> Result<(), String> {
     #[cfg(not(target_os = "linux"))]
     {
-        UdevStatusPayload::fully_working()
+        return Err("Opening system shortcut settings is only supported on Linux.".to_string());
     }
 
     #[cfg(target_os = "linux")]
     {
-        // Check if udev rules exist (support new and legacy names)
-        let rule_path = std::path::Path::new(crate::installer::UDEV_RULE_PATH);
-        let rule_exists = rule_path.exists()
-            || std::path::Path::new("/etc/udev/rules.d/99-voxctl.rules").exists()
-            || std::path::Path::new("/etc/udev/rules.d/99-voxctr.rules").exists();
-
-        // An old install may have the group-only rule, which is the one that
-        // forces a logout. Treating it as "configured" is how an upgrading user
-        // ends up stuck: everything looks green and nothing works.
-        let rule_is_current = std::fs::read_to_string(rule_path)
-            .map(|c| crate::installer::rule_content_is_current(&c))
-            .unwrap_or(false);
-
-        // Does the ACTIVE session have the "input" group?
-        let session_in_group = match std::process::Command::new("id").args(&["-Gn"]).output() {
-            Ok(output) => {
-                let groups_str = String::from_utf8_lossy(&output.stdout);
-                groups_str.split_whitespace().any(|g| g == "input")
+        for (bin, args) in shortcut_settings_candidates() {
+            if !crate::installer::command_exists(bin) {
+                continue;
             }
-            Err(_) => false,
-        };
+            match spawn_shortcut_settings(bin, args) {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    tracing::warn!("Found `{bin}` but failed to launch it: {e}");
+                    continue;
+                }
+            }
+        }
 
-        let (devices_total, devices_readable) = count_input_devices();
+        Err("Could not find a way to open your desktop's shortcut settings automatically. \
+             Open System Settings yourself and look for Shortcuts → VoxCtrl."
+            .to_string())
+    }
+}
 
-        // Hotkeys work if the session has the group OR devices are readable anyway.
-        let in_group = session_in_group || devices_readable > 0;
+/// Tried in order: the KDE System Settings module directly (skips the home
+/// screen the user would otherwise navigate through by hand — the whole point
+/// of the button), then whichever System Settings binary exists, then GNOME's
+/// keyboard panel on the off chance this is ever needed there too.
+#[cfg(target_os = "linux")]
+fn shortcut_settings_candidates() -> &'static [(&'static str, &'static [&'static str])] {
+    &[
+        ("kcmshell6", &["kcm_keys"]),
+        ("kcmshell5", &["kcm_keys"]),
+        ("systemsettings6", &["kcm_keys"]),
+        ("systemsettings", &["kcm_keys"]),
+        ("gnome-control-center", &["keyboard"]),
+    ]
+}
 
-        // Is the membership at least recorded in the system group database (NSS
-        // /etc/group)? If so, setup already ran and only a relogin is missing.
-        let db_in_group = in_group || crate::installer::user_in_input_group_db();
+/// Fire-and-forget: these are GUI apps meant to stay open long after this
+/// command returns, so there is nothing useful to await here.
+#[cfg(target_os = "linux")]
+fn spawn_shortcut_settings(bin: &str, args: &[&str]) -> Result<(), String> {
+    #[cfg(test)]
+    {
+        if std::env::var_os("VOXCTRL_INSTALLER_TEST_MOCK").is_some() {
+            return Ok(());
+        }
+    }
+    std::process::Command::new(bin)
+        .args(args)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
 
-        let needs_relogin = rule_exists && !in_group && db_in_group;
-        let is_configured = rule_exists && in_group;
-        let can_relaunch = !in_group && crate::installer::can_relaunch_with_input_group();
-        let pkexec_available = crate::installer::command_exists("pkexec");
+/// Verdict on a key combination the user just recorded.
+#[derive(serde::Serialize, Clone)]
+pub struct HotkeyKeysCheck {
+    /// The combination can be saved as-is.
+    pub accepted: bool,
+    /// True when a rejection is binding rather than advisory — i.e. shortcuts
+    /// are delivered by the desktop portal, which cannot register this. On the
+    /// evdev fallback and on Windows, VoxCtrl watches the keys itself and a
+    /// bare modifier works fine, so the same combination is merely flagged.
+    pub enforced: bool,
+    /// The shortcut as the desktop will see it, e.g. `LOGO+space`.
+    pub accelerator: Option<String>,
+    /// Machine-readable problem: `modifiers_only`, `multiple_keys`,
+    /// `unsupported_key` or `empty`.
+    pub problem: Option<String>,
+    /// What to tell the user, and what to press instead.
+    pub message: Option<String>,
+}
 
-        let detail = if is_configured && !rule_is_current && rule_exists {
-            "Hotkeys work, but VoxCtrl's udev rule is from an older version. \
-             Re-run setup so access survives without logging out."
-                .to_string()
-        } else if is_configured {
-            format!("Global hotkeys are active ({devices_readable} of {devices_total} input devices readable).")
-        } else if can_relaunch {
-            "Permissions are configured but this VoxCtrl process started before they applied. \
-             Restart VoxCtrl to finish — you do not need to log out."
-                .to_string()
-        } else if needs_relogin {
-            "Permissions are configured but your desktop session has not picked them up."
-                .to_string()
-        } else if devices_total == 0 {
-            "No keyboard devices were found under /dev/input.".to_string()
-        } else {
-            format!(
-                "VoxCtrl cannot read any of the {devices_total} input devices on this system, \
-                 so global hotkeys do nothing. Run the setup below."
-            )
-        };
-
-        UdevStatusPayload {
-            is_configured,
-            rule_exists,
-            in_group,
-            needs_relogin,
-            rule_is_current,
-            devices_total,
-            devices_readable,
-            can_relaunch,
-            pkexec_available,
-            session_type: session_type(),
-            detail,
-            manual_commands: crate::installer::manual_setup_commands(
-                crate::installer::detect_pkg_manager(),
-                &std::env::var("USER").unwrap_or_default(),
-            ),
+impl HotkeyKeysCheck {
+    fn ok(accelerator: Option<String>) -> Self {
+        Self {
+            accepted: true,
+            enforced: false,
+            accelerator,
+            problem: None,
+            message: None,
         }
     }
 }
 
-#[tauri::command]
-pub async fn check_udev_status() -> Result<UdevStatusPayload, String> {
-    Ok(check_udev_status_sync())
+/// Can this key combination be registered as a global shortcut?
+///
+/// The settings UI calls this instead of reimplementing the rules, so the key
+/// recorder and the portal registration can never disagree about what is
+/// valid. `voxctrl_hotkeys::accelerator` is the single definition.
+pub fn check_hotkey_keys_with(
+    keys: &[String],
+    health: &voxctrl_hotkeys::ListenerHealth,
+) -> HotkeyKeysCheck {
+    use voxctrl_hotkeys::{Backend, TriggerProblem};
+
+    let problem = match voxctrl_hotkeys::accelerator(keys) {
+        Ok(accelerator) => return HotkeyKeysCheck::ok(Some(accelerator)),
+        Err(problem) => problem,
+    };
+
+    // Only the portal actually cannot deliver these. Blocking them everywhere
+    // would break bare-modifier shortcuts on the backends where VoxCtrl watches
+    // the keys itself and they work perfectly well.
+    let enforced = matches!(health.backend(), Backend::Portal | Backend::Starting);
+
+    let hint = match problem {
+        TriggerProblem::ModifiersOnly => Some(
+            "Add a regular key to the combination — Super+Space and Ctrl+Alt+D both work.",
+        ),
+        TriggerProblem::MultipleKeys => {
+            Some("Keep one regular key and use modifiers for the rest.")
+        }
+        TriggerProblem::UnsupportedKey(_) => Some("Try a letter, number, function or arrow key."),
+        TriggerProblem::Empty => None,
+    };
+
+    let mut message = if enforced {
+        format!("Your desktop cannot register this shortcut: {problem}.")
+    } else {
+        format!(
+            "This works right now, because VoxCtrl is watching the keyboard itself rather \
+             than using the desktop's shortcut service. It will stop working if that \
+             changes: {problem}."
+        )
+    };
+    if let Some(hint) = hint {
+        message.push(' ');
+        message.push_str(hint);
+    }
+
+    HotkeyKeysCheck {
+        // Advisory-only rejections still save: the combination genuinely works
+        // on this machine, and refusing it would be a lie.
+        accepted: !enforced,
+        enforced,
+        accelerator: None,
+        problem: Some(
+            match problem {
+                TriggerProblem::Empty => "empty",
+                TriggerProblem::ModifiersOnly => "modifiers_only",
+                TriggerProblem::MultipleKeys => "multiple_keys",
+                TriggerProblem::UnsupportedKey(_) => "unsupported_key",
+            }
+            .to_string(),
+        ),
+        message: Some(message),
+    }
 }
 
 #[tauri::command]
-pub async fn install_system_integration() -> Result<UdevStatusPayload, String> {
+pub async fn check_hotkey_keys(
+    keys: Vec<String>,
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+) -> Result<HotkeyKeysCheck, String> {
+    Ok(check_hotkey_keys_with(&keys, &state.hotkey_health))
+}
+
+#[tauri::command]
+pub async fn check_hotkey_status(
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+) -> Result<HotkeyStatusPayload, String> {
+    Ok(hotkey_status(&state.hotkey_health))
+}
+
+/// Install the host packages VoxCtrl needs to type text into other windows.
+///
+/// Never touches keyboard permissions — global shortcuts come from the desktop
+/// portal, which needs none.
+#[tauri::command]
+pub async fn install_system_integration(
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+) -> Result<HotkeyStatusPayload, String> {
     crate::installer::run_gui_installer().await?;
-
-    // The udev `uaccess` ACLs are applied asynchronously by logind after
-    // `udevadm trigger`. Give that a moment before reporting a verdict,
-    // otherwise a setup that succeeded reports "restart required" purely
-    // because we looked too early.
-    for _ in 0..10 {
-        if any_input_device_readable() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    }
-
-    check_udev_status().await
-}
-
-/// Restart VoxCtrl so it picks up `input` group membership that the current
-/// login session never received — the operation that replaces "log out and log
-/// back in".
-#[tauri::command]
-pub async fn restart_for_permissions(app: tauri::AppHandle) -> Result<(), String> {
-    crate::installer::relaunch_with_input_group()?;
-    // The replacement waits for this process to exit before starting.
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        app.exit(0);
-    });
-    Ok(())
+    Ok(hotkey_status(&state.hotkey_health))
 }
 
 /// The keystroke-injection helper this session needs, if it is not installed.
@@ -1012,13 +1241,14 @@ pub fn missing_injection_tool() -> Option<&'static str> {
     }
 }
 
-/// Everything first-run setup depends on, in one call: keyboard permissions,
-/// whether the listener is actually reading a keyboard, whether text can be
-/// typed anywhere, and whether a speech model is on disk.
+/// Everything first-run setup depends on, in one call: how global shortcuts are
+/// being delivered, whether text can be typed anywhere, and whether a speech
+/// model is on disk.
 #[derive(serde::Serialize)]
 pub struct SetupStatusPayload {
-    pub permissions: UdevStatusPayload,
-    /// The listener currently has at least one keyboard open.
+    pub hotkeys: HotkeyStatusPayload,
+    /// Shortcuts can fire right now. Mirrors `hotkeys.is_active` so the UI can
+    /// gate on it without reaching into the nested payload.
     pub hotkeys_active: bool,
     pub model_ready: bool,
     pub model_size: String,
@@ -1026,6 +1256,11 @@ pub struct SetupStatusPayload {
     pub model_auto_downloads: bool,
     /// Name of the missing keystroke-injection helper, if any.
     pub missing_injection_tool: Option<String>,
+    /// Graphical privilege escalation is available for the one-click install.
+    pub pkexec_available: bool,
+    /// Commands that install the host packages by hand, for machines with no
+    /// polkit agent. Empty when the distro is unknown.
+    pub manual_package_commands: String,
     pub is_complete: bool,
 }
 
@@ -1033,8 +1268,8 @@ pub struct SetupStatusPayload {
 pub async fn get_setup_status(
     state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
 ) -> Result<SetupStatusPayload, String> {
-    let permissions = check_udev_status_sync();
-    let hotkeys_active = state.hotkey_health.is_active();
+    let hotkeys = hotkey_status(&state.hotkey_health);
+    let hotkeys_active = hotkeys.is_active;
 
     let (model_size, model_dir, uses_whisper_model) = {
         let cfg = state.config.lock().await;
@@ -1055,16 +1290,17 @@ pub async fn get_setup_status(
     let missing_tool = missing_injection_tool();
 
     Ok(SetupStatusPayload {
-        is_complete: permissions.is_configured
-            && hotkeys_active
-            && model_ready
-            && missing_tool.is_none(),
-        permissions,
+        is_complete: hotkeys_active && model_ready && missing_tool.is_none(),
+        hotkeys,
         hotkeys_active,
         model_ready,
         model_size,
         model_auto_downloads,
         missing_injection_tool: missing_tool.map(str::to_string),
+        pkexec_available: crate::installer::command_exists("pkexec"),
+        manual_package_commands: crate::installer::manual_setup_commands(
+            crate::installer::detect_pkg_manager(),
+        ),
     })
 }
 

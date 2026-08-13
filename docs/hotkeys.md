@@ -4,87 +4,219 @@
 
 ## Overview
 
-VoxCtrl listens for global keyboard shortcuts that work regardless of which application has focus. The implementation is platform-specific: **evdev** on Linux and **Win32 hooks** on Windows.
+VoxCtrl listens for global shortcuts that work regardless of which application has focus.
+
+On Linux it does this through the **XDG desktop portal**, so **VoxCtrl does not read your keyboard**. Your desktop owns the key grab and tells VoxCtrl one thing: that its own shortcut fired. VoxCtrl never sees what you type in your browser, your terminal, your password manager, or anywhere else — not because it chooses not to look, but because it is never given the data.
+
+This is a change from earlier versions, which read `/dev/input/event*` directly. See [Why this changed](#why-this-changed) below.
+
+---
+
+## What VoxCtrl can and cannot see
+
+| | Portal (default) | evdev fallback |
+|---|---|---|
+| Can see keystrokes in other apps | **No** | Yes, all of them |
+| Needs a udev rule or `input` group | **No** | Yes |
+| Needs any permission setup | **No** | Yes, and VoxCtrl will not do it for you |
+| Who chooses the keys | You, through your desktop | You, in VoxCtrl |
+| Works on Wayland | Yes | Yes |
+| Works on X11 | Yes | Yes |
+| Works with no desktop (bare TTY) | No | Yes |
+
+The Settings → Hotkeys tab and the setup window both state which of these is in use, live. If it says your desktop is handling the shortcuts, VoxCtrl is not reading your keyboard.
 
 ---
 
 ## Platform Implementations
 
-### Linux (evdev)
+### Linux — XDG `GlobalShortcuts` portal (default)
 
-Uses `/dev/input/event*` devices directly, bypassing the desktop environment entirely. This means hotkeys work in:
-- X11 sessions
-- Wayland sessions
-- TTY / no-DE environments
+VoxCtrl talks to `org.freedesktop.portal.GlobalShortcuts` over D-Bus:
 
-The evdev keyboard device can be specified via `audio.evdev_device` in config (e.g. `"/dev/input/event4"`). If not set, the listener discovers keyboard devices automatically.
+0. It declares its application id — `ai.voxctrl.app` — through
+   `org.freedesktop.host.portal.Registry`, via `ashpd::register_host_app`. A
+   sandboxed app gets an id from its sandbox; a normal app on the host has none,
+   and since xdg-desktop-portal 1.20 it is expected to say who it is. From 1.21
+   the GlobalShortcuts portal refuses a session without one, which is the
+   `org.freedesktop.portal.Error.NotAllowed: An app id is required` a current
+   KDE session reports.
 
-**Requirement:** The user must be in the `input` group (or have read access to `/dev/input/event*`):
+   This is the **first** thing VoxCtrl does, before any portal proxy exists. The
+   declaration is allowed once per D-Bus connection and only before the first
+   portal call on it, and ashpd shares one connection across every portal it
+   opens — so anything that touches a portal first spends that one chance.
+   Portals older than 1.20 do not serve this interface, and its absence is not
+   an error.
 
-```bash
-sudo usermod -aG input $USER
-# Log out and back in
-```
+   `ashpd` is built with its `async-io` feature, deliberately not `tokio`.
+   Enabling `tokio` selects `zbus`'s Tokio-backed reactor for the *entire*
+   zbus 5.x build in the dependency graph — including
+   `tauri-plugin-single-instance`'s own use of `zbus::blocking` during plugin
+   setup, which runs inside Tauri's ambient Tokio runtime. zbus's Tokio-backed
+   blocking facade builds a brand-new multi-thread runtime internally and
+   panics with "Cannot start a runtime from within a runtime" the moment that
+   happens on a thread already driving one. zbus's default `async-io` reactor
+   runs its own background poller thread independent of whatever executor
+   polls the outer future, so it mixes safely with Tokio and never touches the
+   plugin. Do not add `ashpd`'s `tokio` feature back without checking this.
+1. It opens a portal session.
+2. It registers its shortcuts, one per distinct key combination, with the keys you configured as a *preferred* trigger.
+3. Your desktop decides what to actually bind — it may confirm with you, and it may assign different keys. Whatever it decides wins, and VoxCtrl displays the result.
+4. From then on your desktop sends `Activated` when the shortcut is pressed and `Deactivated` when it is released. That is the entire data flow.
+
+**No permissions are required.** There is nothing to install, no group to join, no rule to write, and no logout.
+
+Supported by KDE Plasma (5.27+), GNOME 48+, and Hyprland (via `xdg-desktop-portal-hyprland`). Compositors that do not implement the interface — Sway and most other wlroots compositors as of writing — fall through to the section below.
+
+#### What can be a shortcut
+
+An accelerator is **any number of modifiers plus exactly one regular key**. `Super+Space`, `Ctrl+Alt+D` and `F5` are all fine.
+
+Two shapes are not accelerators, and no desktop can bind them:
+
+- **Modifiers alone** — a lone Super, or Ctrl+Shift with nothing else. This is the one that catches people out, because "double-tap Super" feels like a perfectly ordinary hotkey.
+- **Two regular keys** — `A+B`. Use modifiers for everything but the last key.
+
+The key recorder in Settings → Hotkeys **refuses these while you are recording** and says why, rather than saving something that silently never fires. It nudges you as soon as you are holding modifiers with no regular key yet, so you can add one without lifting your fingers, and it shows the accelerator your desktop will receive (`LOGO+space`) once the combination is valid. A refused capture leaves your existing shortcut untouched.
+
+The rule is defined once, in `crates/voxctrl-hotkeys/src/trigger.rs`, and the settings UI validates against it over IPC — so what the recorder accepts and what the portal can register cannot drift apart.
+
+On the evdev fallback and on Windows, VoxCtrl watches the keys itself and a bare modifier genuinely works. There the recorder accepts it and shows a note that it will stop working if shortcut delivery ever moves to the portal, rather than blocking something that works on your machine today.
+
+#### If the portal refuses the session
+
+A refusal is not the same as a missing portal, and the app says which it hit.
+"Your desktop has a global-shortcuts portal but refused VoxCtrl's request"
+means the interface is there and answered — switching desktops will not help.
+The message distinguishes the two app-id cases, because they need different
+answers:
+
+- *"VoxCtrl could not declare an application id to this desktop: …"* — the
+  declaration itself failed, and the reason is quoted. Usually an
+  `xdg-desktop-portal` too old to serve the registry while new enough to demand
+  an id.
+- *"…declared itself as `ai.voxctrl.app` and the desktop accepted the
+  declaration, then still refused the session"* — the handshake worked and the
+  portal still said no, which points at a portal bug rather than anything you
+  configured.
+
+The exact D-Bus error is shown verbatim under **Portal reported:** in the setup
+window either way.
+
+#### KDE registers shortcuts disabled by default
+
+On KDE Plasma, `xdg-desktop-portal-kde` accepts VoxCtrl's `BindShortcuts`
+request and lists the shortcuts in System Settings → Shortcuts, but leaves
+them **unticked**. Nothing delivers until you open that panel, check the box
+next to each VoxCtrl shortcut, and press Apply. This is a confirmed upstream
+bug — [bugs.kde.org #483639](https://bugs.kde.org/show_bug.cgi?id=483639) —
+not something wrong with your configuration, and it is the most common reason
+a freshly-set-up shortcut on KDE does nothing.
+
+There is no D-Bus API that reports whether a registered shortcut is ticked, so
+VoxCtrl cannot detect completion of this step or complete it on your behalf —
+doing either would require an interface the portal does not expose. What it
+does instead: when the backend is the portal and the desktop is KDE, the
+Hotkeys tab and the setup window show a standing notice explaining the step,
+with an **Open Shortcut Settings** button that launches
+`kcmshell6`/`kcmshell5 kcm_keys` (falling back to `systemsettings(6)`)
+directly to the right panel. This notice does not block `is_complete` or
+`hotkeys_active` — the portal gives no way to tell whether you have already
+done it, so treating it as a hard requirement would leave the app reporting
+"incomplete" forever for KDE users who already ticked the boxes.
+
+#### Bindings from older versions
+
+A binding saved before this rule existed is not deleted and not silently broken. It is flagged **needs a regular key** in the Hotkeys tab, and VoxCtrl still registers it with the portal without a preferred trigger — which asks your desktop to let you pick the keys in its own settings. Editing the binding and choosing a valid combination is the clean fix.
+
+If your desktop refuses a shortcut for any other reason, the binding is flagged **not bound by your desktop**.
+
+### Linux — evdev fallback
+
+Only used when the portal is unavailable, **and only if your system already allows this process to read input devices**. VoxCtrl never grants itself that access.
+
+In this mode VoxCtrl reads `/dev/input/event*` directly, which means every keystroke on the system passes through the process. Nothing is logged, stored, or transmitted — key names live briefly in memory and never cross into the UI layer or any network call — but the app is honest about it rather than quiet: the Hotkeys tab and setup window both say so in plain language.
+
+A specific keyboard can be pinned with `audio.evdev_device` (e.g. `"/dev/input/event4"`); otherwise every eligible keyboard is read. Synthetic devices (`uinput`, `XTEST`, anything named "virtual") are always skipped so VoxCtrl cannot react to the keystrokes it injects itself.
+
+To disable the portal path for testing, set `VOXCTRL_DISABLE_PORTAL_HOTKEYS=1`.
 
 ### Windows
 
-Uses Win32 `SetWindowsHookEx` with `WH_KEYBOARD_LL` to intercept global keyboard events. No special permissions are required.
+Uses the Win32 `SetWindowsHookEx` / `WH_KEYBOARD_LL` low-level keyboard hook via `rdev`. No special permissions are required. Like the evdev fallback, this hook sees all keystrokes; that is the only mechanism Windows offers for this kind of shortcut.
+
+---
+
+## Why this changed
+
+Reading `/dev/input/event*` requires a udev rule that tags input devices with `uaccess` (or membership of the `input` group). VoxCtrl used to install one during setup. That rule is not narrow:
+
+```
+SUBSYSTEM=="input", KERNEL=="event*", TAG+="uaccess"
+```
+
+It grants **every process running as you** the ability to read **every keystroke on the system** — a compromised npm postinstall script, any Electron app, any shell one-liner. systemd's own defaults (`/usr/lib/udev/rules.d/70-uaccess.rules`) deliberately grant `uaccess` on input devices to joysticks and nothing else, precisely to prevent this.
+
+A dictation app should not be the reason your machine's security posture changes, and it certainly should not make that change silently during a first-run wizard. So:
+
+- **VoxCtrl never writes that rule, and never runs `usermod -aG input`.** Not at install, not on first launch, not from any button in the UI.
+- If your desktop has no shortcuts portal, VoxCtrl **tells you at launch** and explains the trade-off, rather than quietly widening access.
+- On a machine that still has the rule from an older version, `install.sh` and `scripts/uninstall.sh` **remove** it, so upgrading narrows access rather than leaving it wide open. To do it by hand: delete `/etc/udev/rules.d/99-voxctrl.rules`, reload udev, and drop yourself from the `input` group with `sudo gpasswd -d $USER input`.
+
+Administrator rights are still requested for one thing: installing host packages such as `wtype` and `xdotool`, which are what type the transcription into your focused window. That step touches no permissions.
 
 ---
 
 ## Gesture Recognition
 
-Each binding specifies a `gesture` that controls when recording starts and stops.
+Each binding specifies a `gesture` that controls when recording starts and stops. Recognition is shared by every backend, so gestures behave identically on the portal, on evdev, and on Windows.
 
 ### `hold`
 ```
-Key Down ──► START RECORDING (GestureKind::Start)
-Key Up   ──► STOP RECORDING  (GestureKind::Stop)
+Trigger down ──► (after hold_threshold_ms) START RECORDING
+Trigger up   ──► STOP RECORDING
 ```
-Most natural for short dictations. Recording is exactly as long as the key is held.
+Most natural for short dictations. Recording lasts exactly as long as the key is held. `hold_threshold_ms` (default 200ms) is the minimum press duration, which stops an accidental brush from starting a recording.
 
-The `hold_threshold_ms` field (default 200ms) sets the minimum hold duration before a recording start is registered, preventing accidental triggers.
+For a multi-key combo, recording stops only once **every** key is released. Stopping on the first key-up would inject text while a modifier was still physically down, and the compositor would swallow it as a shortcut instead of typing it.
 
 ### `toggle`
 ```
-Key Down (1st press) ──► START RECORDING
-Key Down (2nd press) ──► STOP RECORDING
+Press once ──► START RECORDING
+Press again ──► STOP RECORDING
 ```
-For longer dictations where holding a key would be tiring. Press once to start, press again to stop.
+For longer dictations where holding a key would be tiring.
 
 ### `double_tap`
 ```
-Rapid press+release twice within tap_ms ──► START RECORDING
-(then behaves as toggle for stop)
+Tap, tap ──► START RECORDING
+Tap, tap ──► STOP RECORDING
 ```
-Two rapid presses trigger recording. The `tap_ms` field (default 250ms) sets the inter-press window. Distinguishes from accidental single presses.
+Two taps within `tap_ms` (default 300ms) of each other. **Recording starts on the second press**, not on its release — the gesture is unambiguous the moment the second press lands, and waiting any longer is latency you would feel.
+
+The one exception: if a `double_tap_hold` binding is configured on the *same keys*, the two gestures are indistinguishable until you either release quickly (a tap) or keep holding (a hold). In that case only, the tap resolves on the release.
 
 ### `double_tap_hold`
 ```
-Double-tap within tap_ms, and keep the key held down on the second tap ──► START RECORDING
-Release the key ──► STOP RECORDING
+Tap, then press and hold ──► (after hold_threshold_ms) START RECORDING
+Release                  ──► STOP RECORDING
 ```
-Triggers recording when the key is double-tapped and held. Recording continues as long as the key remains held, and stops when released. Enforces `hold_threshold_ms` on the second press to distinguish from a standard double-tap, and has a 2-minute safety timeout.
+Recording runs while you keep the key down after a double-tap. `hold_threshold_ms` on the second press is what distinguishes this from a plain `double_tap`.
 
-### `chord`
-```
-Base Keys held down ──► Wait for Subkey press
-Subkey pressed      ──► START RECORDING (GestureKind::Start)
-Any Base Key released ──► STOP RECORDING  (GestureKind::Stop)
-```
-A split configuration where you configure:
-1. **Base Combo**: One or more keys that must be held down simultaneously (e.g. `KEY_LEFTCTRL` and `KEY_LEFTALT`).
-2. **Subkey Trigger**: A single key pressed once base keys are held (e.g. `KEY_SPACE`).
+Releasing the trigger **always** stops the recording, whatever else is going on. A two-minute safety timeout is a last-resort backstop for a release that never arrives at all (a keyboard unplugged mid-gesture, a portal session that dies) — it should never be what ends a normal dictation.
 
-Recording starts immediately when the subkey trigger is pressed while the base keys are held. Recording continues as long as you keep holding the base keys, and stops immediately when you release **any** of the base keys. Releasing the subkey itself does not stop recording.
+#### Tuning double-tap gestures
 
-This is highly useful for advanced shortcut patterns without causing desktop keyboard layout or application conflicts.
+- **`tap_ms`** (default 300) — the longest gap between releasing the first tap and pressing the second. Raise it if double-taps get missed; lower it if they fire when you did not mean them to.
+- Taps closer together than 15ms are treated as a duplicated event rather than a gesture, and become the first tap of a fresh pair instead of being discarded.
+- A first tap held longer than 600ms is not a tap at all, and does not prime the gesture. This is what stops ordinary use of a bound modifier — holding Super for a moment while doing something else — from turning the next press into a phantom double-tap.
 
 ---
 
 ## Key Names
 
-Keys use **evdev event code names** on Linux. On Windows, the same names are mapped to Virtual Key codes internally.
+Keys use **evdev event code names** everywhere in the config (`KEY_LEFTMETA`, `KEY_SPACE`). On Windows they are mapped to Virtual Key codes internally; on the portal they are translated to the XDG shortcuts accelerator syntax (`LOGO+space`, `CTRL+ALT+d`).
 
 ### Modifier Keys
 | Name | Key |
@@ -99,58 +231,49 @@ Keys use **evdev event code names** on Linux. On Windows, the same names are map
 | `KEY_RIGHTMETA` | Right Super / Windows key |
 | `KEY_CAPSLOCK` | Caps Lock |
 
+Left and right variants of a modifier are the same accelerator to the portal — your desktop does not distinguish them.
+
 ### Common Keys
 | Name | Key |
 |---|---|
 | `KEY_SPACE` | Space |
 | `KEY_ENTER` | Enter |
 | `KEY_TAB` | Tab |
-| `KEY_ESCAPE` | Escape |
+| `KEY_ESC` | Escape |
 | `KEY_BACKSPACE` | Backspace |
 | `KEY_F1`–`KEY_F12` | Function keys |
 | `KEY_A`–`KEY_Z` | Letter keys |
 | `KEY_0`–`KEY_9` | Number row |
 
-### Finding Key Names
-
-To discover the evdev name for any key:
-```bash
-# Install evtest if not present
-sudo apt install evtest
-
-# Run (pick your keyboard device)
-sudo evtest /dev/input/event2
-
-# Press the key — look for "EV_KEY" lines:
-# Event: type 1 (EV_KEY), code 125 (KEY_LEFTMETA), value 1
-```
-
----
-
-## Hot-Reload
-
-Hotkey bindings update at runtime without restarting the listener. When bindings are saved via the UI or `save_bindings` IPC command:
-
-1. New bindings are written to `bindings.toml`
-2. Sent through the `hotkey_reloader` crossbeam channel
-3. The listener thread receives them and swaps its binding state table
+The easiest way to set a binding is the recorder in Settings → Hotkeys: focus the capture box and press the combination. That capture happens inside VoxCtrl's own focused window using ordinary browser key events — it is not a global listener.
 
 ---
 
 ## Multi-Key Combos
 
-`keys` is an array. All keys must be pressed for the gesture to activate. Order doesn't matter:
+`keys` is an array. All keys must be pressed for the gesture to activate; order does not matter.
 
 ```toml
 keys = ["KEY_LEFTMETA", "KEY_SPACE"]
-# Fires when both Left-Super AND Space are held, in any order
 ```
+
+When two bindings overlap, the longer one wins: holding `Ctrl+Super+Space` does not also fire a `Super+Space` binding. Shadowing is resolved when a key goes *down*, so releasing Ctrl part-way through a gesture cannot start a second recording.
+
+---
+
+## Hot-Reload
+
+Bindings update at runtime without restarting the listener. When they are saved via the UI or the `save_bindings` IPC command:
+
+1. New bindings are written to `bindings.toml`.
+2. They are sent through the `hotkey_reloader` crossbeam channel.
+3. The listener stops any gesture still in flight, swaps its binding table, and — on the portal backend — re-registers the shortcuts with your desktop.
 
 ---
 
 ## GestureEvent
 
-The output of the hotkey system is a stream of `GestureEvent` values sent on the `gesture_tx` channel:
+The output of the hotkey system is a stream of `GestureEvent` values on the `gesture_tx` channel:
 
 ```rust
 pub struct GestureEvent {
@@ -166,18 +289,29 @@ pub enum GestureKind {
 }
 ```
 
+Note what is *not* in it: no key names, no timestamps of individual presses, nothing about what you typed. This is the only hotkey data that reaches the rest of the app, and it is all the UI layer ever sees.
+
 `lib.rs` receives these and coordinates the audio recorder and inference pipeline.
 
 ---
 
 ## Conflict Handling
 
-If two bindings share the same key combo, the first matching binding wins (the one listed first in `bindings.toml`). Disable unused bindings rather than leaving conflicts active:
+Two enabled bindings with the same keys **and** the same gesture are a conflict, and the Hotkeys tab flags them. Disable one.
+
+`double_tap` and `double_tap_hold` on the same keys are **not** a conflict — they are a supported pairing, and the app keeps them straight (a quick double-tap runs one, double-tap-and-hold runs the other). On the portal backend they are registered as a single system shortcut so your desktop is never asked to bind the same keys twice.
 
 ```toml
 [[binding]]
 id = "old_binding"
 disabled = true
 keys = ["KEY_LEFTMETA", "KEY_SPACE"]
-# ...
 ```
+
+---
+
+## Migrating from `chord`
+
+The `chord` gesture (hold base keys, press a subkey to start) has been removed. It could not be expressed as a system shortcut — the portal has no concept of a partially-held combo — and it was the least-used gesture.
+
+Existing `chord` bindings keep working: on load they are converted to `hold` using the keys already in `keys`, and the obsolete `subkey` field is ignored and dropped the next time bindings are saved. Nothing needs to be edited by hand.
