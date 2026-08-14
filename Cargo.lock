@@ -9395,6 +9395,7 @@ dependencies = [
  "voxctrl-mcp",
  "voxctrl-routing",
  "voxctrl-tts",
+ "x11rb",
  "zbus 4.4.0",
 ]
 

@@ -59,6 +59,7 @@ tauri-plugin-single-instance = "2.4.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { workspace = true }
 gtk = { version = "0.18", features = ["v3_24"] }
+x11rb = { version = "0.13", features = ["shape"] }
 
 [features]
 # Both ONNX-backed engines ship by default: selecting them in Settings should

@@ -15,7 +15,7 @@ slint::slint! {
         // Window properties
         always-on-top: true;
         no-frame: true;
-        background: rgba(0, 0, 0, 0.01);
+        background: transparent;
         width: 560px;
         height: 190px;
 
@@ -62,16 +62,6 @@ slint::slint! {
         in property <[float]> spectrum-bars: [];
         in property <string> ascii-meter: "";
         in property <string> vu-needle-path: "";
-
-        // A tiny 1x1 pixel rectangle that is always visible, but is transparent,
-        // to force Slint to present a non-empty buffer on startup.
-        Rectangle {
-            x: 0;
-            y: 0;
-            width: 1px;
-            height: 1px;
-            background: rgba(0, 0, 0, 0.01);
-        }
 
         // ─────────────────────────────────────────────────────────────
         // 1. WAVEFORM — "OSC-01" green phosphor oscilloscope.
@@ -1147,6 +1137,55 @@ struct AppState {
 /// between dictations can push the overlay behind other windows, and it never
 /// recovers on its own — so this is called again on each activation and on a
 /// slow heartbeat while visible.
+#[cfg(target_os = "linux")]
+fn apply_x11_clickthrough(x11_window_id: u32) {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::shape::{ConnectionExt as _, SK, SO};
+    use x11rb::protocol::xproto::ClipOrdering;
+
+    if let Ok((conn, _screen_num)) = x11rb::connect(None) {
+        // Set the Input Shape (SK::INPUT) of the window to an empty region (0 rectangles).
+        // This causes the X server and XWayland to pass all pointer/click events
+        // through to whatever window is beneath this window at all times.
+        let _ = conn.shape_rectangles(
+            SO::SET,
+            SK::INPUT,
+            ClipOrdering::UNSORTED,
+            x11_window_id,
+            0,
+            0,
+            &[],
+        );
+        let _ = conn.flush();
+    }
+}
+
+/// Configures the overlay window so that it never captures mouse clicks or cursor events,
+/// passing all pointer interactions down to the UI underneath at all times.
+fn apply_clickthrough(ui: &OverlayWindow) {
+    ui.window().with_winit_window(|w| {
+        // Platform-agnostic / Wayland / Windows / macOS cursor hit-test disable
+        let _ = w.set_cursor_hittest(false);
+
+        #[cfg(target_os = "linux")]
+        {
+            use i_slint_backend_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = w.window_handle() {
+                match handle.as_raw() {
+                    RawWindowHandle::Xlib(h) => {
+                        apply_x11_clickthrough(h.window as u32);
+                    }
+                    RawWindowHandle::Xcb(h) => {
+                        apply_x11_clickthrough(h.window.get());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+}
+
+/// Sets the window level to AlwaysOnTop and ensures click-through is preserved.
 ///
 /// `force_raise` toggles the level (Normal → AlwaysOnTop) so the change is
 /// re-sent even when the level was already AlwaysOnTop, forcing the WM to
@@ -1154,10 +1193,9 @@ struct AppState {
 /// toggling the state while the surface is still being mapped can make some
 /// compositors leave the window unpresented until the next state change.
 fn apply_topmost(ui: &OverlayWindow, force_raise: bool) {
+    apply_clickthrough(ui);
     ui.window().with_winit_window(|w| {
         use i_slint_backend_winit::winit::window::WindowLevel;
-        // Keep the overlay click-through in case a remap reset the hit-test.
-        let _ = w.set_cursor_hittest(false);
         if force_raise {
             w.set_window_level(WindowLevel::Normal);
         }
@@ -1469,14 +1507,6 @@ fn main() {
 
     let ui = OverlayWindow::new().unwrap();
 
-    // Map/show the overlay window immediately on startup so that the window manager
-    // registers and anchors the window at launch. This prevents the window manager
-    // from stealing focus from the active text cursor during the first dictation.
-    if let Err(e) = ui.show() {
-        eprintln!("[overlay] Failed to show window on startup: {:?}", e);
-    }
-    apply_topmost(&ui, false);
-
     let shared_state = Arc::new(Mutex::new(AppState {
         recording: false,
         processing: false,
@@ -1582,8 +1612,8 @@ fn main() {
     let mut vu_angle = VU_ANGLE_MIN;
     let mut vu_vel = 0.0_f32;
     let mut lcg_state = 12345_u32;
-    let mut shown = true;
-    let mut idle = false;
+    let mut shown = false;
+    let mut clickthrough_initialized = false;
     // Counts render ticks while the overlay is visible, to re-assert the
     // always-on-top level on a slow heartbeat (see apply_topmost).
     let mut topmost_tick: u32 = 0;
@@ -1639,91 +1669,49 @@ fn main() {
             (lcg_state >> 8) as f32 / ((u32::MAX >> 8) as f32)
         };
 
-        // ── Window mapping ──────────────────────────────────────────────
-        // Map the overlay lazily the first time it is actually needed, then
-        // keep it mapped for the lifetime of the process. On Wayland,
-        // hide()/show() re-maps the surface and the compositor (KWin) grabs
-        // keyboard focus for the freshly-mapped overlay on every dictation —
-        // stealing focus from the user's window so injected text never reaches
-        // the cursor. Mapping once (with real content) and never unmapping
-        // avoids the per-dictation focus grab; when idle we simply render a
-        // transparent frame instead of hiding.
+        // ── Window mapping & visibility ─────────────────────────────────
         let visible_needed = active_main || active_pill || reveal_main > 0.004 || reveal_pill > 0.004;
 
         let mut just_mapped = false;
-        if !shown {
+        if visible_needed && !shown {
             if let Err(e) = ui.show() {
                 eprintln!("[overlay] Failed to show window: {:?}", e);
             }
-            // First map: set the level directly (no toggle) so the surface is
-            // presented reliably.
             apply_topmost(&ui, false);
             reposition_frames = REPOSITION_FRAMES;
             shown = true;
             just_mapped = true;
-            eprintln!("[overlay] window mapped (kept mapped for the session)");
+        } else if !visible_needed && shown {
+            ui.set_reveal_main(0.0);
+            ui.set_reveal_pill(0.0);
+            ui.set_level(0.0);
+            if let Err(e) = ui.hide() {
+                eprintln!("[overlay] Failed to hide window: {:?}", e);
+            }
+            shown = false;
+            computed_pos = None;
+            clickthrough_initialized = false;
+            return;
         }
 
-        // Nothing has needed the overlay yet — leave it unmapped.
+        // When unmapped/inactive, do not draw or occupy any screen area.
         if !shown {
             return;
         }
 
-        // Mapped but idle: keep the window invisible (reveal == 0 draws
-        // nothing) but DON'T stop driving the surface. On Wayland, a window
-        // that stops drawing entirely also stops receiving frame callbacks from
-        // some compositors (Mutter/KWin) — so when the next dictation arrives,
-        // Slint marks the window dirty but the compositor never delivers a
-        // frame and the overlay is never re-presented. The result is the
-        // overlay showing exactly once per session. Nudging winit to redraw on
-        // every idle tick keeps the frame-callback loop alive; the idle frame
-        // is essentially free since nothing is drawn.
-        if !visible_needed {
-            if !idle {
-                ui.set_reveal_main(0.0);
-                ui.set_reveal_pill(0.0);
-                ui.set_level(0.0);
-                idle = true;
+        if !clickthrough_initialized {
+            apply_topmost(&ui, false);
+            let realized = ui.window().with_winit_window(|_| true).unwrap_or(false);
+            if realized {
+                clickthrough_initialized = true;
             }
-
-            // Recompute and apply target position even when idle, so that the window
-            // is positioned correctly immediately on launch/anchor changes, rather
-            // than waiting for the first active dictation.
-            if !anchor.is_empty() && (pos_dirty || computed_pos.is_none()) {
-                if let Some(p) = compute_overlay_position(&ui, &anchor, &monitor_pref) {
-                    computed_pos = Some(p);
-                    reposition_frames = reposition_frames.max(REPOSITION_FRAMES);
-                }
-            }
-            if reposition_frames > 0 {
-                reposition_frames -= 1;
-                if let Some((px, py)) = computed_pos {
-                    ui.window().with_winit_window(|w| {
-                        w.set_outer_position(i_slint_backend_winit::winit::dpi::PhysicalPosition::new(px, py));
-                    });
-                }
-            }
-
-            ui.window().with_winit_window(|w| w.request_redraw());
-            return;
         }
 
-        // Becoming visible again after being idle: a new dictation is starting.
-        // Re-raise now in case the overlay dropped behind other windows while it
-        // was idle, and keep re-asserting on a ~1s heartbeat so it can't linger
-        // behind a window that came forward mid-dictation.
-        if idle {
+        topmost_tick = topmost_tick.wrapping_add(1);
+        if topmost_tick % 60 == 0 {
             apply_topmost(&ui, false);
             reposition_frames = REPOSITION_FRAMES;
-            topmost_tick = 0;
-        } else {
-            topmost_tick = topmost_tick.wrapping_add(1);
-            if topmost_tick % 60 == 0 {
-                apply_topmost(&ui, false);
-                reposition_frames = REPOSITION_FRAMES;
-            }
         }
-        idle = false;
 
         // Recompute the target position when the anchor changed, when the window
         // was just mapped, or until the first successful computation lands (the
@@ -2304,5 +2292,15 @@ mod tests {
         let (tx, ty) = (nums[2], nums[3]);
         assert!((tx - VU_PIVOT_X).abs() < 0.01, "zero angle must point straight up");
         assert!(ty < VU_PIVOT_Y, "needle tip must be above the pivot");
+    }
+
+    // ── Click-Through ────────────────────────────────────────────────────
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn apply_x11_clickthrough_handles_invalid_window_id_gracefully() {
+        // Must not panic even if given an invalid window ID (e.g. 0 or u32::MAX)
+        apply_x11_clickthrough(0);
+        apply_x11_clickthrough(u32::MAX);
     }
 }
