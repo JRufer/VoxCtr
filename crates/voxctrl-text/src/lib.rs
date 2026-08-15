@@ -139,16 +139,18 @@ pub fn correct_custom_vocabulary(text: &str, custom_vocab: &[String]) -> String 
                     let phrase_len = phrase_lower.chars().count();
                     let max_allowed = if phrase_len <= 4 {
                         0
-                    } else if phrase_len <= 8 {
+                    } else if phrase_len <= 6 {
                         1
                     } else {
-                        2
+                        3
                     };
 
                     if dist <= max_allowed {
-                        result.replace_range(start_byte..end_byte, phrase);
-                        replaced_any = true;
-                        break;
+                        if candidate_str != *phrase {
+                            result.replace_range(start_byte..end_byte, phrase);
+                            replaced_any = true;
+                            break;
+                        }
                     }
                 }
             }

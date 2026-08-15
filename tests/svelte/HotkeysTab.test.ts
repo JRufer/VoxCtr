@@ -306,13 +306,26 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     ).toBeTruthy();
   });
 
-  test("tells the user their desktop owns the shortcut keys", async () => {
+  test("tells the user their desktop owns the shortcut keys when expanded", async () => {
     render(HotkeysTab);
 
     expect(
       await screen.findByText("Your desktop is handling these shortcuts"),
     ).toBeTruthy();
+    // Collapsed initially
+    expect(screen.queryByText(/Your desktop decides which keys/i)).toBeNull();
+
+    // Click toggle to expand
+    const toggle = await screen.findByRole("button", {
+      name: /Toggle shortcut backend details/i,
+    });
+    await fireEvent.click(toggle);
+
     expect(await screen.findByText(/Your desktop decides which keys/i)).toBeTruthy();
+
+    // Click toggle again to collapse
+    await fireEvent.click(toggle);
+    expect(screen.queryByText(/Your desktop decides which keys/i)).toBeNull();
   });
 
   test("shows the keys the compositor actually bound, not the ones requested", async () => {
@@ -398,11 +411,24 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     render(HotkeysTab);
 
     expect(await screen.findByText(/One more step on KDE/i)).toBeTruthy();
+    // Collapsed by default
+    expect(screen.queryByText(/KDE bug 483639/i)).toBeNull();
+
+    // Click toggle to expand
+    const toggle = await screen.findByRole("button", {
+      name: /Toggle manual shortcut enable details/i,
+    });
+    await fireEvent.click(toggle);
+
     expect(await screen.findByText(/KDE bug 483639/i)).toBeTruthy();
     const btn = await screen.findByRole("button", { name: /Open Shortcut Settings/i });
     await fireEvent.click(btn);
 
     expect(openShortcutSettingsCalls).toBe(1);
+
+    // Click toggle to collapse
+    await fireEvent.click(toggle);
+    expect(screen.queryByText(/KDE bug 483639/i)).toBeNull();
   });
 
   test("shows an error if opening shortcut settings fails", async () => {
@@ -413,6 +439,12 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     openShortcutSettingsResult = "Could not find a way to open your desktop's shortcut settings automatically.";
 
     render(HotkeysTab);
+
+    // Click toggle to expand
+    const toggle = await screen.findByRole("button", {
+      name: /Toggle manual shortcut enable details/i,
+    });
+    await fireEvent.click(toggle);
 
     const btn = await screen.findByRole("button", { name: /Open Shortcut Settings/i });
     await fireEvent.click(btn);

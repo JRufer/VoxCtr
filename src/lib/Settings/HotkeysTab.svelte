@@ -135,6 +135,8 @@
   let hotkeyStatus = $state<HotkeyStatus | null>(null);
   let openingShortcutSettings = $state(false);
   let openShortcutSettingsError = $state<string | null>(null);
+  let backendBannerExpanded = $state(false);
+  let manualEnableExpanded = $state(false);
 
   async function refreshHotkeyStatus() {
     try {
@@ -556,11 +558,17 @@
       class:warn={!hotkeyStatus.is_private && hotkeyStatus.is_active}
       class:broken={!hotkeyStatus.is_active}
     >
-      <span class="backend-icon">
-        {hotkeyStatus.is_private ? "🔒" : hotkeyStatus.is_active ? "⚠️" : "⛔"}
-      </span>
-      <span class="backend-body">
-        <strong>
+      <button
+        type="button"
+        class="banner-toggle"
+        onclick={() => backendBannerExpanded = !backendBannerExpanded}
+        aria-expanded={backendBannerExpanded}
+        aria-label="Toggle shortcut backend details"
+      >
+        <span class="backend-icon">
+          {hotkeyStatus.is_private ? "🔒" : hotkeyStatus.is_active ? "⚠️" : "⛔"}
+        </span>
+        <strong class="banner-title">
           {#if hotkeyStatus.backend === "portal"}
             Your desktop is handling these shortcuts
           {:else if hotkeyStatus.backend === "windows_hook"}
@@ -573,37 +581,75 @@
             Global shortcuts are not available
           {/if}
         </strong>
-        <span class="backend-detail">{hotkeyStatus.detail}</span>
-        {#if hotkeyStatus.backend === "portal"}
-          <span class="backend-detail">
-            Your desktop decides which keys VoxCtrl may claim, and may ask you to confirm them.
-            If a shortcut below shows different keys than you chose, that is your desktop's
-            choice and it wins.
-          </span>
-        {/if}
-      </span>
+        <svg
+          class="banner-chevron"
+          class:expanded={backendBannerExpanded}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+      {#if backendBannerExpanded}
+        <div class="banner-content">
+          <span class="backend-detail">{hotkeyStatus.detail}</span>
+          {#if hotkeyStatus.backend === "portal"}
+            <span class="backend-detail">
+              Your desktop decides which keys VoxCtrl may claim, and may ask you to confirm them.
+              If a shortcut below shows different keys than you chose, that is your desktop's
+              choice and it wins.
+            </span>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 
   {#if hotkeyStatus?.needs_manual_enable}
     <div class="manual-enable-banner">
-      <span class="backend-icon">🔧</span>
-      <span class="backend-body">
-        <strong>One more step on KDE: enable these shortcuts yourself</strong>
-        <span class="backend-detail">{hotkeyStatus.manual_enable_hint}</span>
-        <div class="manual-enable-actions">
-          <button
-            class="btn-action primary"
-            onclick={openShortcutSettings}
-            disabled={openingShortcutSettings}
-          >
-            {openingShortcutSettings ? "Opening…" : "Open Shortcut Settings"}
-          </button>
+      <button
+        type="button"
+        class="banner-toggle"
+        onclick={() => manualEnableExpanded = !manualEnableExpanded}
+        aria-expanded={manualEnableExpanded}
+        aria-label="Toggle manual shortcut enable details"
+      >
+        <span class="backend-icon">🔧</span>
+        <strong class="banner-title">One more step on KDE: enable these shortcuts yourself</strong>
+        <svg
+          class="banner-chevron"
+          class:expanded={manualEnableExpanded}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </button>
+      {#if manualEnableExpanded}
+        <div class="banner-content">
+          <span class="backend-detail">{hotkeyStatus.manual_enable_hint}</span>
+          <div class="manual-enable-actions">
+            <button
+              class="btn-action primary"
+              onclick={openShortcutSettings}
+              disabled={openingShortcutSettings}
+            >
+              {openingShortcutSettings ? "Opening…" : "Open Shortcut Settings"}
+            </button>
+          </div>
+          {#if openShortcutSettingsError}
+            <span class="backend-detail error">{openShortcutSettingsError}</span>
+          {/if}
         </div>
-        {#if openShortcutSettingsError}
-          <span class="backend-detail error">{openShortcutSettingsError}</span>
-        {/if}
-      </span>
+      {/if}
     </div>
   {/if}
 
@@ -990,7 +1036,7 @@
   @reference "tailwindcss";
 
   .backend-banner {
-    @apply flex items-start gap-2.5 rounded-[var(--radius)] p-3 px-3.5 mb-1 border bg-white/[0.03] border-[var(--border)];
+    @apply flex flex-col rounded-[var(--radius)] p-2.5 px-3.5 mb-1 border bg-white/[0.03] border-[var(--border)] transition-colors duration-150;
   }
 
   .backend-banner.private {
@@ -1005,12 +1051,32 @@
     @apply bg-red-500/6 border-red-500/25;
   }
 
-  .backend-icon {
-    @apply text-base leading-none shrink-0 mt-0.5;
+  .manual-enable-banner {
+    @apply flex flex-col rounded-[var(--radius)] p-2.5 px-3.5 mb-1 border bg-amber-500/6 border-amber-500/25 transition-colors duration-150;
   }
 
-  .backend-body {
-    @apply flex flex-col gap-1 min-w-0 flex-1 text-[12.5px];
+  .banner-toggle {
+    @apply flex items-center gap-2.5 w-full bg-transparent border-none p-0 text-left cursor-pointer select-none text-[var(--text)];
+  }
+
+  .banner-title {
+    @apply flex-1 text-[12.5px] font-semibold leading-normal;
+  }
+
+  .banner-chevron {
+    @apply w-4 h-4 text-[var(--text-muted)] shrink-0 transition-transform duration-200 ease-in-out;
+  }
+
+  .banner-chevron.expanded {
+    @apply rotate-180 text-[var(--text)];
+  }
+
+  .banner-content {
+    @apply flex flex-col gap-1 min-w-0 w-full text-[12.5px] mt-2 pt-2 border-t border-white/5 pl-6.5;
+  }
+
+  .backend-icon {
+    @apply text-base leading-none shrink-0;
   }
 
   .backend-detail {
@@ -1019,10 +1085,6 @@
 
   .backend-detail.error {
     @apply text-red-400;
-  }
-
-  .manual-enable-banner {
-    @apply flex items-start gap-2.5 rounded-[var(--radius)] p-3 px-3.5 mb-1 border bg-amber-500/6 border-amber-500/25;
   }
 
   .manual-enable-actions {
