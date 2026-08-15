@@ -90,32 +90,10 @@ pub async fn setup_blocker(state: &Arc<AppState>) -> Option<String> {
     ))
 }
 
-/// Helper to robustly show, unminimize, and focus a window, especially under Linux WMs
+/// Helper to robustly show, unminimize, and focus a window
 pub fn show_and_focus_window(window: &tauri::WebviewWindow) {
-    let w = window.clone();
-    tauri::async_runtime::spawn(async move {
-        let mut pos: Option<tauri::PhysicalPosition<i32>> = None;
-        #[cfg(target_os = "linux")]
-        {
-            // If the window is already open/visible, we must hide it first and wait a short period
-            // (150ms) to allow the Linux window manager (GNOME/Mutter) to fully unmap it.
-            // Showing it again triggers a brand new window mapping event, which bypasses Wayland/GNOME's
-            // Focus Stealing Prevention, robustly bringing it to the foreground with active keyboard focus.
-            if w.is_visible().unwrap_or(false) {
-                pos = w.outer_position().ok();
-                let _ = w.hide();
-                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-            }
-        }
-
-        let _ = w.unminimize();
-        let _ = w.show();
-        #[cfg(target_os = "linux")]
-        {
-            if let Some(p) = pos {
-                let _ = w.set_position(p);
-            }
-        }
-        let _ = w.set_focus();
-    });
+    let _ = window.center();
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
 }

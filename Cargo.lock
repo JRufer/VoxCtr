@@ -9456,6 +9456,7 @@ dependencies = [
  "tracing",
  "voxctrl-config",
  "voxctrl-routing",
+ "zbus 4.4.0",
 ]
 
 [[package]]

@@ -133,11 +133,47 @@ if $REMOVE_PACKAGES; then
 fi
 
 # ── 3. Desktop integration ────────────────────────────────────────────────────
-act "Removing desktop integration"
+act "Removing desktop integration and registered global shortcuts"
 LAUNCHER="$HOME/.local/share/applications/ai.voxctrl.app.desktop"
 # Installs from before the entry was renamed to match the portal app id.
 LEGACY_LAUNCHER="$HOME/.local/share/applications/voxctrl.desktop"
 ICON="$HOME/.local/share/icons/hicolor/128x128/apps/voxctrl.png"
+
+# Unregister global shortcuts from KDE kglobalaccel if running
+for qdbus_cmd in qdbus6 qdbus-qt6 qdbus; do
+    if command -v "$qdbus_cmd" >/dev/null 2>&1; then
+        for comp in "ai.voxctrl.app" "ai.voxctrl.app.desktop" "voxctrl" "voxctrl.desktop"; do
+            action_output=$($qdbus_cmd --literal org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel.allActionsForComponent "$comp" 2>/dev/null || true)
+            if [ -n "$action_output" ]; then
+                shortcut_ids=$(echo "$action_output" | grep -o '"voxctrl_[^"]*"' | tr -d '"' | sort -u || true)
+                for sc in $shortcut_ids; do
+                    $qdbus_cmd org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel.unregister "$comp" "$sc" >/dev/null 2>&1 || true
+                done
+            fi
+        done
+        break
+    fi
+done
+
+# Clean shortcut configuration from kglobalshortcutsrc if present
+KGLOBAL_SRC="$HOME/.config/kglobalshortcutsrc"
+if [ -f "$KGLOBAL_SRC" ]; then
+    if grep -qE '\[(ai\.voxctrl\.app|voxctrl)' "$KGLOBAL_SRC" 2>/dev/null; then
+        python3 -c '
+import sys, re
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        content = f.read()
+    cleaned = re.sub(r"\[(ai\.voxctrl\.app[^\]]*|voxctrl[^\]]*)\][^\[]*", "", content)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(cleaned)
+except Exception:
+    pass
+' "$KGLOBAL_SRC" 2>/dev/null || true
+        ok "Cleaned registered shortcuts from $KGLOBAL_SRC"
+    fi
+fi
 
 # Remember where the AppImage lives (from the launcher) before deleting it.
 APPIMAGE_PATH=""

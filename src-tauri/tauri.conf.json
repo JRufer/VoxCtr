@@ -17,13 +17,16 @@
       {
         "label": "settings",
         "title": "VoxCtrl Settings",
-        "width": 700,
-        "height": 850,
-        "minWidth": 700,
-        "minHeight": 500,
+        "width": 720,
+        "height": 640,
+        "minWidth": 600,
+        "minHeight": 450,
+        "center": true,
         "visible": false,
         "resizable": true,
         "decorations": true,
+        "closable": true,
+        "acceptFirstMouse": true,
         "url": "/settings"
       },
       {
@@ -31,7 +34,10 @@
         "title": "VoxCtrl — Transcript History",
         "width": 600,
         "height": 500,
+        "center": true,
         "visible": false,
+        "resizable": true,
+        "decorations": true,
         "url": "/history"
       },
       {
@@ -41,6 +47,7 @@
         "height": 600,
         "minWidth": 480,
         "minHeight": 420,
+        "center": true,
         "visible": false,
         "alwaysOnTop": true,
         "resizable": true,

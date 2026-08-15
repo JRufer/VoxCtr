@@ -1160,6 +1160,44 @@ fn apply_x11_clickthrough(x11_window_id: u32) {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn force_x11_unmap(x11_window_id: u32) {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+
+    if let Ok((conn, _screen_num)) = x11rb::connect(None) {
+        let _ = conn.unmap_window(x11_window_id);
+        let _ = conn.flush();
+    }
+}
+
+/// Moves the window completely off-screen and unmaps it so it cannot intercept
+/// pointer events or hover hit-tests under any compositor or window manager.
+fn park_offscreen(ui: &OverlayWindow) {
+    let _ = ui.hide();
+    ui.window().with_winit_window(|w| {
+        let _ = w.set_cursor_hittest(false);
+        w.set_outer_position(i_slint_backend_winit::winit::dpi::PhysicalPosition::new(-10000, -10000));
+        #[cfg(target_os = "linux")]
+        {
+            use i_slint_backend_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = w.window_handle() {
+                match handle.as_raw() {
+                    RawWindowHandle::Xlib(h) => {
+                        apply_x11_clickthrough(h.window as u32);
+                        force_x11_unmap(h.window as u32);
+                    }
+                    RawWindowHandle::Xcb(h) => {
+                        apply_x11_clickthrough(h.window.get());
+                        force_x11_unmap(h.window.get());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+}
+
 /// Configures the overlay window so that it never captures mouse clicks or cursor events,
 /// passing all pointer interactions down to the UI underneath at all times.
 fn apply_clickthrough(ui: &OverlayWindow) {
@@ -1490,6 +1528,7 @@ fn vu_needle_path(angle: f32) -> String {
 fn main() {
     let mut backend = i_slint_backend_winit::Backend::new().unwrap();
     backend.window_attributes_hook = Some(Box::new(|builder| {
+        let builder = builder.with_visible(false);
         #[cfg(target_os = "windows")]
         {
             use i_slint_backend_winit::winit::platform::windows::WindowAttributesExtWindows;
@@ -1506,6 +1545,7 @@ fn main() {
     slint::platform::set_platform(Box::new(backend)).unwrap();
 
     let ui = OverlayWindow::new().unwrap();
+    park_offscreen(&ui);
 
     let shared_state = Arc::new(Mutex::new(AppState {
         recording: false,
@@ -1685,9 +1725,7 @@ fn main() {
             ui.set_reveal_main(0.0);
             ui.set_reveal_pill(0.0);
             ui.set_level(0.0);
-            if let Err(e) = ui.hide() {
-                eprintln!("[overlay] Failed to hide window: {:?}", e);
-            }
+            park_offscreen(&ui);
             shown = false;
             computed_pos = None;
             clickthrough_initialized = false;

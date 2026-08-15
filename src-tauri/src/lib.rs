@@ -244,6 +244,15 @@ pub fn run() {
         }
     });
 
+    // Setup desktop integration (launcher and icon) before initializing hotkey listeners,
+    // so xdg-desktop-portal can resolve the `ai.voxctrl.app` AppID against an installed .desktop file.
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(e) = crate::installer::setup_desktop_integration() {
+            tracing::warn!("Failed to setup desktop integration at startup: {e}");
+        }
+    }
+
     // Hotkey listener & bindings
     let mut all_bindings = bindings;
     if !cfg_data.tts.stop_key.is_empty() {
@@ -312,8 +321,12 @@ pub fn run() {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let label = window.label();
                 if label == "settings" || label == "history" {
-                    let _ = window.hide();
                     api.prevent_close();
+                    let w = window.clone();
+                    let _ = w.hide();
+                    tauri::async_runtime::spawn(async move {
+                        let _ = w.hide();
+                    });
                 }
             }
         })

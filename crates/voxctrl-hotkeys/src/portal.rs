@@ -221,6 +221,10 @@ async fn bind_groups(
     session: &Session<GlobalShortcuts>,
     groups: &[ShortcutGroup],
 ) -> Result<Vec<BoundShortcut>, PortalError> {
+    // Unregister any stale shortcuts or shortcuts whose description (label) has changed
+    // so KDE KGlobalAccel updates the action description when re-binding.
+    prune_stale_kde_shortcuts(groups).await;
+
     let shortcuts: Vec<NewShortcut> = groups
         .iter()
         .map(|g| {
@@ -243,6 +247,103 @@ async fn bind_groups(
         .map_err(|e| PortalError::Rejected(format!("{e}")))?;
 
     Ok(describe(groups, response.shortcuts()))
+}
+
+/// Query KDE's KGlobalAccel over D-Bus and unregister any VoxCtrl shortcuts
+/// that are no longer part of the active shortcut groups or whose label/description
+/// has changed.
+///
+/// xdg-desktop-portal-kde persists registered global shortcuts in KDE's
+/// KGlobalAccel (and `~/.config/kglobalshortcutsrc`), but does not clean them
+/// up or update their display names when an application stops requesting or renames
+/// them. Pruning stale and renamed shortcuts here ensures that KDE's shortcut
+/// settings stay in sync with VoxCtrl's configured bindings, labels, and names.
+async fn prune_stale_kde_shortcuts(groups: &[ShortcutGroup]) {
+    let group_descriptions: std::collections::HashMap<&str, &str> = groups
+        .iter()
+        .map(|g| (g.id.as_str(), g.description.as_str()))
+        .collect();
+
+    let connection = match zbus::Connection::session().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!("Could not connect to session D-Bus to check KDE shortcuts: {e}");
+            return;
+        }
+    };
+
+    let proxy = match zbus::Proxy::new(
+        &connection,
+        "org.kde.kglobalaccel",
+        "/kglobalaccel",
+        "org.kde.KGlobalAccel",
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::debug!("KGlobalAccel proxy unavailable (not running on KDE?): {e}");
+            return;
+        }
+    };
+
+    let components = [
+        "ai.voxctrl.app",
+        "ai.voxctrl.app.desktop",
+        "voxctrl",
+        "voxctrl.desktop",
+    ];
+
+    for component in components {
+        let actions: Vec<Vec<String>> = match proxy
+            .call("allActionsForComponent", &([component].as_slice(),))
+            .await
+        {
+            Ok(a) => a,
+            Err(_) => continue,
+        };
+
+        for action in actions {
+            if action.len() >= 2 {
+                let shortcut_id = &action[1];
+                let should_remove = match group_descriptions.get(shortcut_id.as_str()) {
+                    None => true, // Shortcut was deleted or disabled in the app
+                    Some(expected_desc) => {
+                        // If description in KDE differs from current group description (renamed),
+                        // unregister it so portal re-registers it with the new name.
+                        if action.len() >= 4 {
+                            let current_desc = &action[3];
+                            current_desc != *expected_desc
+                        } else {
+                            false
+                        }
+                    }
+                };
+
+                if should_remove {
+                    let unregister_res: Result<bool, zbus::Error> = proxy
+                        .call("unregister", &(component, shortcut_id.as_str()))
+                        .await;
+                    match unregister_res {
+                        Ok(unregistered) => {
+                            tracing::info!(
+                                "Pruned stale or renamed KDE shortcut `{}` for component `{}` (success: {})",
+                                shortcut_id,
+                                component,
+                                unregistered
+                            );
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "Failed to unregister KDE shortcut `{}`: {e}",
+                                shortcut_id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// What the compositor actually bound, so the UI can show the real shortcut

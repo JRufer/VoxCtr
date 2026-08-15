@@ -20,6 +20,7 @@ evdev = "0.12"
 # receives its own shortcuts and never reads a keyboard device.
 ashpd = { workspace = true }
 futures-util = { workspace = true }
+zbus = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 # rdev provides global hotkey listening on Windows
