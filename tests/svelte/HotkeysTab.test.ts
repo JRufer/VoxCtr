@@ -728,4 +728,79 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     // Verify select value was updated to the new target's label and delivery
     expect(trigger.textContent).toContain("My Nested Target (inject)");
   });
+
+  test("saving an existing binding with unchanged keys does not trigger a false key-validation error", async () => {
+    // Regression: if the user edits a binding only to rename it (without re-recording keys),
+    // saveBindingModal must NOT run check_hotkey_keys and must NOT show any error,
+    // even if the existing keys would normally be flagged (e.g. bare modifier on portal).
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTMETA", "KEY_SPACE"],
+        gesture: "hold",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Old Name",
+        disabled: false,
+      },
+    ];
+    // check_hotkey_keys should NOT be called when keys haven't changed
+    mockKeysChecks = [rejected("This should not appear")];
+
+    render(HotkeysTab);
+    await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+
+    // Change only the label, leave keys untouched
+    const labelInput = screen.getByDisplayValue("Old Name");
+    await fireEvent.input(labelInput, { target: { value: "New Name" } });
+
+    // Click Done — should save without error despite no re-recording
+    await fireEvent.click(await screen.findByRole("button", { name: /^Done$/i }));
+
+    // The stale rejection must not have been shown
+    expect(screen.queryByText(/not accepted/i)).toBeNull();
+    // check_hotkey_keys must NOT have been called for the unchanged combo
+    expect(keysCheckCalls).toHaveLength(0);
+  });
+
+  test("re-capturing the exact same keys clears any stale error from a previous capture", async () => {
+    // Regression: user tries a bare modifier (rejected), then re-records the
+    // original valid combo. The UI must show no error after the re-record.
+    mockBindings = [
+      {
+        id: "bind1",
+        keys: ["KEY_LEFTMETA", "KEY_SPACE"],
+        gesture: "hold",
+        target_id: "default",
+        tap_ms: 300,
+        hold_threshold_ms: 200,
+        label: "Dictate",
+        disabled: false,
+      },
+    ];
+    // First call = rejected bare modifier; second call = same combo as original (no-op path, won't be called)
+    mockKeysChecks = [rejected("Your desktop cannot register this shortcut.")];
+
+    const { container } = render(HotkeysTab);
+    await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+
+    const recorder = container.querySelector('[aria-label="Base Hotkey recorder input"]')!;
+
+    // Step 1: capture a bare modifier — gets rejected
+    await fireEvent.focus(recorder);
+    await fireEvent.keyDown(recorder, { key: "Meta", code: "MetaLeft" });
+    await fireEvent.keyUp(recorder, { key: "Meta", code: "MetaLeft" });
+    expect(await screen.findByText(/not accepted/i)).toBeTruthy();
+
+    // Step 2: re-capture the exact original combo — no-op, clears error
+    await fireEvent.focus(recorder);
+    await fireEvent.keyDown(recorder, { key: "Meta", code: "MetaLeft" });
+    await fireEvent.keyDown(recorder, { key: " ", code: "Space" });
+    await fireEvent.keyUp(recorder, { key: " ", code: "Space" });
+
+    expect(screen.queryByText(/not accepted/i)).toBeNull();
+    // Only the first (rejected) capture called check_hotkey_keys; the re-record of original did not
+    expect(keysCheckCalls).toHaveLength(1);
+  });
 });

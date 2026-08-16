@@ -142,9 +142,7 @@ describe("Setup window", () => {
     expect(await screen.findByText(/Portal reported: no such interface/i)).toBeTruthy();
   });
 
-  test("says a refused portal is not a missing portal", async () => {
-    // KDE has the portal and turned VoxCtrl away — telling the user to switch
-    // desktops would be useless advice.
+  test("explains shortcut approval is required and provides an approve button when refused", async () => {
     mockStatus({
       hotkeys: {
         is_active: false,
@@ -154,15 +152,16 @@ describe("Setup window", () => {
         portal_refused: true,
         shortcuts: [],
         needs_attention: true,
-        detail: "Your desktop has a global-shortcuts portal but refused VoxCtrl's request.",
+        detail: "Global shortcuts require approval from your desktop. Click Approve Keybinds to display the prompt and confirm your keybinds.",
       },
       status: { hotkeys_active: false, is_complete: false },
     });
 
     render(UdevWarning);
 
-    expect(await screen.findByText(/switching desktops would not help/i)).toBeTruthy();
+    expect(await screen.findByText(/require approval from your system/i)).toBeTruthy();
     expect(screen.queryByText(/will not grant itself keyboard access/i)).toBeNull();
+    expect(await screen.findByRole("button", { name: /Approve Keybinds/i })).toBeTruthy();
     expect(await screen.findByText(/An app id is required/i)).toBeTruthy();
   });
 

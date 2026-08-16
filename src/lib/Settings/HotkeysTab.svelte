@@ -78,9 +78,13 @@
   });
 
   // Derived check: does the current edited binding in the modal conflict with another existing binding?
+  // Excludes self-conflict: comparing a binding against the same binding ID never counts.
+  // Also excludes the original keys of the binding being edited: re-using the same combination
+  // that a binding already had is not a conflict with itself.
   let editingBindingConflict = $derived.by(() => {
     if (!editingBinding || !editingBinding.keys || editingBinding.keys.length === 0) return false;
     const editSig = getBindingSignature(editingBinding.keys, editingBinding.gesture);
+    // Only flag as a conflict if another *different* binding (different ID) uses the same signature
     return bindings.some(b => b.id !== editingBinding!.id && getBindingSignature(b.keys, b.gesture) === editSig);
   });
 
@@ -135,6 +139,8 @@
   let hotkeyStatus = $state<HotkeyStatus | null>(null);
   let openingShortcutSettings = $state(false);
   let openShortcutSettingsError = $state<string | null>(null);
+  let retryingShortcuts = $state(false);
+  let retryShortcutsError = $state<string | null>(null);
   let backendBannerExpanded = $state(false);
   let manualEnableExpanded = $state(false);
 
@@ -155,6 +161,20 @@
       openShortcutSettingsError = e?.toString() ?? "Could not open shortcut settings.";
     } finally {
       openingShortcutSettings = false;
+    }
+  }
+
+  async function handleRetryShortcuts() {
+    retryingShortcuts = true;
+    retryShortcutsError = null;
+    try {
+      await invoke("retry_portal_shortcuts");
+      await refreshHotkeyStatus();
+    } catch (e: any) {
+      retryShortcutsError = e?.toString() ?? "Failed to request shortcut approval from desktop.";
+      await refreshHotkeyStatus();
+    } finally {
+      retryingShortcuts = false;
     }
   }
 
@@ -214,6 +234,7 @@
     }
     isEditingBindingNew = true;
     keysCheck = null;
+    originalBindingKeys = [];
     editOpenaiEnabled = false;
     editOpenaiModel = "";
     editOpenaiMode = "custom";
@@ -240,6 +261,10 @@
   function editBinding(b: HotkeyBinding) {
     isEditingBindingNew = false;
     keysCheck = null;
+    // Track the keys the binding opened with so we can detect a no-op re-record
+    // (user captures the exact same combo the binding already had) and avoid
+    // showing a stale rejection from a different capture earlier in the session.
+    originalBindingKeys = [...b.keys];
     const clone = JSON.parse(JSON.stringify(b));
     if (!clone.target_ids) {
       clone.target_ids = clone.target_id ? [clone.target_id] : [];
@@ -286,17 +311,28 @@
     // Re-checked here, not just at capture time: a binding created by an older
     // VoxCtrl (or on a machine without the desktop portal) can be sitting in
     // the editor without ever passing through the recorder.
-    try {
-      const check = await invoke<KeysCheck>("check_hotkey_keys", {
-        keys: editingBinding.keys,
-      });
-      if (!check.accepted) {
-        keysCheck = check;
-        alert(check.message ?? "This key combination cannot be used as a shortcut.");
-        return;
+    //
+    // Exception: if the keys haven't changed from what the binding opened with,
+    // skip the structural check. The binding was already saved with these keys,
+    // so rejecting them here would be a false error — especially when the user
+    // is only editing the label or output target.
+    const finalKeysSorted = [...editingBinding.keys].sort().join(",");
+    const origKeysSorted = [...originalBindingKeys].sort().join(",");
+    const keysUnchanged = !isEditingBindingNew && finalKeysSorted === origKeysSorted;
+
+    if (!keysUnchanged) {
+      try {
+        const check = await invoke<KeysCheck>("check_hotkey_keys", {
+          keys: editingBinding.keys,
+        });
+        if (!check.accepted) {
+          keysCheck = check;
+          alert(check.message ?? "This key combination cannot be used as a shortcut.");
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to validate hotkey keys before saving:", e);
       }
-    } catch (e) {
-      console.error("Failed to validate hotkey keys before saving:", e);
     }
     if (editOpenaiEnabled) {
       if (editOpenaiMode === "custom") {
@@ -377,6 +413,10 @@
   }
 
   let currentlyPressedKeys = $state<string[]>([]);
+  // The keys the binding had when the edit modal was opened. Used to detect
+  // a no-op re-record so we don't show stale rejection state when the user
+  // re-captures the exact same combo the binding already had.
+  let originalBindingKeys = $state<string[]>([]);
 
   // Result of validating the last captured combination. The rules live in Rust
   // (`voxctrl_hotkeys::accelerator`) and are reached over IPC, so the recorder
@@ -425,6 +465,18 @@
   /// Validate a captured combination and commit it if the backend allows.
   async function commitCapture(keys: string[]): Promise<void> {
     if (!editingBinding || keys.length === 0) return;
+
+    // If the user re-recorded the exact same combination the binding already
+    // had, treat it as a no-op: clear any stale rejection from a previous
+    // capture in this session and keep the current keys unchanged.
+    const sortedNew = [...keys].sort().join(",");
+    const sortedOrig = [...originalBindingKeys].sort().join(",");
+    if (sortedNew === sortedOrig) {
+      keysCheck = null;
+      editingBinding.keys = [...keys];
+      return;
+    }
+
     let check: KeysCheck;
     try {
       check = await invoke<KeysCheck>("check_hotkey_keys", { keys });

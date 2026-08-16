@@ -190,6 +190,7 @@ pub fn run() {
         tts_handle: Arc::new(Mutex::new(None)),
         active_fifos: Arc::new(Mutex::new(std::collections::HashSet::new())),
         hotkey_reloader: Arc::new(Mutex::new(None)),
+        hotkey_gesture_tx: Arc::new(Mutex::new(None)),
         hotkey_health: hotkey_health.clone(),
         overlay_tx: overlay_tx.clone(),
     });
@@ -278,15 +279,18 @@ pub fn run() {
     let (gesture_tx, gesture_rx) = voxctrl_hotkeys::channel();
     let listener = voxctrl_hotkeys::start_listener(
         all_bindings,
-        gesture_tx,
+        gesture_tx.clone(),
         cfg_data.audio.evdev_device.clone(),
         hotkey_health.clone(),
     );
 
     let state_for_gesture = app_state.clone();
+    let gesture_tx_for_state = gesture_tx.clone();
     tokio::spawn(async move {
         let mut reloader = state_for_gesture.hotkey_reloader.lock().await;
         *reloader = Some(listener.reloader_tx);
+        let mut gtx = state_for_gesture.hotkey_gesture_tx.lock().await;
+        *gtx = Some(gesture_tx_for_state);
     });
 
     pipeline::spawn_hotkey_gesture_handler(app_state.clone(), gesture_rx);
@@ -444,6 +448,7 @@ pub fn run() {
             cuda_enabled,
             check_hotkey_status,
             check_hotkey_keys,
+            retry_portal_shortcuts,
             open_shortcut_settings,
             install_system_integration,
             get_setup_status,

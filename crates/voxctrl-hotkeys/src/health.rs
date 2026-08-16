@@ -156,6 +156,12 @@ impl ListenerHealth {
         }
     }
 
+    pub fn clear_portal_error(&self) {
+        if let Ok(mut e) = self.portal_error.lock() {
+            *e = None;
+        }
+    }
+
     pub fn set_portal_refused(&self, refused: bool) {
         self.portal_refused.store(refused, Ordering::Relaxed);
     }

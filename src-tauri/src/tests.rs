@@ -85,6 +85,7 @@ fn make_test_state() -> AppState {
         tts_handle: Arc::new(Mutex::new(None)),
         active_fifos: Arc::new(Mutex::new(std::collections::HashSet::new())),
         hotkey_reloader: Arc::new(Mutex::new(None)),
+        hotkey_gesture_tx: Arc::new(Mutex::new(None)),
         hotkey_health: Arc::new(voxctrl_hotkeys::ListenerHealth::default()),
     }
 }

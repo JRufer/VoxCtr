@@ -69,6 +69,9 @@ pub struct AppState {
     /// Channel for sending hotkey configurations directly to background threads
     pub hotkey_reloader: Arc<Mutex<Option<crossbeam_channel::Sender<Vec<voxctrl_routing::HotkeyBinding>>>>>,
 
+    /// Channel for forwarding hotkey gestures from listener to app coordinator
+    pub hotkey_gesture_tx: Arc<Mutex<Option<voxctrl_hotkeys::GestureSender>>>,
+
     /// Live view of whether the global hotkey listener can actually see a
     /// keyboard. Drives the "finish setup" warnings — without it a missing
     /// permission is indistinguishable from a hotkey the user never pressed.

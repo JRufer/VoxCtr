@@ -73,3 +73,21 @@ pub fn start_listener(
 pub struct ListenerHandle {
     pub reloader_tx: ReloaderSender,
 }
+
+/// Attempt to reconnect/bind global shortcuts via the XDG desktop portal.
+pub async fn retry_portal(
+    bindings: Vec<HotkeyBinding>,
+    tx: GestureSender,
+    rx_reload: ReloaderReceiver,
+    health: Arc<ListenerHealth>,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::retry_portal(bindings, tx, rx_reload, health).await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (bindings, tx, rx_reload, health);
+        Ok(())
+    }
+}

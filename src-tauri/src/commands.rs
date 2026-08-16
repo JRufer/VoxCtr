@@ -894,13 +894,9 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
         ),
         voxctrl_hotkeys::Backend::Starting => "Starting the shortcut listener…".to_string(),
         voxctrl_hotkeys::Backend::None if health.portal_refused() => {
-            // The desktop has a shortcuts portal and turned VoxCtrl away. Almost
-            // always a version mismatch around the app-id requirement that
-            // xdg-desktop-portal 1.20 introduced.
-            "Your desktop has a global-shortcuts portal but refused VoxCtrl's request \
-             for one. This is a problem between VoxCtrl and xdg-desktop-portal, not \
-             something you configured — updating xdg-desktop-portal and its KDE/GNOME \
-             backend is the usual fix."
+            "Global shortcuts require approval from your desktop. The system prompt was \
+             closed or declined before shortcuts were registered — click Approve Shortcuts \
+             below to display the prompt and confirm your keybinds."
                 .to_string()
         }
         voxctrl_hotkeys::Backend::None => {
@@ -1057,6 +1053,65 @@ pub async fn open_shortcut_settings() -> Result<(), String> {
         Err("Could not find a way to open your desktop's shortcut settings automatically. \
              Open System Settings yourself and look for Shortcuts → VoxCtrl."
             .to_string())
+    }
+}
+
+/// Request or retry global shortcut registration via the XDG desktop portal.
+#[tauri::command]
+pub async fn retry_portal_shortcuts(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let dir = voxctrl_routing::config_dir();
+        let mut bindings = voxctrl_routing::load_bindings(&dir).unwrap_or_default();
+        {
+            let cfg_guard = state.config.lock().await;
+            if !cfg_guard.data.tts.stop_key.is_empty() {
+                use voxctrl_routing::GestureType;
+                bindings.push(voxctrl_routing::HotkeyBinding {
+                    id: "__tts_stop__".to_string(),
+                    label: "TTS Stop Key".to_string(),
+                    keys: cfg_guard.data.tts.stop_key.clone(),
+                    gesture: GestureType::Hold,
+                    target_id: String::new(),
+                    target_ids: vec![],
+                    tap_ms: 250,
+                    hold_threshold_ms: 0,
+                    disabled: false,
+                    openai_enabled: Some(false),
+                    openai_model: None,
+                    openai_mode: None,
+                    openai_prompt: None,
+                    openai_system_prompt: None,
+                });
+            }
+        }
+
+        let gesture_tx = {
+            let gtx_guard = state.hotkey_gesture_tx.lock().await;
+            gtx_guard.clone()
+        };
+        let Some(gesture_tx) = gesture_tx else {
+            return Err("Hotkey gesture channel is not available.".to_string());
+        };
+
+        let (reloader_tx, reloader_rx) = crossbeam_channel::unbounded();
+        {
+            let mut reloader = state.hotkey_reloader.lock().await;
+            *reloader = Some(reloader_tx);
+        }
+
+        voxctrl_hotkeys::retry_portal(
+            bindings,
+            gesture_tx,
+            reloader_rx,
+            state.hotkey_health.clone(),
+        )
+        .await
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = state;
+        Ok(())
     }
 }
 

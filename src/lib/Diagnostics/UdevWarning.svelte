@@ -48,6 +48,8 @@
   let copied = $state(false);
   let openingShortcutSettings = $state(false);
   let openShortcutSettingsError = $state<string | null>(null);
+  let retryingShortcuts = $state(false);
+  let retryShortcutsError = $state<string | null>(null);
 
   // Polled rather than fetched once: the portal handshake finishes a moment
   // after launch, and the user may grant or change a shortcut in their
@@ -124,6 +126,20 @@
       openShortcutSettingsError = err?.toString() ?? "Could not open shortcut settings.";
     } finally {
       openingShortcutSettings = false;
+    }
+  }
+
+  async function handleRetryShortcuts() {
+    retryingShortcuts = true;
+    retryShortcutsError = null;
+    try {
+      await invoke("retry_portal_shortcuts");
+      await refresh();
+    } catch (err: any) {
+      retryShortcutsError = err?.toString() ?? "Failed to request shortcut approval from desktop.";
+      await refresh();
+    } finally {
+      retryingShortcuts = false;
     }
   }
 
@@ -248,13 +264,21 @@
               </p>
             {:else if setup.hotkeys.portal_refused}
               <p class="warn-note">
-                Your desktop <em>does</em> provide the shortcuts portal — it just declined
-                this request, so switching desktops would not help. This is a mismatch
-                between VoxCtrl and <code>xdg-desktop-portal</code>; updating it and its
-                desktop backend (<code>xdg-desktop-portal-kde</code> or
-                <code>-gnome</code>) is the usual fix. You can start and stop dictation
-                from the tray menu in the meantime.
+                Global shortcuts require approval from your system. If you closed or cancelled
+                the desktop keybind prompt without approving, click below to show the prompt again.
               </p>
+              <div class="step-actions">
+                <button
+                  class="btn-primary"
+                  onclick={handleRetryShortcuts}
+                  disabled={retryingShortcuts}
+                >
+                  {retryingShortcuts ? "Prompting desktop…" : "Approve Keybinds"}
+                </button>
+              </div>
+              {#if retryShortcutsError}
+                <p class="warn-note">{retryShortcutsError}</p>
+              {/if}
             {:else if setup.hotkeys.backend !== "starting"}
               <p class="warn-note">
                 VoxCtrl will not grant itself keyboard access to work around this. Doing so

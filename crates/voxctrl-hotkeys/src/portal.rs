@@ -221,9 +221,8 @@ async fn bind_groups(
     session: &Session<GlobalShortcuts>,
     groups: &[ShortcutGroup],
 ) -> Result<Vec<BoundShortcut>, PortalError> {
-    // Unregister any stale shortcuts or shortcuts whose description (label) has changed
-    // so KDE KGlobalAccel updates the action description when re-binding.
-    prune_stale_kde_shortcuts(groups).await;
+    // Sync shortcut names in KDE settings and unregister any deleted shortcuts.
+    sync_kde_shortcuts(groups).await;
 
     let shortcuts: Vec<NewShortcut> = groups
         .iter()
@@ -249,99 +248,151 @@ async fn bind_groups(
     Ok(describe(groups, response.shortcuts()))
 }
 
-/// Query KDE's KGlobalAccel over D-Bus and unregister any VoxCtrl shortcuts
-/// that are no longer part of the active shortcut groups or whose label/description
-/// has changed.
+/// Query KDE's KGlobalAccel over D-Bus to unregister deleted shortcuts, and
+/// synchronize display names in `~/.config/kglobalshortcutsrc` for renamed shortcuts.
 ///
 /// xdg-desktop-portal-kde persists registered global shortcuts in KDE's
 /// KGlobalAccel (and `~/.config/kglobalshortcutsrc`), but does not clean them
 /// up or update their display names when an application stops requesting or renames
-/// them. Pruning stale and renamed shortcuts here ensures that KDE's shortcut
+/// them. Pruning deleted shortcuts and syncing descriptions ensures that KDE's shortcut
 /// settings stay in sync with VoxCtrl's configured bindings, labels, and names.
-async fn prune_stale_kde_shortcuts(groups: &[ShortcutGroup]) {
+async fn sync_kde_shortcuts(groups: &[ShortcutGroup]) {
     let group_descriptions: std::collections::HashMap<&str, &str> = groups
         .iter()
         .map(|g| (g.id.as_str(), g.description.as_str()))
         .collect();
 
-    let connection = match zbus::Connection::session().await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::debug!("Could not connect to session D-Bus to check KDE shortcuts: {e}");
-            return;
-        }
-    };
-
-    let proxy = match zbus::Proxy::new(
-        &connection,
-        "org.kde.kglobalaccel",
-        "/kglobalaccel",
-        "org.kde.KGlobalAccel",
-    )
-    .await
-    {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::debug!("KGlobalAccel proxy unavailable (not running on KDE?): {e}");
-            return;
-        }
-    };
-
-    let components = [
-        "ai.voxctrl.app",
-        "ai.voxctrl.app.desktop",
-        "voxctrl",
-        "voxctrl.desktop",
-    ];
-
-    for component in components {
-        let actions: Vec<Vec<String>> = match proxy
-            .call("allActionsForComponent", &([component].as_slice(),))
-            .await
+    // 1. Unregister deleted shortcuts over D-Bus from KGlobalAccel
+    if let Ok(connection) = zbus::Connection::session().await {
+        if let Ok(proxy) = zbus::Proxy::new(
+            &connection,
+            "org.kde.kglobalaccel",
+            "/kglobalaccel",
+            "org.kde.KGlobalAccel",
+        )
+        .await
         {
-            Ok(a) => a,
-            Err(_) => continue,
-        };
+            let components = [
+                "ai.voxctrl.app",
+                "ai.voxctrl.app.desktop",
+                "voxctrl",
+                "voxctrl.desktop",
+            ];
 
-        for action in actions {
-            if action.len() >= 2 {
-                let shortcut_id = &action[1];
-                let should_remove = match group_descriptions.get(shortcut_id.as_str()) {
-                    None => true, // Shortcut was deleted or disabled in the app
-                    Some(expected_desc) => {
-                        // If description in KDE differs from current group description (renamed),
-                        // unregister it so portal re-registers it with the new name.
-                        if action.len() >= 4 {
-                            let current_desc = &action[3];
-                            current_desc != *expected_desc
-                        } else {
-                            false
-                        }
-                    }
+            for component in components {
+                let actions: Vec<Vec<String>> = match proxy
+                    .call("allActionsForComponent", &([component].as_slice(),))
+                    .await
+                {
+                    Ok(a) => a,
+                    Err(_) => continue,
                 };
 
-                if should_remove {
-                    let unregister_res: Result<bool, zbus::Error> = proxy
-                        .call("unregister", &(component, shortcut_id.as_str()))
-                        .await;
-                    match unregister_res {
-                        Ok(unregistered) => {
-                            tracing::info!(
-                                "Pruned stale or renamed KDE shortcut `{}` for component `{}` (success: {})",
-                                shortcut_id,
-                                component,
-                                unregistered
-                            );
-                        }
-                        Err(e) => {
-                            tracing::debug!(
-                                "Failed to unregister KDE shortcut `{}`: {e}",
-                                shortcut_id
-                            );
+                for action in actions {
+                    if action.len() >= 2 {
+                        let shortcut_id = &action[1];
+                        let is_stale = !group_descriptions.contains_key(shortcut_id.as_str());
+
+                        if is_stale {
+                            let unregister_res: Result<bool, zbus::Error> = proxy
+                                .call("unregister", &(component, shortcut_id.as_str()))
+                                .await;
+                            match unregister_res {
+                                Ok(unregistered) => {
+                                    tracing::info!(
+                                        "Pruned stale KDE shortcut `{}` for component `{}` (success: {})",
+                                        shortcut_id,
+                                        component,
+                                        unregistered
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::debug!(
+                                        "Failed to unregister KDE shortcut `{}`: {e}",
+                                        shortcut_id
+                                    );
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+
+    // 2. Synchronize descriptions in ~/.config/kglobalshortcutsrc
+    update_kglobalshortcutsrc(&group_descriptions).await;
+}
+
+async fn update_kglobalshortcutsrc(group_descriptions: &std::collections::HashMap<&str, &str>) {
+    let home = match std::env::var("HOME") {
+        Ok(h) => std::path::PathBuf::from(h),
+        Err(_) => return,
+    };
+    let config_path = home.join(".config").join("kglobalshortcutsrc");
+    if !config_path.exists() {
+        return;
+    }
+
+    let content = match tokio::fs::read_to_string(&config_path).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::debug!("Could not read kglobalshortcutsrc: {e}");
+            return;
+        }
+    };
+
+    let mut new_lines = Vec::new();
+    let mut in_voxctrl_section = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let section = &trimmed[1..trimmed.len() - 1];
+            in_voxctrl_section = matches!(
+                section,
+                "ai.voxctrl.app" | "ai.voxctrl.app.desktop" | "voxctrl" | "voxctrl.desktop"
+            );
+            new_lines.push(line.to_string());
+            continue;
+        }
+
+        if in_voxctrl_section {
+            if let Some((key, val)) = trimmed.split_once('=') {
+                let key = key.trim();
+                let val = val.trim();
+                if key.starts_with("_k_") {
+                    new_lines.push(line.to_string());
+                    continue;
+                }
+                if let Some(expected_desc) = group_descriptions.get(key) {
+                    let parts: Vec<&str> = val.split(',').collect();
+                    if parts.len() >= 3 {
+                        let cur_key = parts[0];
+                        let def_key = parts[1];
+                        new_lines.push(format!("{key}={cur_key},{def_key},{expected_desc}"));
+                    } else if parts.len() == 2 {
+                        let cur_key = parts[0];
+                        let def_key = parts[1];
+                        new_lines.push(format!("{key}={cur_key},{def_key},{expected_desc}"));
+                    } else {
+                        new_lines.push(format!("{key}={val},{expected_desc}"));
+                    }
+                } else {
+                    // Stale or deleted shortcut - omit from file
+                    tracing::debug!("Removing stale shortcut `{key}` from kglobalshortcutsrc");
+                }
+                continue;
+            }
+        }
+
+        new_lines.push(line.to_string());
+    }
+
+    let updated_content = new_lines.join("\n") + "\n";
+    if updated_content != content {
+        if let Err(e) = tokio::fs::write(&config_path, updated_content).await {
+            tracing::debug!("Failed to write updated kglobalshortcutsrc: {e}");
         }
     }
 }

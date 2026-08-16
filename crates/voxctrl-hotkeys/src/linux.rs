@@ -90,6 +90,29 @@ async fn portal_start(
     crate::portal::start(bindings, tx, rx_reload, health).await
 }
 
+pub async fn retry_portal(
+    bindings: Vec<HotkeyBinding>,
+    tx: GestureSender,
+    rx_reload: crate::ReloaderReceiver,
+    health: Arc<ListenerHealth>,
+) -> Result<(), String> {
+    health.clear_portal_error();
+    health.set_portal_refused(false);
+    match portal_start(bindings, tx, rx_reload, health.clone()).await {
+        Ok(()) => {
+            tracing::info!("Global shortcuts registered through the desktop portal on retry");
+            Ok(())
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            tracing::warn!("Retry portal shortcuts failed: {msg}");
+            health.set_portal_error(msg.clone());
+            health.set_portal_refused(matches!(e, crate::portal::PortalError::Rejected(_)));
+            Err(msg)
+        }
+    }
+}
+
 // ── evdev fallback ────────────────────────────────────────────────────────────
 
 fn start_evdev(
