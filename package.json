@@ -4,7 +4,7 @@
   "version": "0.3.3",
   "type": "module",
   "scripts": {
-    "predev": "pkill -x voxctrl || true",
+    "predev": "pkill -x voxctrl 2>/dev/null || true; fuser -k 5173/tcp 2>/dev/null || true",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
