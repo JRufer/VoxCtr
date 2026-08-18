@@ -172,6 +172,17 @@ pub fn spawn_hotkey_gesture_handler(
 
             match event.kind {
                 GestureKind::Start => {
+                    // Drop gestures while the keybind recorder is open. The user
+                    // is pressing keys to configure a new binding — acting on them
+                    // would start an unwanted dictation session mid-setup.
+                    if state_for_gesture.is_hotkeys_inhibited() {
+                        tracing::debug!(
+                            "Hotkey '{}' gesture suppressed: keybind recorder is active",
+                            event.binding_id
+                        );
+                        continue;
+                    }
+
                     *state_for_gesture.active_target.lock().await = event.target_id.clone();
                     *state_for_gesture.active_binding_label.lock().await =
                         event.binding_label.clone();

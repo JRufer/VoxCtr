@@ -418,6 +418,14 @@
   // re-captures the exact same combo the binding already had.
   let originalBindingKeys = $state<string[]>([]);
 
+  // Suppress all hotkey gestures while the recorder is active so the user
+  // cannot accidentally trigger dictation while pressing keys for a new binding.
+  $effect(() => {
+    invoke("set_hotkeys_inhibited", { inhibited: recordingTarget === "keys" }).catch(
+      (e: unknown) => console.error("Failed to set hotkeys inhibited:", e),
+    );
+  });
+
   // Result of validating the last captured combination. The rules live in Rust
   // (`voxctrl_hotkeys::accelerator`) and are reached over IPC, so the recorder
   // and the portal registration cannot disagree about what is bindable.

@@ -171,6 +171,7 @@ pub fn run() {
         speaking: Arc::new(AtomicBool::new(false)),
         overlay_enabled: Arc::new(AtomicBool::new(cfg_data.ui.show_overlay)),
         mcp_recording: Arc::new(AtomicBool::new(false)),
+        hotkeys_inhibited: Arc::new(AtomicBool::new(false)),
         audio_ready: Arc::new(AtomicBool::new(false)),
         dynamic_stream: Arc::new(AtomicBool::new(cfg_data.audio.dynamic_stream)),
         monitoring: Arc::new(AtomicBool::new(false)),
@@ -457,6 +458,7 @@ pub fn run() {
             stop_tts,
             reset_chat_conversation,
             test_chat_target,
+            set_hotkeys_inhibited,
         ])
         .run(tauri::generate_context!())
         .expect("error running Tauri application");

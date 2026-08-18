@@ -648,14 +648,27 @@ pub async fn get_custom_overlays() -> Result<Vec<CustomOverlayInfo>, String> {
 #[tauri::command]
 pub async fn start_monitoring_audio(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     state.set_monitoring(true);
-    info!("Live audio monitoring started");
+    info!("Audio monitoring started");
     Ok(())
 }
 
 #[tauri::command]
 pub async fn stop_monitoring_audio(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     state.set_monitoring(false);
-    info!("Live audio monitoring stopped");
+    info!("Audio monitoring stopped");
+    Ok(())
+}
+
+/// Tell the gesture handler to silently drop any incoming hotkey events.
+/// Called when the user opens the keybind recorder in Settings so they cannot
+/// accidentally trigger dictation while pressing keys for a new binding.
+#[tauri::command]
+pub async fn set_hotkeys_inhibited(
+    inhibited: bool,
+    state: State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    state.set_hotkeys_inhibited(inhibited);
+    info!("Hotkeys inhibited: {inhibited}");
     Ok(())
 }
 

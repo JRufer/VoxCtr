@@ -21,6 +21,11 @@ pub struct AppState {
     pub overlay_enabled: Arc<AtomicBool>,
     /// True while MCP server is actively recording/listening to the microphone
     pub mcp_recording: Arc<AtomicBool>,
+    /// True while the user is recording a new keybind in the settings UI.
+    /// Any hotkey gesture event received while this is true is silently dropped,
+    /// so the user cannot accidentally trigger dictation while pressing keys
+    /// to set up a new binding.
+    pub hotkeys_inhibited: Arc<AtomicBool>,
     /// True when dynamic stream has successfully opened and is active (Option A)
     pub audio_ready: Arc<AtomicBool>,
     /// Live sync atomic flag for dynamic stream preference
@@ -96,6 +101,14 @@ impl AppState {
 
     pub fn is_speaking(&self) -> bool {
         self.speaking.load(Ordering::SeqCst)
+    }
+
+    pub fn is_hotkeys_inhibited(&self) -> bool {
+        self.hotkeys_inhibited.load(Ordering::SeqCst)
+    }
+
+    pub fn set_hotkeys_inhibited(&self, v: bool) {
+        self.hotkeys_inhibited.store(v, Ordering::SeqCst);
     }
 
     pub fn is_processing(&self) -> bool {

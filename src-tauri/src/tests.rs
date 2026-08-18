@@ -67,6 +67,7 @@ fn make_test_state() -> AppState {
         speaking: Arc::new(AtomicBool::new(false)),
         overlay_enabled: Arc::new(AtomicBool::new(true)),
         mcp_recording: Arc::new(AtomicBool::new(false)),
+        hotkeys_inhibited: Arc::new(AtomicBool::new(false)),
         audio_ready: Arc::new(AtomicBool::new(false)),
         dynamic_stream: Arc::new(AtomicBool::new(false)),
         monitoring: Arc::new(AtomicBool::new(false)),
