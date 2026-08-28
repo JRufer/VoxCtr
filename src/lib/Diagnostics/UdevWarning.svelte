@@ -23,6 +23,8 @@
     needs_attention: boolean;
     needs_manual_enable: boolean;
     manual_enable_hint: string | null;
+    is_mint_desktop?: boolean;
+    mint_shortcut_registered?: boolean;
     detail: string;
   };
 
@@ -50,6 +52,8 @@
   let openShortcutSettingsError = $state<string | null>(null);
   let retryingShortcuts = $state(false);
   let retryShortcutsError = $state<string | null>(null);
+  let registeringMint = $state(false);
+  let registerMintError = $state<string | null>(null);
 
   // Polled rather than fetched once: the portal handshake finishes a moment
   // after launch, and the user may grant or change a shortcut in their
@@ -129,14 +133,14 @@
     }
   }
 
-  async function handleRetryShortcuts() {
+  async function handleApproveShortcuts() {
     retryingShortcuts = true;
     retryShortcutsError = null;
     try {
-      await invoke("retry_portal_shortcuts");
+      await invoke("approve_shortcuts");
       await refresh();
     } catch (err: any) {
-      retryShortcutsError = err?.toString() ?? "Failed to request shortcut approval from desktop.";
+      retryShortcutsError = err?.toString() ?? "Failed to configure shortcuts for your desktop.";
       await refresh();
     } finally {
       retryingShortcuts = false;
@@ -211,49 +215,48 @@
             <span class="step-title">Global shortcuts</span>
             <span class="step-detail">{setup.hotkeys.detail}</span>
 
-            {#if setup.hotkeys.backend === "portal"}
-              <!-- The reassurance that matters most, stated plainly and only
-                   when it is actually true. -->
+            {#if setup.hotkeys.needs_manual_enable}
+              <p class="warn-note">
+                🔧 One more step on KDE: {setup.hotkeys.manual_enable_hint}
+              </p>
+              <div class="step-actions">
+                <button
+                  class="btn-primary"
+                  onclick={openShortcutSettings}
+                  disabled={openingShortcutSettings}
+                >
+                  {openingShortcutSettings ? "Opening…" : "Open Shortcut Settings"}
+                </button>
+              </div>
+              {#if openShortcutSettingsError}
+                <p class="warn-note">{openShortcutSettingsError}</p>
+              {/if}
+            {/if}
+            {#if setup.hotkeys.backend === "portal" || setup.hotkeys.backend === "mint_dbus"}
               <p class="privacy-note">
                 🔒 VoxCtrl asked your desktop to register its shortcuts and is told nothing
                 else. It does not read your keyboard, cannot see what you type in other
                 applications, and needed no special permissions to set up.
               </p>
+            {/if}
 
-              {#if setup.hotkeys.shortcuts.length > 0}
-                <ul class="shortcut-list">
-                  {#each setup.hotkeys.shortcuts as sc}
-                    <li class:unbound={!sc.bound}>
-                      {#if sc.bound}
-                        <span class="shortcut-keys">
-                          {sc.trigger_description || sc.requested || "chosen in your desktop settings"}
-                        </span>
-                      {:else}
-                        <span class="shortcut-keys">not accepted by your desktop</span>
-                      {/if}
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
+            {#if setup.hotkeys_active && setup.hotkeys.shortcuts.length > 0}
+              <ul class="shortcut-list">
+                {#each setup.hotkeys.shortcuts as sc}
+                  <li class:unbound={!sc.bound}>
+                    {#if sc.bound}
+                      <span class="shortcut-keys">
+                        {sc.trigger_description || sc.requested || "chosen in your desktop settings"}
+                      </span>
+                    {:else}
+                      <span class="shortcut-keys">not accepted by your desktop</span>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
 
-              {#if setup.hotkeys.needs_manual_enable}
-                <p class="warn-note">
-                  🔧 One more step on KDE: {setup.hotkeys.manual_enable_hint}
-                </p>
-                <div class="step-actions">
-                  <button
-                    class="btn-primary"
-                    onclick={openShortcutSettings}
-                    disabled={openingShortcutSettings}
-                  >
-                    {openingShortcutSettings ? "Opening…" : "Open Shortcut Settings"}
-                  </button>
-                </div>
-                {#if openShortcutSettingsError}
-                  <p class="warn-note">{openShortcutSettingsError}</p>
-                {/if}
-              {/if}
-            {:else if setup.hotkeys.backend === "evdev"}
+            {#if setup.hotkeys.backend === "evdev"}
               <p class="warn-note">
                 Your desktop does not offer the global-shortcuts portal, so VoxCtrl is
                 falling back to reading input devices — access this machine already had,
@@ -270,10 +273,10 @@
               <div class="step-actions">
                 <button
                   class="btn-primary"
-                  onclick={handleRetryShortcuts}
+                  onclick={handleApproveShortcuts}
                   disabled={retryingShortcuts}
                 >
-                  {retryingShortcuts ? "Prompting desktop…" : "Approve Keybinds"}
+                  {retryingShortcuts ? "Configuring…" : "Approve Keybinds"}
                 </button>
               </div>
               {#if retryShortcutsError}
@@ -281,13 +284,20 @@
               {/if}
             {:else if setup.hotkeys.backend !== "starting"}
               <p class="warn-note">
-                VoxCtrl will not grant itself keyboard access to work around this. Doing so
-                means letting every program you run read everything you type, system-wide
-                and permanently — a trade this app will not make on your behalf. Switching
-                to a desktop that implements the portal (KDE Plasma, GNOME 48+, Hyprland)
-                makes shortcuts work with no permissions at all. You can still start and
-                stop dictation from the tray menu in the meantime.
+                Global shortcuts require approval or registration from your system. VoxCtrl will not grant itself keyboard access to work around this.
               </p>
+              <div class="step-actions">
+                <button
+                  class="btn-primary"
+                  onclick={handleApproveShortcuts}
+                  disabled={retryingShortcuts}
+                >
+                  {retryingShortcuts ? "Configuring…" : "Approve Shortcuts"}
+                </button>
+              </div>
+              {#if retryShortcutsError}
+                <p class="warn-note">{retryShortcutsError}</p>
+              {/if}
             {/if}
 
             <!-- Rendered outside the branch chain: whatever the desktop said is

@@ -194,6 +194,13 @@ Keywords=whisper;voice;dictation;wayland;
         }
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        if crate::mint_shortcuts::is_mint_desktop() && !crate::mint_shortcuts::is_mint_shortcut_registered() {
+            let _ = crate::mint_shortcuts::register_mint_shortcut(None);
+        }
+    }
+
     Ok(())
 }
 

@@ -13,6 +13,7 @@ use crate::state::AppState;
 
 mod commands;
 mod installer;
+mod mint_shortcuts;
 mod overlay_sidecar;
 mod pipeline;
 mod services;
@@ -451,6 +452,8 @@ pub fn run() {
             check_hotkey_keys,
             retry_portal_shortcuts,
             open_shortcut_settings,
+            register_mint_shortcut,
+            approve_shortcuts,
             install_system_integration,
             get_setup_status,
             download_configured_model,

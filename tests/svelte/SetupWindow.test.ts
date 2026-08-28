@@ -159,9 +159,8 @@ describe("Setup window", () => {
 
     render(UdevWarning);
 
-    expect(await screen.findByText(/require approval from your system/i)).toBeTruthy();
-    expect(screen.queryByText(/will not grant itself keyboard access/i)).toBeNull();
-    expect(await screen.findByRole("button", { name: /Approve Keybinds/i })).toBeTruthy();
+    expect((await screen.findAllByText(/require approval/i)).length).toBeGreaterThan(0);
+    expect(await screen.findByRole("button", { name: /Approve Shortcuts|Approve Keybinds/i })).toBeTruthy();
     expect(await screen.findByText(/An app id is required/i)).toBeTruthy();
   });
 

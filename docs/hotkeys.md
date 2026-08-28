@@ -132,6 +132,19 @@ A binding saved before this rule existed is not deleted and not silently broken.
 
 If your desktop refuses a shortcut for any other reason, the binding is flagged **not bound by your desktop**.
 
+### Linux Mint (Cinnamon / MATE) — Native D-Bus Shortcut Integration
+
+Linux Mint's Cinnamon and MATE desktop environments do not yet implement the XDG `GlobalShortcuts` portal interface. To work out-of-the-box on Linux Mint without needing keylogger/evdev permissions:
+
+1. VoxCtrl registers a native session D-Bus interface (`ai.voxctrl.Dictation`).
+2. The setup window detects Linux Mint and provides an **"Add Mint Native Shortcut"** button (or via `gsettings`).
+3. This creates a custom keybinding under `org.cinnamon.desktop.keybindings` or `org.mate.SettingsDaemon.plugins.media-keys` bound to `Ctrl+Alt+Space` that executes:
+   ```bash
+   dbus-send --session --dest=ai.voxctrl.Dictation --type=method_call /ai/voxctrl/Dictation ai.voxctrl.Dictation.toggle_recording
+   ```
+4. This allows dictation toggle directly from Mint's native system shortcut manager with zero special permissions required.
+
+
 ### Linux — evdev fallback
 
 Only used when the portal is unavailable, **and only if your system already allows this process to read input devices**. VoxCtrl never grants itself that access.

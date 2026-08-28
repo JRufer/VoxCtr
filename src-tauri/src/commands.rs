@@ -775,6 +775,10 @@ pub struct HotkeyStatusPayload {
     /// What to tell the user about `needs_manual_enable`, and how to fix it.
     /// `None` when `needs_manual_enable` is false.
     pub manual_enable_hint: Option<String>,
+    /// Running on Linux Mint's Cinnamon or MATE desktop environment.
+    pub is_mint_desktop: bool,
+    /// VoxCtrl's native D-Bus shortcut is registered in Mint's gsettings registry.
+    pub mint_shortcut_registered: bool,
 }
 
 /// `XDG_CURRENT_DESKTOP` is a colon-separated list (e.g. `ubuntu:GNOME`); any
@@ -868,14 +872,12 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
 
     let backend = health.backend();
     let desktop = desktop_environment();
-    // Only KDE is a confirmed case of this bug at the time of writing. Scoping
-    // the warning to it, rather than showing it on every portal backend,
-    // keeps it from crying wolf on desktops where binding really is instant.
+    let is_mint_desktop = crate::mint_shortcuts::is_mint_desktop();
+    let mint_shortcut_registered = crate::mint_shortcuts::is_mint_shortcut_registered();
+
     let needs_manual_enable = backend == voxctrl_hotkeys::Backend::Portal
         && desktop.as_deref() == Some("KDE");
     let (devices_total, devices_readable) = match backend {
-        // Nothing was opened and nothing needs to be; probing /dev/input here
-        // would only invite a misleading "0 readable" in the UI.
         voxctrl_hotkeys::Backend::Portal | voxctrl_hotkeys::Backend::WindowsHook => (0, 0),
         _ => count_input_devices(),
     };
@@ -913,7 +915,13 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
                 .to_string()
         }
         voxctrl_hotkeys::Backend::None => {
-            if devices_total == 0 {
+            if mint_shortcut_registered {
+                "Linux Mint native desktop shortcut (Ctrl+Alt+Space) is registered in System Settings and triggers VoxCtrl over D-Bus."
+                    .to_string()
+            } else if is_mint_desktop {
+                "This desktop (Linux Mint) does not provide the XDG global-shortcuts portal, but supports registering native custom shortcuts via System Settings / D-Bus."
+                    .to_string()
+            } else if devices_total == 0 {
                 "No global-shortcuts portal and no input devices were found, so VoxCtrl \
                  cannot receive shortcuts on this system."
                     .to_string()
@@ -929,24 +937,32 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
         }
     };
 
+    let is_active = health.is_active() || (is_mint_desktop && mint_shortcut_registered);
+
     HotkeyStatusPayload {
-        is_active: health.is_active(),
+        is_active,
         backend: match backend {
             voxctrl_hotkeys::Backend::Portal => "portal",
             voxctrl_hotkeys::Backend::Evdev => "evdev",
             voxctrl_hotkeys::Backend::WindowsHook => "windows_hook",
             voxctrl_hotkeys::Backend::Starting => "starting",
-            voxctrl_hotkeys::Backend::None => "none",
+            voxctrl_hotkeys::Backend::None => {
+                if mint_shortcut_registered {
+                    "mint_dbus"
+                } else {
+                    "none"
+                }
+            }
         }
         .to_string(),
-        is_private: health.is_private(),
+        is_private: health.is_private() || (is_mint_desktop && mint_shortcut_registered),
         portal_error: health.portal_error(),
         portal_refused: health.portal_refused(),
         shortcuts,
         session_type: session_type(),
         devices_total,
         devices_readable,
-        needs_attention: !health.is_active(),
+        needs_attention: !is_active,
         detail,
         needs_manual_enable,
         manual_enable_hint: needs_manual_enable.then(|| {
@@ -957,6 +973,8 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
              shortcut is enabled, so this step cannot be automated or skipped."
                 .to_string()
         }),
+        is_mint_desktop,
+        mint_shortcut_registered,
     }
 }
 
@@ -977,9 +995,33 @@ fn test_override(value: &str) -> Option<HotkeyStatusPayload> {
         detail: "Your desktop is handling VoxCtrl's global shortcuts.".to_string(),
         needs_manual_enable: false,
         manual_enable_hint: None,
+        is_mint_desktop: false,
+        mint_shortcut_registered: false,
     };
     match value {
         "portal" => Some(base),
+        "mint" => Some(HotkeyStatusPayload {
+            is_active: false,
+            backend: "none".to_string(),
+            is_private: false,
+            portal_error: Some("no such interface".to_string()),
+            is_mint_desktop: true,
+            mint_shortcut_registered: false,
+            needs_attention: true,
+            detail: "This desktop (Linux Mint) does not provide the XDG global-shortcuts portal, but supports registering native custom shortcuts via System Settings / D-Bus.".to_string(),
+            ..base
+        }),
+        "mint_registered" => Some(HotkeyStatusPayload {
+            is_active: true,
+            backend: "mint_dbus".to_string(),
+            is_private: true,
+            portal_error: Some("no such interface".to_string()),
+            is_mint_desktop: true,
+            mint_shortcut_registered: true,
+            needs_attention: false,
+            detail: "Linux Mint native desktop shortcut (Ctrl+Alt+Space) is registered in System Settings and triggers VoxCtrl over D-Bus.".to_string(),
+            ..base
+        }),
         "kde_manual_enable" => Some(HotkeyStatusPayload {
             needs_manual_enable: true,
             manual_enable_hint: Some(
@@ -1268,6 +1310,27 @@ pub async fn check_hotkey_keys(
 pub async fn check_hotkey_status(
     state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
 ) -> Result<HotkeyStatusPayload, String> {
+    Ok(hotkey_status(&state.hotkey_health))
+}
+
+#[tauri::command]
+pub async fn register_mint_shortcut() -> Result<String, String> {
+    crate::mint_shortcuts::register_mint_shortcut(None)
+}
+
+#[tauri::command]
+pub async fn approve_shortcuts(
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+) -> Result<HotkeyStatusPayload, String> {
+    if crate::mint_shortcuts::is_mint_desktop()
+        && state.hotkey_health.backend() == voxctrl_hotkeys::Backend::None
+    {
+        crate::mint_shortcuts::register_mint_shortcut(None)?;
+    } else if state.hotkey_health.backend() == voxctrl_hotkeys::Backend::Portal {
+        let _ = open_shortcut_settings().await;
+    } else {
+        let _ = retry_portal_shortcuts(state.clone()).await;
+    }
     Ok(hotkey_status(&state.hotkey_health))
 }
 
