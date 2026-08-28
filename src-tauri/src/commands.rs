@@ -873,7 +873,11 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
     let backend = health.backend();
     let desktop = desktop_environment();
     let is_mint_desktop = crate::mint_shortcuts::is_mint_desktop();
-    let mint_shortcut_registered = crate::mint_shortcuts::is_mint_shortcut_registered();
+    let mint_shortcut_registered = if is_mint_desktop {
+        crate::mint_shortcuts::is_mint_shortcut_registered()
+    } else {
+        false
+    };
 
     let needs_manual_enable = backend == voxctrl_hotkeys::Backend::Portal
         && desktop.as_deref() == Some("KDE");
@@ -1480,27 +1484,36 @@ pub struct MonitorInfo {
 
 #[tauri::command]
 pub async fn get_available_monitors(app: tauri::AppHandle) -> Result<Vec<MonitorInfo>, String> {
-    if let Some(w) = app.webview_windows().values().next() {
-        if let Ok(monitors) = w.available_monitors() {
-            let mut list = Vec::new();
-            let primary = w.primary_monitor().ok().flatten();
-            let primary_name = primary.as_ref().and_then(|m| m.name());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let app_handle = app.clone();
+    let res = app.run_on_main_thread(move || {
+        let mut list = Vec::new();
+        if let Some(w) = app_handle.webview_windows().values().next() {
+            if let Ok(monitors) = w.available_monitors() {
+                let primary = w.primary_monitor().ok().flatten();
+                let primary_name = primary.as_ref().and_then(|m| m.name());
 
-            for m in monitors {
-                let name = m.name().map(|s| s.to_string());
-                let is_primary = primary_name.is_some() && name.as_deref() == primary_name.map(|s| s.as_ref());
-                let size = m.size();
-                list.push(MonitorInfo {
-                    name,
-                    width: size.width,
-                    height: size.height,
-                    is_primary,
-                });
+                for m in monitors {
+                    let name = m.name().map(|s| s.to_string());
+                    let is_primary = primary_name.is_some() && name.as_deref() == primary_name.map(|s| s.as_ref());
+                    let size = m.size();
+                    list.push(MonitorInfo {
+                        name,
+                        width: size.width,
+                        height: size.height,
+                        is_primary,
+                    });
+                }
             }
-            return Ok(list);
         }
+        let _ = tx.send(list);
+    });
+
+    if let Err(e) = res {
+        return Err(format!("Failed to run monitor query on main thread: {}", e));
     }
-    Ok(Vec::new())
+
+    rx.await.map_err(|e| format!("Failed to receive monitors: {}", e))
 }
 
 #[cfg(test)]

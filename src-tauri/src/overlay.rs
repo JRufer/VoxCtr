@@ -1525,7 +1525,28 @@ fn vu_needle_path(angle: f32) -> String {
     )
 }
 
+#[cfg(target_os = "linux")]
+fn init_x11_threads() {
+    unsafe {
+        if let Ok(filename) = std::ffi::CString::new("libX11.so.6") {
+            let handle = libc::dlopen(filename.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL);
+            if !handle.is_null() {
+                if let Ok(symbol) = std::ffi::CString::new("XInitThreads") {
+                    let ptr = libc::dlsym(handle, symbol.as_ptr());
+                    if !ptr.is_null() {
+                        let x_init_threads: unsafe extern "C" fn() -> std::os::raw::c_int = std::mem::transmute(ptr);
+                        x_init_threads();
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    init_x11_threads();
+
     let mut backend = i_slint_backend_winit::Backend::new().unwrap();
     backend.window_attributes_hook = Some(Box::new(|builder| {
         let builder = builder.with_visible(false);

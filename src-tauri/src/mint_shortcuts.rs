@@ -37,7 +37,7 @@ pub fn is_mint_desktop() -> bool {
         || session.contains("mint")
 }
 
-/// Detect whether Cinnamon or MATE gsettings schemas are available.
+/// Detect whether Cinnamon or MATE gsettings schemas are available and valid on this system.
 pub fn detect_mint_schema() -> Option<&'static str> {
     #[cfg(test)]
     {
@@ -52,28 +52,43 @@ pub fn detect_mint_schema() -> Option<&'static str> {
         }
     }
 
-    if Command::new("gsettings")
-        .args(["list-relocatable-schemas"])
-        .output()
-        .map(|out| {
-            let s = String::from_utf8_lossy(&out.stdout);
-            s.contains("org.cinnamon.desktop.keybindings.custom-keybinding")
-        })
-        .unwrap_or(false)
+    if !is_mint_desktop() {
+        return None;
+    }
+
+    let check_schema = |schema: &str, key: &str| -> bool {
+        Command::new("gsettings")
+            .args(["get", schema, key])
+            .output()
+            .map(|out| out.status.success() && !String::from_utf8_lossy(&out.stderr).contains("No such"))
+            .unwrap_or(false)
+    };
+
+    if check_schema("org.cinnamon.desktop.keybindings", "custom-list")
+        || check_schema("org.cinnamon.desktop.keybindings", "custom-keybindings")
     {
         Some("org.cinnamon.desktop.keybindings")
-    } else if Command::new("gsettings")
-        .args(["list-relocatable-schemas"])
-        .output()
-        .map(|out| {
-            let s = String::from_utf8_lossy(&out.stdout);
-            s.contains("org.mate.SettingsDaemon.plugins.media-keys.custom-keybinding")
-        })
-        .unwrap_or(false)
-    {
+    } else if check_schema("org.mate.SettingsDaemon.plugins.media-keys", "custom-keybindings") {
         Some("org.mate.SettingsDaemon.plugins.media-keys")
     } else {
         None
+    }
+}
+
+/// Detect the key name for custom keybindings list ('custom-list' or 'custom-keybindings').
+pub fn detect_mint_key_name(schema: &str) -> &'static str {
+    if schema.contains("cinnamon") {
+        let test = Command::new("gsettings")
+            .args(["get", schema, "custom-list"])
+            .output();
+        if let Ok(out) = test {
+            if out.status.success() && !String::from_utf8_lossy(&out.stderr).contains("No such") {
+                return "custom-list";
+            }
+        }
+        "custom-keybindings"
+    } else {
+        "custom-keybindings"
     }
 }
 
@@ -120,9 +135,10 @@ pub fn is_mint_shortcut_registered() -> bool {
     let Some(schema) = detect_mint_schema() else {
         return false;
     };
+    let key_name = detect_mint_key_name(schema);
 
     let output = Command::new("gsettings")
-        .args(["get", schema, "custom-keybindings"])
+        .args(["get", schema, key_name])
         .output();
 
     match output {
@@ -140,13 +156,14 @@ pub fn register_mint_shortcut(preferred_binding: Option<&str>) -> Result<String,
     let schema = detect_mint_schema().ok_or_else(|| {
         "Neither Cinnamon nor MATE keybinding schema was found via gsettings.".to_string()
     })?;
+    let key_name = detect_mint_key_name(schema);
 
     let binding = preferred_binding.unwrap_or("<Primary><Alt>space");
     let keybinding_id = "voxctrl-toggle";
 
     // 1. Read existing custom keybindings list
     let get_out = Command::new("gsettings")
-        .args(["get", schema, "custom-keybindings"])
+        .args(["get", schema, key_name])
         .output()
         .map_err(|e| format!("Failed to execute gsettings get: {}", e))?;
 
@@ -165,13 +182,14 @@ pub fn register_mint_shortcut(preferred_binding: Option<&str>) -> Result<String,
         let new_list_str = format_custom_keybindings_list(&items);
 
         let set_out = Command::new("gsettings")
-            .args(["set", schema, "custom-keybindings", &new_list_str])
+            .args(["set", schema, key_name, &new_list_str])
             .output()
-            .map_err(|e| format!("Failed to set custom-keybindings list: {}", e))?;
+            .map_err(|e| format!("Failed to set {} list: {}", key_name, e))?;
 
         if !set_out.status.success() {
             return Err(format!(
-                "Failed to update custom-keybindings list: {}",
+                "Failed to update {} list: {}",
+                key_name,
                 String::from_utf8_lossy(&set_out.stderr)
             ));
         }
