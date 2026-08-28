@@ -97,12 +97,30 @@ pub fn start_dbus_service(app_state: Arc<AppState>) {
     let (start_tx, mut start_rx) = tokio::sync::mpsc::channel::<()>(4);
     let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel::<()>(4);
     let app_state_dbus = app_state.clone();
+    let dbus_state_clone = dbus_state.clone();
+
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 v = start_rx.recv() => {
                     if v.is_some() {
+                        {
+                            let mut target = app_state_dbus.active_target.lock().await;
+                            if target.is_empty() {
+                                *target = "default_hold".to_string();
+                            }
+                            let mut binding_id = app_state_dbus.active_binding_id.lock().await;
+                            if binding_id.is_empty() {
+                                *binding_id = "default_hold".to_string();
+                            }
+                            let mut label = app_state_dbus.active_binding_label.lock().await;
+                            if label.is_empty() {
+                                *label = "Ctrl+Alt+Space".to_string();
+                            }
+                        }
                         app_state_dbus.set_recording(true);
+                        let mut st = dbus_state_clone.lock().await;
+                        st.status = voxctrl_dbus::DictationStatus::Recording;
                     } else {
                         break;
                     }
@@ -110,6 +128,8 @@ pub fn start_dbus_service(app_state: Arc<AppState>) {
                 v = stop_rx.recv() => {
                     if v.is_some() {
                         app_state_dbus.set_recording(false);
+                        let mut st = dbus_state_clone.lock().await;
+                        st.status = voxctrl_dbus::DictationStatus::Idle;
                     } else {
                         break;
                     }
