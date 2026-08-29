@@ -137,6 +137,91 @@ const POCKET_TTS_TOKENIZER_REPO: &str = "kyutai/pocket-tts-without-voice-cloning
 const POCKET_TTS_TOKENIZER_REVISION: &str = "d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3";
 const POCKET_TTS_TOKENIZER_FILE: &str = "tokenizer.model";
 
+pub const POCKET_TTS_CONFIG_YAML: &str = r#"# sig: b6369a24
+
+weights_path: hf://kyutai/pocket-tts/tts_b6369a24.safetensors@427e3d61b276ed69fdd03de0d185fa8a8d97fc5b
+weights_path_without_voice_cloning: hf://kyutai/pocket-tts-without-voice-cloning/tts_b6369a24.safetensors@d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3
+
+flow_lm:
+  dtype: float32
+  flow:
+    depth: 6
+    dim: 512
+  transformer:
+    d_model: 1024
+    hidden_scale: 4
+    max_period: 10000
+    num_heads: 16
+    num_layers: 6
+  lookup_table:
+    dim: 1024
+    n_bins: 4000
+    tokenizer: sentencepiece
+    tokenizer_path: hf://kyutai/pocket-tts-without-voice-cloning/tokenizer.model@d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3
+
+mimi:
+  dtype: float32
+  sample_rate: 24000
+  channels: 1
+  frame_rate: 12.5
+  seanet:
+    dimension: 512
+    channels: 1
+    n_filters: 64
+    n_residual_layers: 1
+    ratios:
+    - 6
+    - 5
+    - 4
+    kernel_size: 7
+    residual_kernel_size: 3
+    last_kernel_size: 3
+    dilation_base: 2
+    pad_mode: constant
+    compress: 2
+  transformer:
+    d_model: 512
+    num_heads: 8
+    num_layers: 2
+    layer_scale: 0.01
+    context: 250
+    dim_feedforward: 2048
+    input_dimension: 512
+    output_dimensions:
+    - 512
+  quantizer:
+    dimension: 32
+    output_dimension: 512
+"#;
+
+/// Ensures `config/<variant>.yaml` exists relative to the current working directory,
+/// as well as in the user's local data directory (`~/.local/share/voxctrl/config/<variant>.yaml`),
+/// so `pocket_tts::TTSModel::load` can find the required architecture configuration even in
+/// read-only runtime environments like AppImages.
+pub fn ensure_pocket_tts_config() -> Result<()> {
+    // 1. Attempt to write to current working directory (ignore errors if CWD is read-only)
+    let cwd_config_dir = Path::new("config");
+    let cwd_config_path = cwd_config_dir.join(format!("{POCKET_TTS_VARIANT}.yaml"));
+    if !cwd_config_path.exists() {
+        if let Ok(()) = std::fs::create_dir_all(cwd_config_dir) {
+            let _ = std::fs::write(&cwd_config_path, POCKET_TTS_CONFIG_YAML);
+        }
+    }
+
+    // 2. Write to user's writable data directory (~/.local/share/voxctrl/config/<variant>.yaml)
+    let app_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("voxctrl");
+    let user_config_dir = app_dir.join("config");
+    let user_config_path = user_config_dir.join(format!("{POCKET_TTS_VARIANT}.yaml"));
+    if !user_config_path.exists() {
+        let _ = std::fs::create_dir_all(&user_config_dir);
+        let _ = std::fs::write(&user_config_path, POCKET_TTS_CONFIG_YAML);
+    }
+
+    Ok(())
+}
+
 /// Best-effort, network-free check for whether the model weights, tokenizer, and the
 /// selected voice's reference clip are already present in the local HuggingFace cache.
 pub fn is_pocket_tts_ready(voice: &str, voice_dir: &str) -> bool {
@@ -202,6 +287,8 @@ pub async fn download_pocket_tts_assets(voice: &str, voice_dir: &str, hf_token: 
         .ok_or_else(|| anyhow::anyhow!("unknown pocket-tts voice: {voice}"))?;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
+        ensure_pocket_tts_config().context("ensure pocket-tts config file")?;
+
         info!("Downloading pocket-tts model weights ({POCKET_TTS_VARIANT})...");
         pocket_tts::weights::download_if_necessary(&format!(
             "hf://{POCKET_TTS_WEIGHTS_REPO}/{POCKET_TTS_WEIGHTS_FILE}@{POCKET_TTS_WEIGHTS_REVISION}"
@@ -252,9 +339,26 @@ pub(crate) fn speak_pocket_tts(
     // Lazily load the model — stays alive for the worker thread lifetime.
     if model.is_none() {
         info!("Loading pocket-tts model (variant={POCKET_TTS_VARIANT})");
-        *model = Some(
-            pocket_tts::TTSModel::load(POCKET_TTS_VARIANT).context("load pocket-tts model")?,
-        );
+        ensure_pocket_tts_config().context("ensure pocket-tts config file")?;
+
+        // pocket_tts::TTSModel::load searches for `config/b6369a24.yaml` relative to CWD.
+        // In read-only environments like AppImages, CWD (inside squashfs mount) cannot be written to.
+        // Temporarily switch CWD to the user's writable app data directory where config/b6369a24.yaml lives.
+        let app_dir = dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("voxctrl");
+        let orig_cwd = std::env::current_dir().ok();
+        if app_dir.exists() {
+            let _ = std::env::set_current_dir(&app_dir);
+        }
+
+        let load_res = pocket_tts::TTSModel::load(POCKET_TTS_VARIANT);
+
+        if let Some(ref orig) = orig_cwd {
+            let _ = std::env::set_current_dir(orig);
+        }
+
+        *model = Some(load_res.context("load pocket-tts model")?);
     }
     let model = model.as_ref().unwrap();
 
@@ -421,5 +525,12 @@ mod tests {
     fn test_resolve_pocket_tts_voice_clip_unknown_returns_none() {
         let dir = tempdir().unwrap();
         assert!(resolve_pocket_tts_voice_clip("not-a-real-voice", dir.path().to_str().unwrap()).is_none());
+    }
+
+    #[test]
+    fn test_ensure_pocket_tts_config_creates_file() {
+        ensure_pocket_tts_config().expect("ensure config");
+        let path = Path::new("config").join(format!("{POCKET_TTS_VARIANT}.yaml"));
+        assert!(path.exists());
     }
 }
