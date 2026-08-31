@@ -316,13 +316,8 @@ for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
            'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
            'libgbm.so*' 'libdrm.so*' \
            'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
-           'libSvtAv1Enc.so*' 'libaom.so*' 'libavif.so*' 'libbrotlienc.so*' \
-           'libcanberra-gtk3.so*' 'libcanberra.so*' 'libcloudproviders.so*' \
-           'libdav1d.so*' 'libglycin-*.so*' 'libhwy.so*' 'libjson-glib-*.so*' \
-           'libjxl.so*' 'libjxl_cms.so*' 'libopenraw.so*' 'librav1e.so*' \
-           'libsharpyuv.so*' 'libtdb.so*' 'libtinysparql-*.so*' 'libtss2-*.so*' \
-           'libvorbis.so*' 'libvorbisfile.so*' 'libyuv.so*' \
-           'libleancrypto.so*' 'libopenraw_pixbuf.so*' \
+           'libvulkan.so*' 'libssl.so*' 'libcrypto.so*' \
+           'libcanberra-gtk3.so*' 'libcanberra.so*' \
            'libcanberra-gtk-module.so' 'libcanberra-gtk3-module.so' \
            'libcolorreload-gtk-module.so' 'libwindow-decorations-gtk-module.so'; do
     find "$root" -name "$pat" -print -delete 2>/dev/null || true
