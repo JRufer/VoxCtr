@@ -1564,3 +1564,212 @@ fn test_chat_api_base_normalizes_endpoints() {
     assert_eq!(base("http://localhost:8765/v1"), "http://localhost:8765/v1");
     assert_eq!(base("  http://localhost:8765/v1/  "), "http://localhost:8765/v1");
 }
+
+#[test]
+fn test_parse_voice_command_no_keyword() {
+    use crate::targets::parse_voice_command;
+
+    let targets = vec![
+        OutputTarget {
+            id: "notes".into(),
+            label: "Notes".into(),
+            delivery: DeliveryType::File,
+            file_path: Some("/tmp/notes.txt".into()),
+            file_prefix: "".into(),
+            file_timestamp: false,
+            file_mode: "append".into(),
+            send_on_release: true,
+            append_newline: true,
+            strip_newlines: false,
+            http_method: "POST".into(),
+            chat_max_history: 20,
+            chat_timeout_secs: 120,
+            chat_reply_mode: "speak".into(),
+            processing: Default::default(),
+            command: None,
+            pipe_path: None,
+            socket_host: None,
+            socket_port: None,
+            socket_unix: None,
+            dbus_signal: None,
+            http_url: None,
+            http_headers: None,
+            http_json_template: None,
+            webhook_url: None,
+            webhook_secret: None,
+            webhook_json_template: None,
+            mcp_path: None,
+            mcp_tool: None,
+            mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_reset_phrase: None,
+            initial_prompt: None,
+            response_pipe: None,
+        },
+    ];
+
+    assert!(parse_voice_command("hi there", &targets).is_none());
+}
+
+#[test]
+fn test_parse_voice_command_matched_target() {
+    use crate::targets::parse_voice_command;
+
+    let targets = vec![
+        OutputTarget {
+            id: "notes".into(),
+            label: "Notes".into(),
+            delivery: DeliveryType::File,
+            file_path: Some("/tmp/notes.txt".into()),
+            file_prefix: "".into(),
+            file_timestamp: false,
+            file_mode: "append".into(),
+            send_on_release: true,
+            append_newline: true,
+            strip_newlines: false,
+            http_method: "POST".into(),
+            chat_max_history: 20,
+            chat_timeout_secs: 120,
+            chat_reply_mode: "speak".into(),
+            processing: Default::default(),
+            command: None,
+            pipe_path: None,
+            socket_host: None,
+            socket_port: None,
+            socket_unix: None,
+            dbus_signal: None,
+            http_url: None,
+            http_headers: None,
+            http_json_template: None,
+            webhook_url: None,
+            webhook_secret: None,
+            webhook_json_template: None,
+            mcp_path: None,
+            mcp_tool: None,
+            mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_reset_phrase: None,
+            initial_prompt: None,
+            response_pipe: None,
+        },
+    ];
+
+    let res = parse_voice_command("VoxCtrl notes Hi there", &targets).expect("should match");
+    assert_eq!(res.matched_target_id, "notes");
+    assert_eq!(res.payload, "Hi there");
+
+    let res2 = parse_voice_command("vox ctrl: Notes, please write this down", &targets).expect("should match");
+    assert_eq!(res2.matched_target_id, "notes");
+    assert_eq!(res2.payload, "please write this down");
+
+    let res3 = parse_voice_command("VoxCtrl add this to my notes. What are you doing here?", &targets).expect("should match conversational notes");
+    assert_eq!(res3.matched_target_id, "notes");
+    assert_eq!(res3.payload, "What are you doing here?");
+
+    let res4 = parse_voice_command("VoxCtrl put this into my Notes: What are you doing here?", &targets).expect("should match conversational put into notes");
+    assert_eq!(res4.matched_target_id, "notes");
+    assert_eq!(res4.payload, "What are you doing here?");
+}
+
+#[tokio::test]
+async fn test_voice_command_router_integration() {
+    use crate::router::OutputTargetRouter;
+    use tempfile::NamedTempFile;
+
+    let temp_file = NamedTempFile::new().unwrap();
+    let temp_path = temp_file.path().to_str().unwrap().to_string();
+
+    let targets = vec![
+        OutputTarget {
+            id: "cmd".into(),
+            label: "Voice Command Router".into(),
+            delivery: DeliveryType::Command,
+            file_prefix: "".into(),
+            file_timestamp: false,
+            file_mode: "append".into(),
+            send_on_release: true,
+            append_newline: true,
+            strip_newlines: false,
+            http_method: "POST".into(),
+            chat_max_history: 20,
+            chat_timeout_secs: 120,
+            chat_reply_mode: "speak".into(),
+            processing: Default::default(),
+            command: None,
+            pipe_path: None,
+            socket_host: None,
+            socket_port: None,
+            socket_unix: None,
+            file_path: None,
+            dbus_signal: None,
+            http_url: None,
+            http_headers: None,
+            http_json_template: None,
+            webhook_url: None,
+            webhook_secret: None,
+            webhook_json_template: None,
+            mcp_path: None,
+            mcp_tool: None,
+            mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_reset_phrase: None,
+            initial_prompt: None,
+            response_pipe: None,
+        },
+        OutputTarget {
+            id: "notes".into(),
+            label: "Notes File".into(),
+            delivery: DeliveryType::File,
+            file_path: Some(temp_path.clone()),
+            file_prefix: "".into(),
+            file_timestamp: false,
+            file_mode: "append".into(),
+            send_on_release: true,
+            append_newline: false,
+            strip_newlines: false,
+            http_method: "POST".into(),
+            chat_max_history: 20,
+            chat_timeout_secs: 120,
+            chat_reply_mode: "speak".into(),
+            processing: Default::default(),
+            command: None,
+            pipe_path: None,
+            socket_host: None,
+            socket_port: None,
+            socket_unix: None,
+            dbus_signal: None,
+            http_url: None,
+            http_headers: None,
+            http_json_template: None,
+            webhook_url: None,
+            webhook_secret: None,
+            webhook_json_template: None,
+            mcp_path: None,
+            mcp_tool: None,
+            mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_reset_phrase: None,
+            initial_prompt: None,
+            response_pipe: None,
+        },
+    ];
+
+    let router = OutputTargetRouter::new(targets);
+    let res = router.deliver("cmd", "VoxCtrl notes Hello routed target").await;
+    assert!(res.success);
+
+    let content = std::fs::read_to_string(&temp_path).unwrap();
+    assert_eq!(content.trim(), "Hello routed target");
+}

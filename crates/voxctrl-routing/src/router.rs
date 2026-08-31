@@ -4,28 +4,59 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 
 use crate::{
-    models::{DeliveryResult, OutputTarget},
-    targets::{build_target, DeliveryTarget},
+    models::{DeliveryResult, DeliveryType, OutputTarget},
+    targets::{build_target, parse_voice_command, DeliveryTarget, InjectTarget},
 };
 
 pub struct OutputTargetRouter {
     targets: Arc<RwLock<HashMap<String, Box<dyn DeliveryTarget>>>>,
+    configs: Arc<RwLock<Vec<OutputTarget>>>,
 }
 
 impl OutputTargetRouter {
     pub fn new(targets: Vec<OutputTarget>) -> Self {
+        let configs = Arc::new(RwLock::new(targets.clone()));
         let map = targets
             .into_iter()
             .map(|t| (t.id.clone(), build_target(t)))
             .collect();
         Self {
             targets: Arc::new(RwLock::new(map)),
+            configs,
         }
     }
 
     /// Deliver text to the named target. Returns the result, or an error
     /// result if the target id is unknown.
     pub async fn deliver(&self, target_id: &str, text: &str) -> DeliveryResult {
+        let configs_guard = self.configs.read().await;
+        let target_config = configs_guard.iter().find(|t| t.id == target_id).cloned();
+
+        if let Some(ref cfg) = target_config {
+            if cfg.delivery == DeliveryType::Command {
+                if let Some(parsed) = parse_voice_command(text, &configs_guard) {
+                    info!(
+                        from_target = target_id,
+                        matched_target = %parsed.matched_target_id,
+                        "Voice command parsed and rerouted"
+                    );
+                    let matched_id = parsed.matched_target_id.clone();
+                    let payload = parsed.payload;
+                    drop(configs_guard);
+                    return Box::pin(self.deliver(&matched_id, &payload)).await;
+                } else {
+                    info!(
+                        from_target = target_id,
+                        "Voice command trigger not matched; falling back to direct text injection"
+                    );
+                    drop(configs_guard);
+                    let inject_target = InjectTarget(cfg.clone());
+                    return inject_target.deliver(text).await;
+                }
+            }
+        }
+        drop(configs_guard);
+
         let guard = self.targets.read().await;
         match guard.get(target_id) {
             Some(target) => {
@@ -51,9 +82,12 @@ impl OutputTargetRouter {
     /// Hot-reload: replace all targets atomically.
     pub async fn reload(&self, targets: Vec<OutputTarget>) {
         let map: HashMap<_, _> = targets
-            .into_iter()
+            .iter()
+            .cloned()
             .map(|t| (t.id.clone(), build_target(t)))
             .collect();
+        let mut configs_guard = self.configs.write().await;
+        *configs_guard = targets;
         let mut guard = self.targets.write().await;
         *guard = map;
         info!("Router reloaded ({} targets)", guard.len());

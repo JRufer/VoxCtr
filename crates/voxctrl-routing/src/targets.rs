@@ -51,12 +51,13 @@ pub fn build_target(config: OutputTarget) -> Box<dyn DeliveryTarget> {
         DeliveryType::Mcp       => Box::new(McpTarget(config)),
         DeliveryType::Speak     => Box::new(SpeakTarget(config)),
         DeliveryType::Chat      => Box::new(ChatTarget(config)),
+        DeliveryType::Command   => Box::new(CommandTarget(config)),
     }
 }
 
 // ── InjectTarget ──────────────────────────────────────────────────────────────
 
-pub struct InjectTarget(OutputTarget);
+pub struct InjectTarget(pub OutputTarget);
 
 #[async_trait::async_trait]
 impl DeliveryTarget for InjectTarget {
@@ -438,7 +439,11 @@ impl DeliveryTarget for FileTarget {
                 .open(&path)
                 .await
             {
-                Ok(mut f) => f.write_all(line.as_bytes()).await,
+                Ok(mut f) => {
+                    let res = f.write_all(line.as_bytes()).await;
+                    let _ = f.flush().await;
+                    res
+                }
                 Err(e) => Err(e),
             }
         };
@@ -1148,4 +1153,165 @@ fn substitute_text(val: serde_json::Value, text: &str) -> serde_json::Value {
         ),
         other => other,
     }
+}
+
+// ── CommandTarget ──────────────────────────────────────────────────────────────
+
+pub struct CommandTarget(pub OutputTarget);
+
+#[async_trait::async_trait]
+impl DeliveryTarget for CommandTarget {
+    async fn deliver(&self, text: &str) -> DeliveryResult {
+        // Default to direct text injection when called directly
+        InjectTarget(self.0.clone()).deliver(text).await
+    }
+
+    async fn test(&self) -> TestResult {
+        TestResult {
+            reachable: true,
+            detail: "Voice Command router active".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceCommandParseResult {
+    pub matched_target_id: String,
+    pub payload: String,
+}
+
+fn is_valid_pre_target_fillers(pre: &str) -> bool {
+    let cleaned = pre.trim_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
+    if cleaned.is_empty() {
+        return true;
+    }
+
+    let filler_words = [
+        "add", "put", "send", "write", "save", "log", "append", "record", "post", "push",
+        "dispatch", "deliver", "type", "copy", "place", "insert",
+        "this", "that", "it", "message", "text", "note", "entry", "content", "data",
+        "to", "in", "into", "for", "on", "at", "with", "from",
+        "my", "the", "a", "an", "our", "your",
+        "please", "can", "you", "could", "would", "i", "want", "like", "need", "have", "to",
+    ];
+
+    for word in cleaned.split_whitespace() {
+        let clean_word = word.trim_matches(|c: char| c.is_ascii_punctuation()).to_lowercase();
+        if clean_word.is_empty() {
+            continue;
+        }
+        if !filler_words.contains(&clean_word.as_str()) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn clean_payload(post: &str) -> String {
+    let trimmed = post.trim();
+    let text_without_punct = trimmed
+        .trim_start_matches(|c: char| c.is_whitespace() || c == ':' || c == ',' || c == '.' || c == ';' || c == '-' || c == '!' || c == '?' || c == '"' || c == '\'')
+        .trim();
+
+    let lower = text_without_punct.to_lowercase();
+    let connectors = ["saying that", "saying", "that says", "that", "with text", "with content", "with"];
+
+    for connector in &connectors {
+        if lower.starts_with(connector) {
+            let after_conn = &text_without_punct[connector.len()..];
+            let cleaned = after_conn
+                .trim_start_matches(|c: char| c.is_whitespace() || c == ':' || c == ',' || c == '.' || c == ';' || c == '-' || c == '!' || c == '?' || c == '"' || c == '\'')
+                .trim();
+            if !cleaned.is_empty() {
+                return cleaned.to_string();
+            }
+        }
+    }
+
+    text_without_punct.to_string()
+}
+
+/// Parse text for keyword "VoxCtrl" and target name/label matching.
+/// Supports both direct commands (e.g. "VoxCtrl notes Hi there") and natural,
+/// conversational phrasing (e.g. "VoxCtrl add this to my notes. What are you doing here?").
+/// Returns `Some(VoiceCommandParseResult)` if the trigger keyword was found AND a target matched;
+/// otherwise returns `None`.
+pub fn parse_voice_command(
+    text: &str,
+    targets: &[OutputTarget],
+) -> Option<VoiceCommandParseResult> {
+    let lower_text = text.to_lowercase();
+    let triggers = ["voxctrl", "vox ctrl", "vox-ctrl"];
+
+    let mut found_pos = None;
+    let mut trigger_len = 0;
+
+    for trigger in &triggers {
+        if let Some(pos) = lower_text.find(trigger) {
+            if found_pos.map_or(true, |p| pos < p) {
+                found_pos = Some(pos);
+                trigger_len = trigger.len();
+            }
+        }
+    }
+
+    let pos = found_pos?;
+    let after_trigger = &text[pos + trigger_len..];
+
+    // Sort candidate targets by longest match candidate first (so "Notes File" matches before "Notes")
+    let mut candidate_targets = targets.to_vec();
+    candidate_targets.sort_by(|a, b| {
+        let max_a = a.label.len().max(a.id.len());
+        let max_b = b.label.len().max(b.id.len());
+        max_b.cmp(&max_a)
+    });
+
+    let after_trigger_lower = after_trigger.to_lowercase();
+
+    for target in &candidate_targets {
+        if target.delivery == DeliveryType::Command {
+            continue;
+        }
+
+        for candidate in [&target.id, &target.label] {
+            if candidate.is_empty() {
+                continue;
+            }
+            let cand_lower = candidate.to_lowercase();
+
+            let mut search_start = 0;
+            while let Some(match_idx) = after_trigger_lower[search_start..].find(&cand_lower) {
+                let abs_match_start = search_start + match_idx;
+                let abs_match_end = abs_match_start + cand_lower.len();
+
+                let is_boundary_start = abs_match_start == 0 || {
+                    let prev_char = after_trigger[..abs_match_start].chars().last().unwrap();
+                    prev_char.is_whitespace() || prev_char.is_ascii_punctuation()
+                };
+
+                let is_boundary_end = abs_match_end == after_trigger.len() || {
+                    let next_char = after_trigger[abs_match_end..].chars().next().unwrap();
+                    next_char.is_whitespace() || next_char.is_ascii_punctuation()
+                };
+
+                if is_boundary_start && is_boundary_end {
+                    let pre_target = &after_trigger[..abs_match_start];
+                    if is_valid_pre_target_fillers(pre_target) {
+                        let post_target = &after_trigger[abs_match_end..];
+                        let payload = clean_payload(post_target);
+
+                        return Some(VoiceCommandParseResult {
+                            matched_target_id: target.id.clone(),
+                            payload,
+                        });
+                    }
+                }
+
+                search_start = abs_match_start + 1;
+            }
+        }
+    }
+
+    None
 }

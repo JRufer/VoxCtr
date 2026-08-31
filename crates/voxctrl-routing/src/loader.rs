@@ -172,6 +172,7 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         "mcp" => DeliveryType::Mcp,
         "speak" => DeliveryType::Speak,
         "chat" => DeliveryType::Chat,
+        "command" => DeliveryType::Command,
         _ => DeliveryType::Inject,
     };
 

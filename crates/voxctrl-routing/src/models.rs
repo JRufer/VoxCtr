@@ -102,6 +102,7 @@ pub enum DeliveryType {
     Mcp,
     Speak,
     Chat,
+    Command,
 }
 
 // ── Per-target processing overrides ──────────────────────────────────────────

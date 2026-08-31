@@ -9,7 +9,10 @@ pub use models::{
     TargetProcessingConfig, TestResult,
 };
 pub use router::OutputTargetRouter;
-pub use targets::{build_target, chat_history, reset_chat_history, ChatMessage, DeliveryTarget};
+pub use targets::{
+    build_target, chat_history, parse_voice_command, reset_chat_history, ChatMessage,
+    CommandTarget, DeliveryTarget, VoiceCommandParseResult,
+};
 
 #[cfg(test)]
 mod tests;

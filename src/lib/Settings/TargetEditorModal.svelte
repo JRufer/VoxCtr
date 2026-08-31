@@ -299,12 +299,21 @@
               { value: "webhook", label: "Send Webhook Event" },
               { value: "mcp", label: "Call MCP Server Tool" },
               { value: "speak", label: "Speak Text Aloud (TTS)" },
-              { value: "chat", label: "Chat with a Local LLM (Hermes / OpenAI-compatible)" }
+              { value: "chat", label: "Chat with a Local LLM (Hermes / OpenAI-compatible)" },
+              { value: "command", label: "Voice Command Router (VoxCtrl keyword)" }
             ]}
           />
         </label>
 
         <!-- Dynamic morphing options based on delivery type -->
+        {#if editingTarget.delivery === "command"}
+          <div class="morph-section mcp-container">
+            <h5>Voice Command Router Settings</h5>
+            <p class="hint">
+              Types dictated text into your active application by default. If your dictation contains <code>VoxCtrl &lt;target_name&gt; &lt;text&gt;</code> (for example, <em>"VoxCtrl Notes Hello world"</em>), VoxCtrl dynamically reroutes the text to that target instead.
+            </p>
+          </div>
+        {/if}
         {#if editingTarget.delivery === "exec"}
           <div class="morph-section mcp-container">
             <h5>Shell Executor Settings</h5>

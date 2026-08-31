@@ -25,3 +25,6 @@ zbus = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 base64 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
