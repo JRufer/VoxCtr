@@ -197,6 +197,7 @@ pub struct BindingState {
     // Hold
     pub hold_active: Arc<AtomicBool>,
     pub hold_cancel: Option<CancellationToken>,
+    pub hold_release_cancel: Option<CancellationToken>,
     // Toggle / double-tap toggle
     pub toggle_on: bool,
     // Double-tap
@@ -204,6 +205,7 @@ pub struct BindingState {
     // Double-tap hold
     pub double_tap_hold_active: Arc<AtomicBool>,
     pub double_tap_hold_cancel: Option<CancellationToken>,
+    pub double_tap_hold_release_cancel: Option<CancellationToken>,
 }
 
 impl BindingState {
@@ -216,10 +218,12 @@ impl BindingState {
             contended,
             hold_active: Arc::new(AtomicBool::new(false)),
             hold_cancel: None,
+            hold_release_cancel: None,
             toggle_on: false,
             double_tap: DoubleTapMachine::new(Duration::from_millis(tap_ms as u64)),
             double_tap_hold_active: Arc::new(AtomicBool::new(false)),
             double_tap_hold_cancel: None,
+            double_tap_hold_release_cancel: None,
         }
     }
 
@@ -267,22 +271,53 @@ impl BindingState {
         }
     }
 
-    /// The combo was broken but keys may still be down.
-    fn on_deactivate(&mut self, _tx: &GestureSender) {
-        // Only cancels timers that have not fired yet; a gesture that already
-        // started recording ends on `Released`, once nothing is held.
-        if !self.hold_active.load(std::sync::atomic::Ordering::SeqCst) {
-            if let Some(cancel) = self.hold_cancel.take() {
-                cancel.cancel();
+    /// The combo was broken (any key released) so keys may still be down.
+    fn on_deactivate(&mut self, tx: &GestureSender) {
+        if self.hold_active.load(std::sync::atomic::Ordering::SeqCst) {
+            if self.hold_release_cancel.is_none() {
+                let cancel = CancellationToken::new();
+                self.hold_release_cancel = Some(cancel.clone());
+                let active = self.hold_active.clone();
+                let event = self.pending_event(GestureKind::Stop);
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                            if active.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                                let _ = tx.send(event);
+                            }
+                        }
+                        _ = cancel.cancelled() => {}
+                    }
+                });
             }
+        } else if let Some(cancel) = self.hold_cancel.take() {
+            cancel.cancel();
         }
-        if !self
+
+        if self
             .double_tap_hold_active
             .load(std::sync::atomic::Ordering::SeqCst)
         {
-            if let Some(cancel) = self.double_tap_hold_cancel.take() {
-                cancel.cancel();
+            if self.double_tap_hold_release_cancel.is_none() {
+                let cancel = CancellationToken::new();
+                self.double_tap_hold_release_cancel = Some(cancel.clone());
+                let active = self.double_tap_hold_active.clone();
+                let event = self.pending_event(GestureKind::Stop);
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(50)) => {
+                            if active.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                                let _ = tx.send(event);
+                            }
+                        }
+                        _ = cancel.cancelled() => {}
+                    }
+                });
             }
+        } else if let Some(cancel) = self.double_tap_hold_cancel.take() {
+            cancel.cancel();
         }
     }
 
@@ -290,6 +325,9 @@ impl BindingState {
     fn on_release(&mut self, at: Instant, sibling_hold_active: bool, tx: &GestureSender) {
         match self.binding.gesture {
             GestureType::Hold => {
+                if let Some(cancel) = self.hold_release_cancel.take() {
+                    cancel.cancel();
+                }
                 if self.hold_active.swap(false, std::sync::atomic::Ordering::SeqCst) {
                     self.hold_cancel.take();
                     self.emit(GestureKind::Stop, tx);
@@ -317,6 +355,9 @@ impl BindingState {
                 }
             }
             GestureType::DoubleTapHold => {
+                if let Some(cancel) = self.double_tap_hold_release_cancel.take() {
+                    cancel.cancel();
+                }
                 self.double_tap.on_release(at);
                 if let Some(cancel) = self.double_tap_hold_cancel.take() {
                     cancel.cancel();

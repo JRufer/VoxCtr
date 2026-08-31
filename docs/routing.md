@@ -216,6 +216,25 @@ delivery = "speak"
 
 ---
 
+#### `command` — Voice Command Router
+Dynamically routes dictated text to other targets based on spoken trigger phrases.
+
+```toml
+[[target]]
+id = "cmd_router"
+label = "Voice Command Router"
+delivery = "command"
+```
+
+**How Voice Command Routing Works:**
+- **Trigger Keyword**: Listens for the `"VoxCtrl"` keyword (case-insensitive, supporting `VoxCtrl`, `voxctrl`, `vox ctrl`, `vox-ctrl`, and optional punctuation like `VoxCtrl:`).
+- **Target Resolution**: Matches spoken target names against all configured target IDs and Labels (case-insensitively). Longest candidate target names take precedence (e.g. `"Personal Notes"` is matched before `"Notes"`).
+- **Conversational Lead-in Support**: Supports natural lead-in command phrases between the trigger keyword and the target name, such as *"VoxCtrl send this to my notes. I love you."*, *"VoxCtrl add this to my personal notes, help"*, *"VoxCtrl put this into my Notes: hello"*, or *"VoxCtrl send us to my notes. I love you."*.
+- **Payload Extraction**: Strips transition punctuation (`.`, `:`, `,`, `;`) and connector words (`saying`, `that`, `with text`) and routes the remaining text payload to the matched target.
+- **Fallback**: If no `"VoxCtrl"` keyword is spoken or if no target matches, it falls back to direct text injection into the active application (identical to the `inject` target).
+
+---
+
 #### `chat` — Conversational LLM (OpenAI-compatible)
 
 Sends each dictation as a turn in an ongoing conversation to an OpenAI-compatible

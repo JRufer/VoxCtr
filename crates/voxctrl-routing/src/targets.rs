@@ -1186,21 +1186,29 @@ fn is_valid_pre_target_fillers(pre: &str) -> bool {
         return true;
     }
 
+    let words: Vec<&str> = cleaned.split_whitespace().collect();
+    if words.len() > 10 {
+        return false;
+    }
+
     let filler_words = [
         "add", "put", "send", "write", "save", "log", "append", "record", "post", "push",
-        "dispatch", "deliver", "type", "copy", "place", "insert",
-        "this", "that", "it", "message", "text", "note", "entry", "content", "data",
-        "to", "in", "into", "for", "on", "at", "with", "from",
-        "my", "the", "a", "an", "our", "your",
-        "please", "can", "you", "could", "would", "i", "want", "like", "need", "have", "to",
+        "dispatch", "deliver", "type", "copy", "place", "insert", "route", "direct", "pass",
+        "transfer", "go", "get", "take", "set", "store", "keep",
+        "this", "that", "it", "us", "me", "is", "them", "some", "these", "those",
+        "message", "text", "note", "entry", "content", "data", "info", "information", "payload",
+        "to", "in", "into", "for", "on", "at", "with", "from", "onto", "through",
+        "my", "the", "a", "an", "our", "your", "its",
+        "please", "can", "you", "could", "would", "i", "want", "like", "need", "have", "too", "2",
+        "so", "just", "now", "here", "also",
     ];
 
-    for word in cleaned.split_whitespace() {
-        let clean_word = word.trim_matches(|c: char| c.is_ascii_punctuation()).to_lowercase();
-        if clean_word.is_empty() {
+    for word in words {
+        let clean_w = word.trim_matches(|c: char| c.is_ascii_punctuation()).to_lowercase();
+        if clean_w.is_empty() {
             continue;
         }
-        if !filler_words.contains(&clean_word.as_str()) {
+        if !filler_words.contains(&clean_w.as_str()) {
             return false;
         }
     }
@@ -1259,57 +1267,57 @@ pub fn parse_voice_command(
     let pos = found_pos?;
     let after_trigger = &text[pos + trigger_len..];
 
-    // Sort candidate targets by longest match candidate first (so "Notes File" matches before "Notes")
-    let mut candidate_targets = targets.to_vec();
-    candidate_targets.sort_by(|a, b| {
-        let max_a = a.label.len().max(a.id.len());
-        let max_b = b.label.len().max(b.id.len());
-        max_b.cmp(&max_a)
-    });
-
-    let after_trigger_lower = after_trigger.to_lowercase();
-
-    for target in &candidate_targets {
+    // Flatten all target candidates (IDs and Labels) and sort by string length descending
+    // so longer/more specific target names (e.g. "Personal Notes") take precedence over shorter ones ("Notes").
+    let mut candidate_entries: Vec<(&str, &str)> = Vec::new();
+    for target in targets {
         if target.delivery == DeliveryType::Command {
             continue;
         }
+        if !target.id.is_empty() {
+            candidate_entries.push((&target.id, &target.id));
+        }
+        if !target.label.is_empty() {
+            candidate_entries.push((&target.id, &target.label));
+        }
+    }
 
-        for candidate in [&target.id, &target.label] {
-            if candidate.is_empty() {
-                continue;
-            }
-            let cand_lower = candidate.to_lowercase();
+    candidate_entries.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
 
-            let mut search_start = 0;
-            while let Some(match_idx) = after_trigger_lower[search_start..].find(&cand_lower) {
-                let abs_match_start = search_start + match_idx;
-                let abs_match_end = abs_match_start + cand_lower.len();
+    let after_trigger_lower = after_trigger.to_lowercase();
 
-                let is_boundary_start = abs_match_start == 0 || {
-                    let prev_char = after_trigger[..abs_match_start].chars().last().unwrap();
-                    prev_char.is_whitespace() || prev_char.is_ascii_punctuation()
-                };
+    for (target_id, candidate) in candidate_entries {
+        let cand_lower = candidate.to_lowercase();
 
-                let is_boundary_end = abs_match_end == after_trigger.len() || {
-                    let next_char = after_trigger[abs_match_end..].chars().next().unwrap();
-                    next_char.is_whitespace() || next_char.is_ascii_punctuation()
-                };
+        let mut search_start = 0;
+        while let Some(match_idx) = after_trigger_lower[search_start..].find(&cand_lower) {
+            let abs_match_start = search_start + match_idx;
+            let abs_match_end = abs_match_start + cand_lower.len();
 
-                if is_boundary_start && is_boundary_end {
-                    let pre_target = &after_trigger[..abs_match_start];
-                    if is_valid_pre_target_fillers(pre_target) {
-                        let post_target = &after_trigger[abs_match_end..];
-                        let payload = clean_payload(post_target);
+            let is_boundary_start = abs_match_start == 0 || {
+                let prev_char = after_trigger[..abs_match_start].chars().last().unwrap();
+                prev_char.is_whitespace() || prev_char.is_ascii_punctuation()
+            };
 
-                        return Some(VoiceCommandParseResult {
-                            matched_target_id: target.id.clone(),
-                            payload,
-                        });
-                    }
+            let is_boundary_end = abs_match_end == after_trigger.len() || {
+                let next_char = after_trigger[abs_match_end..].chars().next().unwrap();
+                next_char.is_whitespace() || next_char.is_ascii_punctuation()
+            };
+
+            if is_boundary_start && is_boundary_end {
+                let pre_target = &after_trigger[..abs_match_start];
+                if is_valid_pre_target_fillers(pre_target) {
+                    let post_target = &after_trigger[abs_match_end..];
+                    let payload = clean_payload(post_target);
+
+                    return Some(VoiceCommandParseResult {
+                        matched_target_id: target_id.to_string(),
+                        payload,
+                    });
                 }
-
-                search_start = abs_match_start + 1;
             }
+
+            search_start = abs_match_start + 1;
         }
     }
 

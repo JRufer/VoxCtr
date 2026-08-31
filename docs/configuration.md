@@ -376,6 +376,12 @@ pipe_path = "/tmp/voice.fifo"
 delivery = "speak"
 ```
 
+**`command`** — Voice Command Router (routes speech based on spoken target names):
+```toml
+delivery = "command"
+```
+See [Output Routing](routing.md#command--voice-command-router) for dynamic keyword parsing rules and conversational lead-in examples.
+
 **`chat`** — conversational LLM over an OpenAI-compatible API, with history:
 ```toml
 delivery = "chat"

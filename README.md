@@ -199,6 +199,14 @@ mcp_tool = "speak_text"            # The name of the MCP tool to call (defaults 
 text = "{TEXT}"                    # Custom arguments template (substitutes the transcription at {TEXT})
 ```
 
+### 🗣️ Voice Command Router (`command`)
+VoxCtrl includes a **Voice Command Router** target (`delivery = "command"`) that dynamically inspects dictated speech and reroutes text payload based on spoken target names.
+
+- **Trigger Phrase**: Listens for `"VoxCtrl"` (e.g. `"VoxCtrl"`, `"voxctrl"`, `"vox ctrl"`).
+- **Conversational Command Support**: Accepts natural lead-in phrases (e.g. *"VoxCtrl send this to my notes. I love you."*, *"VoxCtrl add this to my personal notes, help"*, or *"VoxCtrl put this in Notes: hello"*).
+- **Target Resolution**: Matches spoken target names against all configured target IDs and Labels, automatically prioritizing specific multi-word targets (e.g. `"Personal Notes"` is matched before `"Notes"`).
+- **Fallback**: If no `"VoxCtrl"` keyword is spoken, dictation types directly into your active window as normal.
+
 ---
 
 ## 📦 Portable AppImage & Installation
@@ -294,6 +302,11 @@ delivery = "file"
 file_path = "~/Documents/meeting_notes.md"
 file_prefix = "- "
 file_timestamp = true
+
+[[target]]
+id = "cmd_router"
+label = "Voice Command Router"
+delivery = "command"                  # Dynamically routes speech based on "VoxCtrl <target> <text>" keyword
 ```
 
 ### `bindings.toml`

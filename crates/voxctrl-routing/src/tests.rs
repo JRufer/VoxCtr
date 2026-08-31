@@ -1675,6 +1675,101 @@ fn test_parse_voice_command_matched_target() {
     let res4 = parse_voice_command("VoxCtrl put this into my Notes: What are you doing here?", &targets).expect("should match conversational put into notes");
     assert_eq!(res4.matched_target_id, "notes");
     assert_eq!(res4.payload, "What are you doing here?");
+
+    let res5 = parse_voice_command("VoxCtrl send us to my notes. I love you.", &targets).expect("should match conversational send us to my notes");
+    assert_eq!(res5.matched_target_id, "notes");
+    assert_eq!(res5.payload, "I love you.");
+}
+
+#[test]
+fn test_parse_voice_command_disambiguates_longest_target_name() {
+    use crate::targets::parse_voice_command;
+
+    let targets = vec![
+        OutputTarget {
+            id: "notes".into(),
+            label: "Notes".into(),
+            delivery: DeliveryType::File,
+            file_path: Some("/tmp/notes.txt".into()),
+            file_prefix: "".into(),
+            file_timestamp: false,
+            file_mode: "append".into(),
+            send_on_release: true,
+            append_newline: true,
+            strip_newlines: false,
+            http_method: "POST".into(),
+            chat_max_history: 20,
+            chat_timeout_secs: 120,
+            chat_reply_mode: "speak".into(),
+            processing: Default::default(),
+            command: None,
+            pipe_path: None,
+            socket_host: None,
+            socket_port: None,
+            socket_unix: None,
+            dbus_signal: None,
+            http_url: None,
+            http_headers: None,
+            http_json_template: None,
+            webhook_url: None,
+            webhook_secret: None,
+            webhook_json_template: None,
+            mcp_path: None,
+            mcp_tool: None,
+            mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_reset_phrase: None,
+            initial_prompt: None,
+            response_pipe: None,
+        },
+        OutputTarget {
+            id: "personal_notes".into(),
+            label: "Personal Notes".into(),
+            delivery: DeliveryType::File,
+            file_path: Some("/tmp/personal.txt".into()),
+            file_prefix: "".into(),
+            file_timestamp: false,
+            file_mode: "append".into(),
+            send_on_release: true,
+            append_newline: true,
+            strip_newlines: false,
+            http_method: "POST".into(),
+            chat_max_history: 20,
+            chat_timeout_secs: 120,
+            chat_reply_mode: "speak".into(),
+            processing: Default::default(),
+            command: None,
+            pipe_path: None,
+            socket_host: None,
+            socket_port: None,
+            socket_unix: None,
+            dbus_signal: None,
+            http_url: None,
+            http_headers: None,
+            http_json_template: None,
+            webhook_url: None,
+            webhook_secret: None,
+            webhook_json_template: None,
+            mcp_path: None,
+            mcp_tool: None,
+            mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_reset_phrase: None,
+            initial_prompt: None,
+            response_pipe: None,
+        },
+    ];
+
+    let res = parse_voice_command("VoxCtrl, send this to my personal notes, help", &targets)
+        .expect("should match personal notes");
+    assert_eq!(res.matched_target_id, "personal_notes");
+    assert_eq!(res.payload, "help");
 }
 
 #[tokio::test]

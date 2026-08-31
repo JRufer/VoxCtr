@@ -272,6 +272,15 @@ keys = ["KEY_LEFTMETA", "KEY_SPACE"]
 
 When two bindings overlap, the longer one wins: holding `Ctrl+Super+Space` does not also fire a `Super+Space` binding. Shadowing is resolved when a key goes *down*, so releasing Ctrl part-way through a gesture cannot start a second recording.
 
+### Staggered Key Release Tolerance (50ms Grace Window)
+
+For `hold` and `double_tap_hold` gestures, VoxCtrl incorporates a 50ms release grace timer. When a multi-key shortcut (e.g. `Super+Space` or `Ctrl+Alt+Space`) is released, fingers rarely lift off every key at the exact microsecond. 
+
+- When the first key in a combination comes up, the combo deactivates and a 50ms grace window starts.
+- If the remaining modifier keys come up within 50ms, recording stops immediately upon their release.
+- If a modifier key-up event is delayed, swallowed by the OS/compositor, or held down by a resting finger past 50ms, the grace timer automatically fires and stops recording cleanly.
+- This ensures the recording session never gets stuck open while avoiding accidental recording cutoffs during rapid key releases.
+
 ---
 
 ## Hot-Reload
