@@ -117,7 +117,7 @@ pub fn pocket_tts_voice_catalogue(voice_dir: &str) -> Vec<PocketTtsVoiceOption> 
 
 /// Resolves a voice id to its reference clip source: either a built-in `hf://` URI or
 /// a local path to a custom clip dropped into `voice_dir`. Custom clips take priority.
-fn resolve_pocket_tts_voice_clip(id: &str, voice_dir: &str) -> Option<String> {
+pub(crate) fn resolve_pocket_tts_voice_clip(id: &str, voice_dir: &str) -> Option<String> {
     let custom = scan_custom_pocket_tts_voices(voice_dir);
     if let Some((_, path)) = custom.iter().find(|(custom_id, _)| custom_id == id) {
         return Some(path.to_string_lossy().into_owned());

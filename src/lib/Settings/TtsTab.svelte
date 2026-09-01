@@ -801,19 +801,80 @@
       </p>
     </div>
 
-    <label class="field col">
-      <span class="field-title">Speaker Voice Prompt (Voice Design)</span>
-      <textarea
-        bind:value={cfg.tts.breeze_tts_2.speaker_prompt}
-        onchange={markDirty}
-        placeholder="Describe the voice of the speaker in natural language..."
-        rows="2"
-        class="field-input-textarea"
-      ></textarea>
-    </label>
-    <p class="hint" style="margin-top: -4px;">
-      Natural language description used by Breeze-TTS-2 to generate the speaker's voice (e.g. <em>"A calm female voice speaking clearly with a gentle tone"</em> or <em>"A deep, confident male narrator"</em>).
-    </p>
+    <div class="field col">
+      <span class="field-title">Voice Selection Method</span>
+      <div class="engine-radio-group">
+        <label class="engine-radio-option {cfg.tts.breeze_tts_2.voice_mode !== 'clone' ? 'selected' : ''}">
+          <div class="engine-radio-header">
+            <input
+              type="radio"
+              name="breeze_voice_mode"
+              value="prompt"
+              checked={cfg.tts.breeze_tts_2.voice_mode !== 'clone'}
+              onchange={() => { cfg.tts.breeze_tts_2.voice_mode = 'prompt'; markDirty(); }}
+            />
+            <span class="engine-radio-name">🗣️ Voice Design (Prompt)</span>
+          </div>
+          <span class="engine-radio-desc">Describe vocal characteristics in natural language</span>
+        </label>
+
+        <label class="engine-radio-option {cfg.tts.breeze_tts_2.voice_mode === 'clone' ? 'selected' : ''}">
+          <div class="engine-radio-header">
+            <input
+              type="radio"
+              name="breeze_voice_mode"
+              value="clone"
+              checked={cfg.tts.breeze_tts_2.voice_mode === 'clone'}
+              onchange={() => { cfg.tts.breeze_tts_2.voice_mode = 'clone'; markDirty(); loadPocketTtsVoices(); }}
+            />
+            <span class="engine-radio-name">🎙️ Voice Cloning (Shared Folder)</span>
+          </div>
+          <span class="engine-radio-desc">Clone voice from reference .wav audio clip</span>
+        </label>
+      </div>
+    </div>
+
+    {#if cfg.tts.breeze_tts_2.voice_mode === 'clone'}
+      <label class="field col">
+        <span class="field-title">Cloned Voice Reference Clip</span>
+        <CustomSelect
+          bind:value={cfg.tts.breeze_tts_2.cloned_voice}
+          options={pocketTtsVoiceOptions}
+          onchange={markDirty}
+        />
+      </label>
+
+      <div class="field">
+        <span>Shared Voice Folder (leave blank for default)</span>
+        <input
+          type="text"
+          bind:value={cfg.tts.breeze_tts_2.voice_dir}
+          onchange={() => { markDirty(); validatePocketTtsVoiceDir(); }}
+        />
+      </div>
+      <p class="hint">Default directory: <code>~/.local/share/voxctrl/pocket-tts-voices/</code></p>
+
+      <div class="license-warning-card" style="margin-top: 4px; margin-bottom: 8px;">
+        <p class="license-title">💡 Voice Cloning Transcript Requirement</p>
+        <p class="license-text">
+          Drop reference <code>.wav</code> audio files into your shared voice folder. For best cloning accuracy, place a matching text file (e.g. <code>voice_name.txt</code>) containing the spoken transcript of the audio file in the exact same folder alongside your <code>.wav</code> file.
+        </p>
+      </div>
+    {:else}
+      <label class="field col">
+        <span class="field-title">Speaker Voice Prompt (Voice Design)</span>
+        <textarea
+          bind:value={cfg.tts.breeze_tts_2.speaker_prompt}
+          onchange={markDirty}
+          placeholder="Describe the voice of the speaker in natural language..."
+          rows="2"
+          class="field-input-textarea"
+        ></textarea>
+      </label>
+      <p class="hint" style="margin-top: -4px;">
+        Natural language description used by Breeze-TTS-2 to generate the speaker's voice (e.g. <em>"A calm female voice speaking clearly with a gentle tone"</em> or <em>"A deep, confident male narrator"</em>).
+      </p>
+    {/if}
 
     <div class="voice-status-container">
       {#if breezeChecking}
@@ -1282,6 +1343,28 @@
   }
   .field-input-textarea:focus {
     @apply border-[var(--accent2)] shadow-[0_0_0_2px_rgba(79,195,247,0.2)];
+  }
+
+  .engine-radio-group {
+    @apply flex flex-col gap-2 mt-1.5 w-full;
+  }
+  .engine-radio-option {
+    @apply flex flex-col gap-1 p-3 bg-[var(--bg)] border border-[var(--border)] rounded-[var(--radius)] cursor-pointer transition-all duration-200 ease-out;
+  }
+  .engine-radio-option:hover {
+    @apply border-[var(--accent2)] bg-[var(--surface2)];
+  }
+  .engine-radio-option.selected {
+    @apply border-[var(--accent)] bg-[var(--surface2)];
+  }
+  .engine-radio-header {
+    @apply flex items-center gap-2.5;
+  }
+  .engine-radio-name {
+    @apply font-medium text-sm text-[var(--text)];
+  }
+  .engine-radio-desc {
+    @apply text-xs text-[var(--text-muted)] ml-6 leading-normal;
   }
 
 </style>

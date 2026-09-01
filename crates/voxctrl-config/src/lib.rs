@@ -362,6 +362,15 @@ impl Default for PocketTtsConfig {
 /// non-commercial research license.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BreezeTts2Config {
+    /// Voice selection mode: "prompt" (Voice Design) or "clone" (Cloned Voice Clip)
+    #[serde(default = "default_breeze_voice_mode")]
+    pub voice_mode: String,
+    /// Selected cloned voice ID from the shared voice folder (e.g. "alba", "my_voice")
+    #[serde(default)]
+    pub cloned_voice: String,
+    /// Shared voice directory for custom clips (empty = platform default `~/.local/share/voxctrl/pocket-tts-voices/`)
+    #[serde(default)]
+    pub voice_dir: String,
     /// Text prompt describing the voice of the speaker (Voice Design)
     #[serde(default = "default_breeze_tts_2_speaker_prompt")]
     pub speaker_prompt: String,
@@ -383,9 +392,16 @@ pub struct BreezeTts2Config {
     pub temperature: f32,
 }
 
+fn default_breeze_voice_mode() -> String {
+    "prompt".into()
+}
+
 impl Default for BreezeTts2Config {
     fn default() -> Self {
         Self {
+            voice_mode: default_breeze_voice_mode(),
+            cloned_voice: String::new(),
+            voice_dir: String::new(),
             speaker_prompt: default_breeze_tts_2_speaker_prompt(),
             model_dir: String::new(),
             hf_token: None,
