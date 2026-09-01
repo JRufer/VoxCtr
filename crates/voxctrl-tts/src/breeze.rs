@@ -90,6 +90,7 @@ pub(crate) fn speak_breeze_tts_2(
     config: &TtsConfig,
     u: &Utterance,
     model: &mut BreezeModelSlot,
+    voice_states: &mut std::collections::HashMap<String, pocket_tts::ModelState>,
     on_playback_start: &Option<PlaybackCallback>,
     sink: &rodio::Sink,
     generation_counter: &Arc<std::sync::atomic::AtomicU32>,

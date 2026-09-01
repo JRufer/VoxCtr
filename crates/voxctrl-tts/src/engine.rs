@@ -160,8 +160,9 @@ impl TtsEngineWorker {
         let mut pocket_tts_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
         // Inflect-Micro-v2 ONNX sessions, cached for the same lifetime.
         let mut inflect_model: InflectModelSlot = None;
-        // Breeze-TTS-2 session, cached for the same lifetime.
+        // Breeze-TTS-2 session + per-voice cloned state, cached for the same lifetime.
         let mut breeze_tts_2_model: BreezeModelSlot = None;
+        let mut breeze_tts_2_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
 
         // Persistent Rodio Output Stream - kept alive for the lifetime of this thread!
         let mut audio_context: Option<(rodio::OutputStream, rodio::OutputStreamHandle, Arc<rodio::Sink>)> = None;
@@ -249,6 +250,7 @@ impl TtsEngineWorker {
                             &self.config,
                             &utterance,
                             &mut breeze_tts_2_model,
+                            &mut breeze_tts_2_voice_states,
                             &self.on_playback_start,
                             &sink,
                             &self.generation,
