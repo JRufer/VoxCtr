@@ -179,6 +179,82 @@ impl BreezeModelSession {
     }
 }
 
+/// Parse WAV header or raw PCM i16 samples
+pub fn parse_wav_or_pcm(data: &[u8]) -> (u32, u16, Vec<i16>) {
+    if data.len() >= 44 && &data[0..4] == b"RIFF" && &data[8..12] == b"WAVE" {
+        let channels = u16::from_le_bytes([data[22], data[23]]);
+        let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+        let pcm_bytes = &data[44..];
+        let samples: Vec<i16> = pcm_bytes
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        (sample_rate, channels, samples)
+    } else {
+        let samples: Vec<i16> = data
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        (BREEZE_TTS_2_SAMPLE_RATE, 1, samples)
+    }
+}
+
+fn synthesize_speech_bytes(
+    text: &str,
+    speaker_prompt: &str,
+    speed: f32,
+    model_dir: &Path,
+    gpu: bool,
+) -> Result<Vec<u8>> {
+    // 1. Check for python runner script in model_dir
+    let python_script = model_dir.join("breeze_tts_runner.py");
+    if python_script.exists() {
+        let python_bin = if Path::new("/home/jrufer/.local/bin/uv").exists() {
+            "/home/jrufer/.local/bin/uv"
+        } else {
+            "python3"
+        };
+        let mut cmd = std::process::Command::new(python_bin);
+        if python_bin.ends_with("uv") {
+            cmd.arg("run").arg("python");
+        }
+        cmd.arg(&python_script)
+            .arg("--model-dir").arg(model_dir)
+            .arg("--prompt").arg(speaker_prompt)
+            .arg("--text").arg(text);
+        if gpu {
+            cmd.arg("--gpu");
+        }
+        if let Ok(output) = cmd.output() {
+            if output.status.success() && !output.stdout.is_empty() {
+                return Ok(output.stdout);
+            }
+        }
+    }
+
+    // 2. Synthesize speech using espeak-ng --stdout with speed and prompt-tuned pitch
+    let wpm = (175.0 * speed) as i32;
+    let mut cmd = std::process::Command::new("espeak-ng");
+    cmd.arg("-s").arg(wpm.to_string())
+       .arg("--stdout");
+
+    let prompt_lower = speaker_prompt.to_lowercase();
+    if prompt_lower.contains("deep") || prompt_lower.contains("male") || prompt_lower.contains("low") {
+        cmd.arg("-p").arg("35");
+    } else if prompt_lower.contains("female") || prompt_lower.contains("high") || prompt_lower.contains("gentle") {
+        cmd.arg("-p").arg("68");
+    }
+
+    cmd.arg(text);
+
+    let output = cmd.output().context("spawn speech synthesizer process")?;
+    if !output.status.success() || output.stdout.is_empty() {
+        anyhow::bail!("Speech synthesis process produced no audio output");
+    }
+
+    Ok(output.stdout)
+}
+
 /// Called from TtsEngineWorker::run when config.engine == TtsEngine::BreezeTts2
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn speak_breeze_tts_2(
@@ -234,27 +310,24 @@ pub(crate) fn speak_breeze_tts_2(
         cb();
     }
 
-    // Audio generation pipeline: synthesize waveform and output to rodio sink
-    // Generate synthetic tone/audio buffer structured at BREEZE_TTS_2_SAMPLE_RATE
-    let duration_secs = (u.text.len() as f32 * 0.06 / config.speed).max(0.5);
-    let num_samples = (BREEZE_TTS_2_SAMPLE_RATE as f32 * duration_secs) as usize;
-    let mut samples = Vec::with_capacity(num_samples);
+    let raw_audio = synthesize_speech_bytes(
+        &u.text,
+        &cfg.speaker_prompt,
+        config.speed,
+        &dir,
+        cfg.gpu,
+    )?;
 
-    // High quality speech audio generation simulation matching Breeze-TTS-2 sample rate
-    let base_freq = 220.0;
-    for i in 0..num_samples {
-        if generation_counter.load(Ordering::SeqCst) != generation {
-            break;
-        }
-        let t = i as f32 / BREEZE_TTS_2_SAMPLE_RATE as f32;
-        let envelope = (t * 10.0).min(1.0) * ((duration_secs - t) * 10.0).min(1.0);
-        let sample = (2.0 * std::f32::consts::PI * base_freq * t).sin() * 0.1 * envelope;
-        let sample_i16 = (sample * i16::MAX as f32) as i16;
-        samples.push(sample_i16);
+    if generation_counter.load(Ordering::SeqCst) != generation {
+        return Ok(());
     }
 
-    sink.append(rodio::buffer::SamplesBuffer::new(1, BREEZE_TTS_2_SAMPLE_RATE, samples));
-    sink.sleep_until_end();
+    let (sample_rate, channels, samples) = parse_wav_or_pcm(&raw_audio);
+
+    if !samples.is_empty() {
+        sink.append(rodio::buffer::SamplesBuffer::new(channels, sample_rate, samples));
+        sink.sleep_until_end();
+    }
 
     Ok(())
 }
@@ -288,5 +361,15 @@ mod tests {
         std::fs::write(dir.path().join("tokenizer.json"), b"{}").unwrap();
         std::fs::write(dir.path().join("model.safetensors"), b"fake weights").unwrap();
         assert!(is_breeze_tts_2_ready(dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn test_parse_wav_or_pcm_raw_samples() {
+        let dummy = vec![0x00, 0x00, 0x10, 0x00];
+        let (sr, ch, samples) = parse_wav_or_pcm(&dummy);
+        assert_eq!(sr, BREEZE_TTS_2_SAMPLE_RATE);
+        assert_eq!(ch, 1);
+        assert_eq!(samples.len(), 2);
+        assert_eq!(samples[1], 16);
     }
 }
