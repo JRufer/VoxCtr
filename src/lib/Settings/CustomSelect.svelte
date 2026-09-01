@@ -90,7 +90,7 @@
 </div>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .custom-select-wrapper {
     @apply relative flex-[2] min-w-[190px] w-full;

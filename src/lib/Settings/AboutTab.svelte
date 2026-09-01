@@ -62,6 +62,10 @@
         <span class="credit-license">MIT License</span>
       </div>
       <div class="credit-item">
+        <a class="credit-name-link" href="https://huggingface.co/BreezeBlue/Breeze-TTS-2" target="_blank">Breeze-TTS-2 (BreezeBlue)</a>
+        <span class="credit-license non-commercial">Non-Commercial License</span>
+      </div>
+      <div class="credit-item">
         <a class="credit-name-link" href="https://github.com/rhasspy/piper" target="_blank">Piper TTS</a>
         <span class="credit-license">MIT License</span>
       </div>
@@ -91,7 +95,7 @@
 </section>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .about-card {
     @apply flex-row! items-start gap-5;
@@ -139,5 +143,8 @@
   }
   .credit-license {
     @apply text-[10px] bg-[var(--color-accent-blue)]/8 text-[var(--color-accent-blue)] p-0.5 px-1.5 rounded border border-[var(--color-accent-blue)]/15 font-normal;
+  }
+  .credit-license.non-commercial {
+    @apply bg-amber-500/10 text-amber-400 border-amber-500/30;
   }
 </style>

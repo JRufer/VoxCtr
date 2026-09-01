@@ -203,7 +203,7 @@
 </section>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .hint {
     @apply text-xs text-[var(--color-obsidian-300)] leading-relaxed mb-4 max-w-[520px];

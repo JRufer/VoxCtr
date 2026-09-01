@@ -302,6 +302,8 @@ pub enum TtsEngine {
     Espeak,
     PocketTts,
     InflectMicro,
+    #[serde(rename = "breeze_tts_2", alias = "breeze_tts2")]
+    BreezeTts2,
 }
 
 impl Default for TtsEngine {
@@ -312,6 +314,14 @@ impl Default for TtsEngine {
 
 fn default_pocket_tts_voice() -> String {
     "alba".into()
+}
+
+fn default_breeze_tts_2_speaker_prompt() -> String {
+    "A calm and clear female voice speaking at a natural pace".into()
+}
+
+fn default_breeze_temperature() -> f32 {
+    0.7
 }
 
 fn default_tts_speed() -> f32 {
@@ -343,6 +353,61 @@ impl Default for PocketTtsConfig {
             prewarm: false,
             hf_token: None,
             voice_dir: String::new(),
+        }
+    }
+}
+
+/// Breeze-TTS-2 (BreezeBlue) — bilingual neural text-to-speech with natural-language
+/// voice design speaker prompts. Model weights are gated on HuggingFace under a
+/// non-commercial research license.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreezeTts2Config {
+    /// Voice selection mode: "prompt" (Voice Design) or "clone" (Cloned Voice Clip)
+    #[serde(default = "default_breeze_voice_mode")]
+    pub voice_mode: String,
+    /// Selected cloned voice ID from the shared voice folder (e.g. "alba", "my_voice")
+    #[serde(default)]
+    pub cloned_voice: String,
+    /// Shared voice directory for custom clips (empty = platform default `~/.local/share/voxctrl/pocket-tts-voices/`)
+    #[serde(default)]
+    pub voice_dir: String,
+    /// Text prompt describing the voice of the speaker (Voice Design)
+    #[serde(default = "default_breeze_tts_2_speaker_prompt")]
+    pub speaker_prompt: String,
+    /// Directory containing model weights & tokenizer. Empty = platform default
+    /// (`~/.local/share/voxctrl/models/breeze-tts-2/`).
+    #[serde(default)]
+    pub model_dir: String,
+    /// HuggingFace access token (shared with Pocket-TTS)
+    #[serde(default)]
+    pub hf_token: Option<String>,
+    /// Pre-warm model on startup so the first synthesis is instant
+    #[serde(default)]
+    pub prewarm: bool,
+    /// Enable GPU acceleration (CUDA)
+    #[serde(default)]
+    pub gpu: bool,
+    /// Sampling temperature / noise scale for speech generation
+    #[serde(default = "default_breeze_temperature")]
+    pub temperature: f32,
+}
+
+fn default_breeze_voice_mode() -> String {
+    "prompt".into()
+}
+
+impl Default for BreezeTts2Config {
+    fn default() -> Self {
+        Self {
+            voice_mode: default_breeze_voice_mode(),
+            cloned_voice: String::new(),
+            voice_dir: String::new(),
+            speaker_prompt: default_breeze_tts_2_speaker_prompt(),
+            model_dir: String::new(),
+            hf_token: None,
+            prewarm: false,
+            gpu: false,
+            temperature: default_breeze_temperature(),
         }
     }
 }
@@ -413,6 +478,8 @@ pub struct TtsConfig {
     #[serde(default)]
     pub inflect_micro: InflectMicroConfig,
     #[serde(default)]
+    pub breeze_tts_2: BreezeTts2Config,
+    #[serde(default)]
     pub snippets: std::collections::HashMap<String, String>,
 }
 
@@ -433,9 +500,12 @@ impl Default for TtsConfig {
             gpu: false,
             pocket_tts: PocketTtsConfig::default(),
             inflect_micro: InflectMicroConfig::default(),
+            breeze_tts_2: BreezeTts2Config::default(),
             snippets: {
                 let mut map = std::collections::HashMap::new();
-                map.insert("VoxCtrl".into(), "Vox Control".into());
+                map.insert("VoxCtrl".into(), "Voks Con-trol".into());
+                map.insert("voxctrl".into(), "Voks Con-trol".into());
+                map.insert("Vox Control".into(), "Voks Con-trol".into());
                 map
             },
         }
@@ -583,6 +653,13 @@ impl Config {
             if let Err(e) = clean_config.save() {
                 tracing::error!("Failed to save migrated OpenAI custom prompt: {e}");
             }
+        }
+
+        // Synchronize HuggingFace token between Pocket-TTS and Breeze-TTS-2
+        if data.tts.pocket_tts.hf_token.is_some() && data.tts.breeze_tts_2.hf_token.is_none() {
+            data.tts.breeze_tts_2.hf_token = data.tts.pocket_tts.hf_token.clone();
+        } else if data.tts.breeze_tts_2.hf_token.is_some() && data.tts.pocket_tts.hf_token.is_none() {
+            data.tts.pocket_tts.hf_token = data.tts.breeze_tts_2.hf_token.clone();
         }
 
         Self { data, path }
@@ -862,6 +939,19 @@ mod tests {
 
         let re_read_content = std::fs::read_to_string(&config_file_path).unwrap();
         assert!(re_read_content.contains(r#""timeout_secs": 30"#));
+    }
+
+    #[test]
+    fn test_breeze_tts_2_serde() {
+        let engine = TtsEngine::BreezeTts2;
+        let json = serde_json::to_string(&engine).unwrap();
+        assert_eq!(json, r#""breeze_tts_2""#);
+
+        let parsed1: TtsEngine = serde_json::from_str(r#""breeze_tts_2""#).unwrap();
+        assert_eq!(parsed1, TtsEngine::BreezeTts2);
+
+        let parsed2: TtsEngine = serde_json::from_str(r#""breeze_tts2""#).unwrap();
+        assert_eq!(parsed2, TtsEngine::BreezeTts2);
     }
 }
 

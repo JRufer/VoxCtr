@@ -1093,7 +1093,7 @@
 {/if}
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .backend-banner {
     @apply flex flex-col rounded-[var(--radius)] p-2.5 px-3.5 mb-1 border bg-white/[0.03] border-[var(--border)] transition-colors duration-150;

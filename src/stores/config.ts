@@ -89,9 +89,18 @@ export interface InflectMicroConfig {
   prewarm: boolean;
 }
 
+export interface BreezeTts2Config {
+  speaker_prompt: string;
+  model_dir: string;
+  hf_token: string | null;
+  prewarm: boolean;
+  gpu: boolean;
+  temperature: number;
+}
+
 export interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro";
+  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro" | "breeze_tts_2";
   voice: string;
   voice_dir: string;
   stop_key: string[];
@@ -100,6 +109,7 @@ export interface TtsConfig {
   gpu: boolean;
   pocket_tts: PocketTtsConfig;
   inflect_micro: InflectMicroConfig;
+  breeze_tts_2: BreezeTts2Config;
   snippets: Record<string, string>;
   custom_vocabulary: string[];
 }
@@ -187,6 +197,14 @@ const defaultConfig: AppConfig = {
       seed: 0,
       noise_scale: 0.667,
       prewarm: false,
+    },
+    breeze_tts_2: {
+      speaker_prompt: "A calm and clear female voice speaking at a natural pace",
+      model_dir: "",
+      hf_token: null,
+      prewarm: false,
+      gpu: false,
+      temperature: 0.7,
     },
     snippets: {
       "VoxCtrl": "Vox Control"

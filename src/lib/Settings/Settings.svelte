@@ -209,7 +209,7 @@
 </div>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .settings-root {
     @apply flex h-screen w-screen bg-[var(--bg)] text-[var(--text)] overflow-hidden;

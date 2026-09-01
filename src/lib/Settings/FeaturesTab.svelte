@@ -159,7 +159,7 @@
 </section>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .custom-vocab-input {
     @apply w-full min-h-[80px] bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-[var(--radius)] p-2 px-3 text-[13px] resize-y mt-2 outline-none box-border transition-all duration-200 ease-out;

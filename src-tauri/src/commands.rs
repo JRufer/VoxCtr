@@ -100,34 +100,40 @@ pub async fn save_config(
     // Dynamic TTS engine lifecycle management
     {
         let mut handle = state.tts_handle.lock().await;
+        let mut need_restart = true;
+
         if let Some(ref tts) = *handle {
-            tts.shutdown();
+            tts.update_config(new_config.tts.clone());
+            need_restart = false;
         }
-        if new_config.tts.enabled {
-            let app_handle = app.clone();
-            let app_handle_end = app.clone();
-            let app_handle_err = app.clone();
-            let state_clone = state.inner().clone();
-            let state_clone_end = state.inner().clone();
-            let new_tts = voxctrl_tts::TtsEngineWorker::start(
-                new_config.tts.clone(),
-                new_config.features.custom_vocabulary.clone(),
-                Some(std::sync::Arc::new(move || {
-                    state_clone.set_speaking(true);
-                    let _ = app_handle.emit("tts-playback-start", ());
-                })),
-                Some(std::sync::Arc::new(move || {
-                    state_clone_end.set_speaking(false);
-                    let _ = app_handle_end.emit("tts-playback-end", ());
-                })),
-                Some(std::sync::Arc::new(move |msg: String| {
-                    let _ = app_handle_err.emit("tts-error", msg);
-                })),
-            );
-            *handle = Some(new_tts.clone());
-            state.spawn_fifo_responders(new_tts).await;
-        } else {
-            *handle = None;
+
+        if need_restart {
+            if new_config.tts.enabled {
+                let app_handle = app.clone();
+                let app_handle_end = app.clone();
+                let app_handle_err = app.clone();
+                let state_clone = state.inner().clone();
+                let state_clone_end = state.inner().clone();
+                let new_tts = voxctrl_tts::TtsEngineWorker::start(
+                    new_config.tts.clone(),
+                    new_config.features.custom_vocabulary.clone(),
+                    Some(std::sync::Arc::new(move || {
+                        state_clone.set_speaking(true);
+                        let _ = app_handle.emit("tts-playback-start", ());
+                    })),
+                    Some(std::sync::Arc::new(move || {
+                        state_clone_end.set_speaking(false);
+                        let _ = app_handle_end.emit("tts-playback-end", ());
+                    })),
+                    Some(std::sync::Arc::new(move |msg: String| {
+                        let _ = app_handle_err.emit("tts-error", msg);
+                    })),
+                );
+                *handle = Some(new_tts.clone());
+                state.spawn_fifo_responders(new_tts).await;
+            } else {
+                *handle = None;
+            }
         }
     }
 
@@ -400,6 +406,18 @@ pub async fn check_voice_downloaded(voice_name: String, voice_dir: String) -> Re
 #[tauri::command]
 pub async fn download_voice(voice_name: String, voice_dir: String) -> Result<(), String> {
     voxctrl_tts::download_voice(&voice_name, &voice_dir)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn check_breeze_tts_2_ready(model_dir: String) -> Result<bool, String> {
+    Ok(voxctrl_tts::is_breeze_tts_2_ready(&model_dir))
+}
+
+#[tauri::command]
+pub async fn download_breeze_tts_2(model_dir: String, hf_token: Option<String>) -> Result<(), String> {
+    voxctrl_tts::download_breeze_tts_2_assets(&model_dir, hf_token)
         .await
         .map_err(|e| e.to_string())
 }

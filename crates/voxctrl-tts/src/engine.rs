@@ -12,6 +12,7 @@ use tracing::{debug, info, warn};
 use voxctrl_config::{TtsConfig, TtsEngine};
 use voxctrl_text::{correct_custom_vocabulary, expand_snippets};
 
+use crate::breeze::{speak_breeze_tts_2, BreezeModelSlot};
 use crate::inflect::speak_inflect_micro;
 use crate::piper::{get_voice_path, piper_binary, sample_rate_for_voice};
 use crate::pocket::speak_pocket_tts;
@@ -39,6 +40,7 @@ pub enum TtsCommand {
         utterance: Utterance,
         generation: u32,
     },
+    UpdateConfig(TtsConfig),
     Shutdown,
 }
 
@@ -84,6 +86,10 @@ impl TtsEngineHandle {
         stop_current_playback();
     }
 
+    pub fn update_config(&self, config: TtsConfig) {
+        let _ = self.tx.send(TtsCommand::UpdateConfig(config));
+    }
+
     pub fn shutdown(&self) {
         let _ = self.tx.send(TtsCommand::Shutdown);
     }
@@ -121,6 +127,7 @@ impl TtsEngineWorker {
         let prewarm = match config.engine {
             TtsEngine::PocketTts => config.pocket_tts.prewarm,
             TtsEngine::InflectMicro => config.inflect_micro.prewarm,
+            TtsEngine::BreezeTts2 => config.breeze_tts_2.prewarm,
             _ => false,
         };
         if prewarm {
@@ -153,11 +160,16 @@ impl TtsEngineWorker {
 
     fn run(self) {
         info!("TTS engine started (engine={:?})", self.config.engine);
+        let mut current_config = self.config.clone();
+
         // pocket-tts model + per-voice cloned voice state, cached for the lifetime of this worker thread.
         let mut pocket_tts_model: Option<pocket_tts::TTSModel> = None;
         let mut pocket_tts_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
         // Inflect-Micro-v2 ONNX sessions, cached for the same lifetime.
         let mut inflect_model: InflectModelSlot = None;
+        // Breeze-TTS-2 session + per-voice cloned state, cached for the same lifetime.
+        let mut breeze_tts_2_model: BreezeModelSlot = None;
+        let mut breeze_tts_2_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
 
         // Persistent Rodio Output Stream - kept alive for the lifetime of this thread!
         let mut audio_context: Option<(rodio::OutputStream, rodio::OutputStreamHandle, Arc<rodio::Sink>)> = None;
@@ -176,6 +188,10 @@ impl TtsEngineWorker {
 
         while let Ok(cmd) = self.rx.recv() {
             match cmd {
+                TtsCommand::UpdateConfig(new_cfg) => {
+                    info!("TTS worker config dynamically updated (engine={:?})", new_cfg.engine);
+                    current_config = new_cfg;
+                }
                 TtsCommand::Play { mut utterance, generation } => {
                     let current_gen = self.generation.load(std::sync::atomic::Ordering::SeqCst);
                     if generation < current_gen {
@@ -186,9 +202,15 @@ impl TtsEngineWorker {
                     let is_prewarm = utterance.source_label.as_deref() == Some("prewarm");
 
                     if !is_prewarm {
-                        if !self.config.snippets.is_empty() {
-                            utterance.text = expand_snippets(&utterance.text, &self.config.snippets);
-                        }
+                        let mut snips = current_config.snippets.clone();
+                        // Guarantee explicit subword phonetic boundaries so Kyutai models (Pocket-TTS & Breeze-TTS-2)
+                        // never omit the 'Con' syllable or slur into 'crol'.
+                        snips.entry("VoxCtrl".to_string()).or_insert_with(|| "Voks Con-trol".to_string());
+                        snips.entry("voxctrl".to_string()).or_insert_with(|| "Voks Con-trol".to_string());
+                        snips.entry("Vox Control".to_string()).or_insert_with(|| "Voks Con-trol".to_string());
+                        snips.entry("vox control".to_string()).or_insert_with(|| "Voks Con-trol".to_string());
+
+                        utterance.text = expand_snippets(&utterance.text, &snips);
                         if !self.custom_vocabulary.is_empty() {
                             utterance.text = correct_custom_vocabulary(&utterance.text, &self.custom_vocabulary);
                         }
@@ -205,6 +227,8 @@ impl TtsEngineWorker {
                         continue;
                     }
                     let sink = sink_res.unwrap();
+                    let speed = if current_config.speed <= 0.0 { 1.0 } else { current_config.speed };
+                    sink.set_speed(speed.clamp(0.5, 2.5));
 
                     {
                         let mut guard = ACTIVE_SINK.lock().unwrap();
@@ -219,11 +243,11 @@ impl TtsEngineWorker {
                     // Runtime can panic during session creation when its shared
                     // library cannot be resolved, so this path is reachable.
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        match self.config.engine {
+                        match current_config.engine {
                         TtsEngine::Piper => self.speak_piper(&utterance, &sink),
                         TtsEngine::Espeak => self.speak_espeak(&utterance),
                         TtsEngine::PocketTts => speak_pocket_tts(
-                            &self.config,
+                            &current_config,
                             &utterance,
                             &mut pocket_tts_model,
                             &mut pocket_tts_voice_states,
@@ -233,9 +257,19 @@ impl TtsEngineWorker {
                             generation,
                         ),
                         TtsEngine::InflectMicro => speak_inflect_micro(
-                            &self.config,
+                            &current_config,
                             &utterance,
                             &mut inflect_model,
+                            &self.on_playback_start,
+                            &sink,
+                            &self.generation,
+                            generation,
+                        ),
+                        TtsEngine::BreezeTts2 => speak_breeze_tts_2(
+                            &current_config,
+                            &utterance,
+                            &mut breeze_tts_2_model,
+                            &mut breeze_tts_2_voice_states,
                             &self.on_playback_start,
                             &sink,
                             &self.generation,

@@ -392,7 +392,7 @@
 </div>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .diagnostic-window {
     @apply flex items-start justify-center w-screen h-screen bg-[var(--color-obsidian-950)] text-[var(--text)] overflow-y-auto p-5;
