@@ -88,9 +88,17 @@ pub async fn download_breeze_tts_2_assets(model_dir: &str, hf_token: Option<Stri
 
     let files_to_fetch = vec![
         "config.json",
-        "tokenizer.json",
         "generation_config.json",
-        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "audio_tokenizer/config.json",
+        "audio_tokenizer/configuration.json",
+        "audio_tokenizer/model.safetensors",
+        "audio_tokenizer/preprocessor_config.json",
     ];
 
     for file in files_to_fetch {
@@ -98,6 +106,10 @@ pub async fn download_breeze_tts_2_assets(model_dir: &str, hf_token: Option<Stri
         if target_path.exists() {
             info!("File already exists, skipping: {}", file);
             continue;
+        }
+
+        if let Some(parent) = target_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
         }
 
         let url = format!("https://huggingface.co/{BREEZE_TTS_2_REPO}/resolve/main/{file}");
@@ -112,23 +124,6 @@ pub async fn download_breeze_tts_2_assets(model_dir: &str, hf_token: Option<Stri
 
         let resp = req.send().await.with_context(|| format!("request {url}"))?;
         if !resp.status().is_success() {
-            // If single model.safetensors isn't found, try model.safetensors.index.json or allow proceed if model files present
-            if file == "model.safetensors" && resp.status() == reqwest::StatusCode::NOT_FOUND {
-                info!("Single model.safetensors not found, attempting index download...");
-                let index_url = format!("https://huggingface.co/{BREEZE_TTS_2_REPO}/resolve/main/model.safetensors.index.json");
-                let mut index_req = client.get(&index_url);
-                if let Some(ref tok) = hf_token {
-                    index_req = index_req.bearer_auth(tok.trim());
-                }
-                if let Ok(index_resp) = index_req.send().await {
-                    if index_resp.status().is_success() {
-                        if let Ok(bytes) = index_resp.bytes().await {
-                            let _ = tokio::fs::write(dir.join("model.safetensors.index.json"), bytes).await;
-                        }
-                    }
-                }
-                continue;
-            }
             anyhow::bail!(
                 "Failed to download {file} from HuggingFace (status {}). Ensure your HuggingFace token is valid and you have accepted the model license at https://huggingface.co/{}",
                 resp.status(),
@@ -206,28 +201,48 @@ fn synthesize_speech_bytes(
     model_dir: &Path,
     gpu: bool,
 ) -> Result<Vec<u8>> {
-    // 1. Check for python runner script in model_dir
-    let python_script = model_dir.join("breeze_tts_runner.py");
-    if python_script.exists() {
-        let python_bin = if Path::new("/home/jrufer/.local/bin/uv").exists() {
-            "/home/jrufer/.local/bin/uv"
+    // 1. Resolve python runner script (check model_dir, scripts/, or current directory)
+    let candidate_scripts = vec![
+        model_dir.join("breeze_tts_runner.py"),
+        PathBuf::from("scripts/breeze_tts_runner.py"),
+        PathBuf::from("scripts").join("breeze_tts_runner.py"),
+    ];
+
+    let runner_script = candidate_scripts.into_iter().find(|p| p.exists());
+
+    if let Some(script_path) = runner_script {
+        let uv_path = PathBuf::from("/home/jrufer/.local/bin/uv");
+        let mut cmd = if uv_path.exists() {
+            let mut c = std::process::Command::new(uv_path);
+            c.arg("run")
+             .arg("--with").arg("torch")
+             .arg("--with").arg("transformers")
+             .arg("--with").arg("torchaudio")
+             .arg("--with").arg("qwen-tts")
+             .arg("--with").arg("soundfile")
+             .arg("python3");
+            c
         } else {
-            "python3"
+            std::process::Command::new("python3")
         };
-        let mut cmd = std::process::Command::new(python_bin);
-        if python_bin.ends_with("uv") {
-            cmd.arg("run").arg("python");
-        }
-        cmd.arg(&python_script)
+
+        cmd.arg(&script_path)
             .arg("--model-dir").arg(model_dir)
             .arg("--prompt").arg(speaker_prompt)
             .arg("--text").arg(text);
+
         if gpu {
             cmd.arg("--gpu");
         }
+
+        info!("Spawning Breeze-TTS-2 PyTorch inference script via python...");
         if let Ok(output) = cmd.output() {
             if output.status.success() && !output.stdout.is_empty() {
+                info!("Breeze-TTS-2 PyTorch neural synthesis succeeded ({} bytes audio)", output.stdout.len());
                 return Ok(output.stdout);
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::warn!("Breeze-TTS-2 PyTorch inference script failed: {stderr}");
             }
         }
     }
