@@ -16,6 +16,19 @@ pub fn set_speak_callback(callback: SpeakCallback) {
     let _ = SPEAK_CALLBACK.set(callback);
 }
 
+pub type CommandTriggerCallback = Arc<dyn Fn(&str, &str) + Send + Sync + 'static>;
+static COMMAND_TRIGGER_CALLBACK: OnceLock<CommandTriggerCallback> = OnceLock::new();
+
+pub fn set_command_trigger_callback(callback: CommandTriggerCallback) {
+    let _ = COMMAND_TRIGGER_CALLBACK.set(callback);
+}
+
+pub fn notify_command_trigger(command_name: &str, text_summary: &str) {
+    if let Some(cb) = COMMAND_TRIGGER_CALLBACK.get() {
+        cb(command_name, text_summary);
+    }
+}
+
 // Shared HTTP client — built once, reused for connection pooling.
 fn http_client() -> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();

@@ -47,6 +47,8 @@ The main configuration interface. Organized into a sidebar with nine tabs:
 
 ### Visual Tab
 - Preview and selection of overlay animation styles
+- **Show overlay on voice command trigger**: Checkbox toggle to enable or disable displaying the temporary UI overlay pill when a voice command trigger is activated (`show_command_overlay`).
+- **Command overlay duration (seconds)**: Number input control to set the display duration (1–10s, default 3s) for the voice command overlay pill (`command_overlay_duration_secs`).
 - **Overlay Position Control**: Dropdown choice for setting the Heads-Up display screen alignment (**Top**, **Center**, or **Bottom** of the screen).
 - **Overlay Display Control**: Dropdown choice to select which target monitor display screen (**Primary Monitor** or specific connected panels like `"HDMI-1"`) the visual overlay appears on. Features a graceful disconnection primary display failover and a golden warning badge alert.
 - Overlay appearance controls

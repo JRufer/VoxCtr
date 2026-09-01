@@ -149,6 +149,14 @@ fn default_overlay_monitor() -> String {
     "primary".into()
 }
 
+fn default_show_command_overlay() -> bool {
+    true
+}
+
+fn default_command_overlay_duration_secs() -> u32 {
+    3
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiConfig {
     pub show_overlay: bool,
@@ -163,6 +171,10 @@ pub struct UiConfig {
     pub show_notification: bool,
     #[serde(default)]
     pub history_enabled: bool,
+    #[serde(default = "default_show_command_overlay")]
+    pub show_command_overlay: bool,
+    #[serde(default = "default_command_overlay_duration_secs")]
+    pub command_overlay_duration_secs: u32,
 }
 
 impl Default for UiConfig {
@@ -175,6 +187,8 @@ impl Default for UiConfig {
             auto_show_settings: true,
             show_notification: false,
             history_enabled: false,
+            show_command_overlay: true,
+            command_overlay_duration_secs: 3,
         }
     }
 }

@@ -5,7 +5,7 @@ use tracing::{error, info};
 
 use crate::{
     models::{DeliveryResult, DeliveryType, OutputTarget},
-    targets::{build_target, parse_voice_command, DeliveryTarget, InjectTarget},
+    targets::{build_target, notify_command_trigger, parse_voice_command, DeliveryTarget, InjectTarget},
 };
 
 pub struct OutputTargetRouter {
@@ -49,6 +49,12 @@ impl OutputTargetRouter {
                     );
                     let matched_id = parsed.matched_target_id.clone();
                     let payload = parsed.payload;
+                    let matched_label = configs_guard
+                        .iter()
+                        .find(|t| t.id == matched_id)
+                        .map(|t| if t.label.is_empty() { t.id.clone() } else { t.label.clone() })
+                        .unwrap_or_else(|| matched_id.clone());
+                    notify_command_trigger(&matched_label, &payload);
                     drop(configs_guard);
                     return Box::pin(self.deliver(&matched_id, &payload)).await;
                 } else {
@@ -61,6 +67,23 @@ impl OutputTargetRouter {
                     let inject_target = InjectTarget(cfg.clone());
                     return inject_target.deliver(text).await;
                 }
+            } else if let Some(parsed) = parse_voice_command(text, &configs_guard) {
+                info!(
+                    from_target = target_id,
+                    matched_target = %parsed.matched_target_id,
+                    payload = %parsed.payload,
+                    "Voice command trigger detected and rerouted"
+                );
+                let matched_id = parsed.matched_target_id.clone();
+                let payload = parsed.payload;
+                let matched_label = configs_guard
+                    .iter()
+                    .find(|t| t.id == matched_id)
+                    .map(|t| if t.label.is_empty() { t.id.clone() } else { t.label.clone() })
+                    .unwrap_or_else(|| matched_id.clone());
+                notify_command_trigger(&matched_label, &payload);
+                drop(configs_guard);
+                return Box::pin(self.deliver(&matched_id, &payload)).await;
             }
         }
         drop(configs_guard);

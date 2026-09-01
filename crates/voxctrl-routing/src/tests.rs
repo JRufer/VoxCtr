@@ -1889,3 +1889,107 @@ async fn test_voice_command_router_integration() {
     let content = std::fs::read_to_string(&temp_path).unwrap();
     assert_eq!(content.trim(), "Hello routed target");
 }
+
+#[tokio::test]
+async fn test_command_trigger_callback_notification() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use crate::router::OutputTargetRouter;
+    static CALLED: AtomicBool = AtomicBool::new(false);
+
+    crate::targets::set_command_trigger_callback(Arc::new(|cmd, text| {
+        if cmd == "Notes Target" && text == "Buy milk" {
+            CALLED.store(true, Ordering::SeqCst);
+        }
+    }));
+
+    let temp_dir = std::env::temp_dir();
+    let temp_path = temp_dir.join(format!("voxctrl_cmd_cb_test_{}.txt", chrono::Utc::now().timestamp_millis()));
+
+    let targets = vec![
+        OutputTarget {
+            id: "cmd".into(),
+            label: "Voice Command Router".into(),
+            delivery: DeliveryType::Command,
+            command: None,
+            pipe_path: None,
+            socket_host: None,
+            socket_port: None,
+            socket_unix: None,
+            file_path: None,
+            file_prefix: String::new(),
+            file_timestamp: false,
+            file_mode: "append".into(),
+            dbus_signal: None,
+            http_url: None,
+            http_method: "POST".into(),
+            http_headers: None,
+            http_json_template: None,
+            webhook_url: None,
+            webhook_secret: None,
+            webhook_json_template: None,
+            mcp_path: None,
+            mcp_tool: None,
+            mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_max_history: 20,
+            chat_timeout_secs: 120,
+            chat_reply_mode: "speak".into(),
+            chat_reset_phrase: None,
+            send_on_release: true,
+            append_newline: false,
+            strip_newlines: false,
+            initial_prompt: None,
+            processing: Default::default(),
+            response_pipe: None,
+        },
+        OutputTarget {
+            id: "notes".into(),
+            label: "Notes Target".into(),
+            delivery: DeliveryType::File,
+            file_path: Some(temp_path.to_string_lossy().into()),
+            file_prefix: String::new(),
+            file_timestamp: false,
+            file_mode: "append".into(),
+            send_on_release: true,
+            append_newline: false,
+            strip_newlines: false,
+            http_method: "POST".into(),
+            chat_max_history: 20,
+            chat_timeout_secs: 120,
+            chat_reply_mode: "speak".into(),
+            processing: Default::default(),
+            command: None,
+            pipe_path: None,
+            socket_host: None,
+            socket_port: None,
+            socket_unix: None,
+            dbus_signal: None,
+            http_url: None,
+            http_headers: None,
+            http_json_template: None,
+            webhook_url: None,
+            webhook_secret: None,
+            webhook_json_template: None,
+            mcp_path: None,
+            mcp_tool: None,
+            mcp_args: None,
+            chat_url: None,
+            chat_model: None,
+            chat_api_key: None,
+            chat_system_prompt: None,
+            chat_reset_phrase: None,
+            initial_prompt: None,
+            response_pipe: None,
+        },
+    ];
+
+    let router = OutputTargetRouter::new(targets);
+    let res = router.deliver("cmd", "VoxCtrl notes Buy milk").await;
+    assert!(res.success);
+    assert!(CALLED.load(Ordering::SeqCst));
+    let _ = std::fs::remove_file(temp_path);
+}

@@ -28,11 +28,18 @@
   const triggerLabel = $derived($status.active_target_label || "Focused Window");
   const targetLabel = $derived($status.active_target_label || "Focused Window");
 
-  // Delay unmounting the visualizer when recording/speaking stops to allow CSS outro animation to finish
+  let commandOverlayActive = $state(false);
+  let commandOverlayName = $state("");
+  let commandOverlayText = $state("");
+  let commandTimerId: any = null;
+  let unlistenCommandExecuted: (() => void) | null = null;
+
+  // Delay unmounting the visualizer when recording/speaking/command stops to allow CSS outro animation to finish
   let isRecordingOrSpeaking = $derived(
     ($recording && $config.ui.show_overlay) ||
     ($speaking && $config.tts.enabled && $config.tts.response_overlay) ||
-    ($mcpRecording && $config.mcp.visual_feedback)
+    ($mcpRecording && $config.mcp.visual_feedback) ||
+    (commandOverlayActive && $config.ui.show_command_overlay)
   );
   let renderOverlay = $state(false);
   let animateActive = $state(false);
@@ -123,6 +130,20 @@
       unlistenAudioLevel = unlisten;
     });
 
+    listen<{ command: string; summary: string; duration_secs: number }>("command-executed", (event) => {
+      if (!$config.ui.show_command_overlay) return;
+      commandOverlayName = event.payload.command;
+      commandOverlayText = event.payload.summary;
+      commandOverlayActive = true;
+      if (commandTimerId) clearTimeout(commandTimerId);
+      const durationMs = (event.payload.duration_secs || $config.ui.command_overlay_duration_secs || 3) * 1000;
+      commandTimerId = setTimeout(() => {
+        commandOverlayActive = false;
+      }, durationMs);
+    }).then((unlisten) => {
+      unlistenCommandExecuted = unlisten;
+    });
+
     let time = 0;
     function updateAnimation() {
       // Smooth interpolation for visual reaction
@@ -151,6 +172,8 @@
       document.documentElement.classList.remove("overlay-window");
       document.body.classList.remove("overlay-window");
       if (unlistenAudioLevel) unlistenAudioLevel();
+      if (unlistenCommandExecuted) unlistenCommandExecuted();
+      if (commandTimerId) clearTimeout(commandTimerId);
       cancelAnimationFrame(animationFrameId);
     };
   });
@@ -212,6 +235,14 @@
         <span class="pill-text">
           <span class="pill-title">SYSTEM RESPONDING</span>
           <span class="pill-target">▸ {targetLabel}</span>
+        </span>
+      </div>
+    {:else if commandOverlayActive}
+      <div class="system-response-box command" class:on={animateActive}>
+        <span class="cmd-icon">⚡</span>
+        <span class="pill-text">
+          <span class="pill-title">{commandOverlayName.toUpperCase()}</span>
+          <span class="pill-target">▸ {commandOverlayText}</span>
         </span>
       </div>
     {:else if $mcpRecording}
@@ -284,11 +315,25 @@
     color: #a7f3d0;
   }
 
+  .system-response-box.command {
+    background: rgba(30, 16, 60, 0.94);
+    border: 1.2px solid rgba(168, 85, 247, 0.65);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5), 0 0 18px rgba(168, 85, 247, 0.3);
+    color: #e9d5ff;
+  }
+
   .system-response-box.mcp {
     background: rgba(76, 5, 25, 0.94);
     border: 1.2px solid rgba(244, 63, 94, 0.55);
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5), 0 0 18px rgba(244, 63, 94, 0.25);
     color: #fecdd3;
+  }
+
+  .cmd-icon {
+    font-size: 16px;
+    line-height: 1;
+    color: #c084fc;
+    animation: flash 1.5s infinite ease-in-out;
   }
 
   .mini-eq {

@@ -78,6 +78,25 @@
       <span>Show overlay while speaking</span>
       <input type="checkbox" bind:checked={cfg.ui.show_overlay} onchange={markDirty} />
     </label>
+
+    <label class="field">
+      <span>Show overlay on voice command trigger</span>
+      <input type="checkbox" bind:checked={cfg.ui.show_command_overlay} onchange={markDirty} />
+    </label>
+
+    {#if cfg.ui.show_command_overlay}
+      <label class="field">
+        <span>Command overlay duration (seconds)</span>
+        <input
+          type="number"
+          min="1"
+          max="10"
+          step="1"
+          bind:value={cfg.ui.command_overlay_duration_secs}
+          onchange={markDirty}
+        />
+      </label>
+    {/if}
     
     <label class="field">
       <span>Overlay style</span>

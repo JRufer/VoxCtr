@@ -121,3 +121,11 @@ A warm, vintage VU meter in cream and amber tones with a real dial face.
 
 While TTS is responding, a green "SYSTEM RESPONDING" pill slides up from the bottom of the overlay with a live mini-equalizer and the active target label, and slides back down when speech ends.
 
+### Command Trigger Overlay Pill
+
+When a voice command trigger is activated (e.g. saying *"VoxCtrl notes Help me!"*), a purple/indigo glassmorphism command pill slides up from the bottom of the overlay window:
+- **Visuals**: Dark purple/indigo background (`rgba(30, 16, 60, 0.94)`) with a glowing purple border (`#a855f7`) and a flashing lightning bolt icon (`⚡`).
+- **Content**: Displays the executed command target name (e.g. `NOTES` or `MEETING JOURNAL`) and a summary of the text payload (`▸ Help me!`).
+- **Duration**: Auto-dismisses after a configurable duration (default: 3 seconds, configurable via `config.ui.command_overlay_duration_secs`).
+- **Toggle**: Controlled via **Settings → Visual & Feedback → Show overlay on voice command trigger** (`config.ui.show_command_overlay`).
+

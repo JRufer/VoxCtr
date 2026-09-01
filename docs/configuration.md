@@ -43,6 +43,8 @@ Full schema with defaults:
   },
   "ui": {
     "show_overlay": true,
+    "show_command_overlay": true,
+    "command_overlay_duration_secs": 3,
     "overlay_style": "blue_wave",
     "overlay_position": "center",
     "overlay_monitor": "primary",
@@ -164,10 +166,12 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 
 ### `ui` section
 
-| Key | Type | Values | Default | Description |
+| Key | Type | Allowed | Default | Description |
 |---|---|---|---|---|
-| `show_overlay` | bool | | `true` | Whether the overlay window is currently visible |
-| `overlay_style` | string | `"voice_card"`, `"waveform"`, `"pulse"`, `"blue_wave"`, `"none"` | `"blue_wave"` | HUD visualization style |
+| `show_overlay` | bool | | `true` | Show visual HUD overlay during recording |
+| `show_command_overlay` | bool | | `true` | Show temporary UI overlay pill when a voice command trigger is activated |
+| `command_overlay_duration_secs` | integer | `1`–`10` | `3` | Duration in seconds to display the voice command overlay pill |
+| `overlay_style` | string | `"voice_card"`, `"waveform"`, `"pulse"`, `"blue_wave"`, `"mono_bars"`, `"spectrum"`, `"terminal"`, `"vinyl"`, `"none"` | `"blue_wave"` | HUD visualization style |
 | `overlay_position` | string | `"top"`, `"center"`, `"bottom"` | `"center"` | Screen positioning of the overlay window |
 | `overlay_monitor` | string | `"primary"` or monitor name | `"primary"` | Specific display screen for visual overlay |
 | `auto_show_settings` | bool | | `true` | Auto-show Settings window on startup |

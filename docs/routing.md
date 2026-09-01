@@ -231,6 +231,8 @@ delivery = "command"
 - **Target Resolution**: Matches spoken target names against all configured target IDs and Labels (case-insensitively). Longest candidate target names take precedence (e.g. `"Personal Notes"` is matched before `"Notes"`).
 - **Conversational Lead-in Support**: Supports natural lead-in command phrases between the trigger keyword and the target name, such as *"VoxCtrl send this to my notes. I love you."*, *"VoxCtrl add this to my personal notes, help"*, *"VoxCtrl put this into my Notes: hello"*, or *"VoxCtrl send us to my notes. I love you."*.
 - **Payload Extraction**: Strips transition punctuation (`.`, `:`, `,`, `;`) and connector words (`saying`, `that`, `with text`) and routes the remaining text payload to the matched target.
+- **Command UI Overlay**: When a voice command trigger is matched and executed, VoxCtrl automatically displays a temporary purple/indigo HUD overlay pill displaying the command name and text payload summary for a configurable duration (default: 3 seconds).
+- **Auto-Trigger Detection**: Dictating with the `"VoxCtrl"` keyword (e.g. *"VoxCtrl notes Help me!"*) automatically activates voice command routing and surfaces the overlay pill regardless of whether the active hotkey target is set to `command` or `inject`.
 - **Fallback**: If no `"VoxCtrl"` keyword is spoken or if no target matches, it falls back to direct text injection into the active application (identical to the `inject` target).
 
 ---

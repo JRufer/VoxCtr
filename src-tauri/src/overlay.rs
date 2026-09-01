@@ -26,10 +26,14 @@ slint::slint! {
         in property <bool> is-audio-ready: true;
         in property <string> target-label: "Focused Window";
         in property <string> overlay-style: "waveform";
+        in property <bool> is-command: false;
+        in property <string> command-name: "";
+        in property <string> command-text: "";
 
         // Animation properties driven by the Rust spring/timer loop
         in property <float> reveal-main: 0.0;   // 0..1 load/unload progress for the visualizer
         in property <float> reveal-pill: 0.0;   // 0..1 load/unload progress for the speaking pill
+        in property <float> reveal-command: 0.0;// 0..1 load/unload progress for the command pill
         in property <float> level: 0.0;         // smoothed audio level 0..1
         in property <float> blink: 1.0;         // 0..1 pulsing value
         in property <float> sheen-x: -70.0;     // holo sheen x position (voice card)
@@ -1108,6 +1112,60 @@ slint::slint! {
                 }
             }
         }
+
+        // ─────────────────────────────────────────────────────────────
+        // Command pill — slides up from the bottom when a command is
+        // executed.
+        // ─────────────────────────────────────────────────────────────
+        if (reveal-command > 0.004) : Rectangle {
+            x: (560px - self.width) / 2;
+            y: 134px + (1.0 - reveal-command) * 20px;
+            width: 280px;
+            height: 46px;
+            border-radius: 23px;
+            background: rgba(30, 16, 60, 0.94);
+            border-width: 1.2px;
+            border-color: rgba(168, 85, 247, 0.65);
+            opacity: Math.min(1.0, reveal-command);
+            drop-shadow-blur: 18px;
+            drop-shadow-color: rgba(168, 85, 247, 0.3);
+
+            HorizontalLayout {
+                padding-left: 18px;
+                padding-right: 18px;
+                spacing: 10px;
+
+                Text {
+                    text: "⚡";
+                    color: #c084fc;
+                    font-size: 16px;
+                    vertical-alignment: center;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 1px;
+
+                    Text {
+                        text: command-name;
+                        color: #e9d5ff;
+                        font-size: 10px;
+                        font-weight: 850;
+                        font-family: "Outfit";
+                        letter-spacing: 1.5px;
+                    }
+                    Text {
+                        text: "▸ " + command-text;
+                        color: rgba(233, 213, 255, 0.5);
+                        font-size: 8.5px;
+                        font-weight: 600;
+                        font-family: "Outfit";
+                        overflow: elide;
+                        max-width: 180px;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1128,6 +1186,9 @@ struct AppState {
     /// Set when the anchor/monitor changed so the render tick recomputes coords.
     position_dirty: bool,
     overlay_style: String,
+    command_name: String,
+    command_text: String,
+    command_until: Option<std::time::Instant>,
 }
 
 /// Make the overlay a click-through, always-on-top window.
@@ -1579,6 +1640,9 @@ fn main() {
         overlay_monitor: "primary".to_string(),
         position_dirty: false,
         overlay_style: "waveform".to_string(),
+        command_name: String::new(),
+        command_text: String::new(),
+        command_until: None,
     }));
 
     // Stdin reading thread
@@ -1644,6 +1708,16 @@ fn main() {
                                 state.position_dirty = true;
                             }
                         }
+                        "command" => {
+                            if let Ok(mut state) = state_clone.lock() {
+                                let cmd = msg.get("command").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let summary = msg.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let duration = msg.get("duration_secs").and_then(|v| v.as_u64()).unwrap_or(3);
+                                state.command_name = cmd;
+                                state.command_text = summary;
+                                state.command_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(duration));
+                            }
+                        }
                         "shutdown" => {
                             slint::invoke_from_event_loop(move || {
                                 let _ = slint::quit_event_loop();
@@ -1666,6 +1740,8 @@ fn main() {
     let mut vel_main = 0.0_f32;
     let mut reveal_pill = 0.0_f32;
     let mut vel_pill = 0.0_f32;
+    let mut reveal_command = 0.0_f32;
+    let mut vel_command = 0.0_f32;
     let mut phase = 0.0_f32;
     let mut cur_level = 0.0_f32;
     let mut osc_hist: VecDeque<f32> = VecDeque::from(vec![0.0_f32; 126]);
@@ -1699,11 +1775,25 @@ fn main() {
             None => return,
         };
 
-        let (rec, proc, speak, ready, raw_level, target, anchor, monitor_pref, pos_dirty, style) = {
+        let (rec, proc, speak, ready, raw_level, target, anchor, monitor_pref, pos_dirty, style, cmd_active, cmd_name, cmd_text) = {
             if let Ok(mut s) = state_clone2.lock() {
                 let dirty = s.position_dirty;
                 s.position_dirty = false;
-                (s.recording, s.processing, s.speaking, s.audio_ready, s.audio_level, s.active_target_label.clone(), s.overlay_position.clone(), s.overlay_monitor.clone(), dirty, s.overlay_style.clone())
+                let is_cmd = if let Some(until) = s.command_until {
+                    if std::time::Instant::now() < until {
+                        true
+                    } else {
+                        s.command_until = None;
+                        false
+                    }
+                } else {
+                    false
+                };
+                (
+                    s.recording, s.processing, s.speaking, s.audio_ready, s.audio_level,
+                    s.active_target_label.clone(), s.overlay_position.clone(), s.overlay_monitor.clone(),
+                    dirty, s.overlay_style.clone(), is_cmd, s.command_name.clone(), s.command_text.clone()
+                )
             } else {
                 return;
             }
@@ -1716,10 +1806,13 @@ fn main() {
         }
         let active_main = rec || proc;
         let active_pill = speak;
+        let active_cmd = cmd_active;
         spring(&mut reveal_main, &mut vel_main, if active_main { 1.0 } else { 0.0 }, DT);
         spring(&mut reveal_pill, &mut vel_pill, if active_pill { 1.0 } else { 0.0 }, DT);
+        spring(&mut reveal_command, &mut vel_command, if active_cmd { 1.0 } else { 0.0 }, DT);
         reveal_main = reveal_main.max(0.0);
         reveal_pill = reveal_pill.max(0.0);
+        reveal_command = reveal_command.max(0.0);
 
         // Smoothed, normalized audio level (fast attack, fast release)
         let tgt_level = (raw_level * 100.0).clamp(0.0, 1.0);
@@ -1731,7 +1824,7 @@ fn main() {
         };
 
         // ── Window mapping & visibility ─────────────────────────────────
-        let visible_needed = active_main || active_pill || reveal_main > 0.004 || reveal_pill > 0.004;
+        let visible_needed = active_main || active_pill || active_cmd || reveal_main > 0.004 || reveal_pill > 0.004 || reveal_command > 0.004;
 
         let mut just_mapped = false;
         if visible_needed && !shown {
@@ -1745,6 +1838,7 @@ fn main() {
         } else if !visible_needed && shown {
             ui.set_reveal_main(0.0);
             ui.set_reveal_pill(0.0);
+            ui.set_reveal_command(0.0);
             ui.set_level(0.0);
             park_offscreen(&ui);
             shown = false;
@@ -1802,11 +1896,15 @@ fn main() {
         ui.set_is_recording(rec);
         ui.set_is_processing(proc);
         ui.set_is_speaking(speak);
+        ui.set_is_command(cmd_active);
+        ui.set_command_name(cmd_name.to_uppercase().into());
+        ui.set_command_text(cmd_text.into());
         ui.set_is_audio_ready(ready);
         ui.set_target_label(target.into());
         ui.set_overlay_style(style.clone().into());
         ui.set_reveal_main(reveal_main.min(1.12));
         ui.set_reveal_pill(reveal_pill.min(1.12));
+        ui.set_reveal_command(reveal_command.min(1.12));
         ui.set_level(cur_level);
         ui.set_blink(0.5 + 0.5 * (phase * 5.5).sin());
 

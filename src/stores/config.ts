@@ -50,6 +50,8 @@ export interface UiConfig {
   auto_show_settings: boolean;
   show_notification: boolean;
   history_enabled: boolean;
+  show_command_overlay: boolean;
+  command_overlay_duration_secs: number;
 }
 
 export interface FeaturesConfig {
@@ -143,6 +145,8 @@ const defaultConfig: AppConfig = {
     auto_show_settings: true,
     show_notification: false,
     history_enabled: false,
+    show_command_overlay: true,
+    command_overlay_duration_secs: 3,
   },
   features: {
     remove_fillers: true,

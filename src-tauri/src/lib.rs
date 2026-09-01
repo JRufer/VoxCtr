@@ -357,6 +357,9 @@ pub fn run() {
             // Register Speak target callback
             services::register_speak_target(&app.handle());
 
+            // Register Command trigger target callback
+            services::register_command_trigger_target(&app.handle());
+
             // Setup watcher for hotkey permissions
             #[cfg(target_os = "linux")]
             pipeline::spawn_setup_watcher(app.handle().clone(), app_state.hotkey_health.clone());

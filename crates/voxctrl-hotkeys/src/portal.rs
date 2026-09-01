@@ -498,13 +498,22 @@ async fn run(
             new_bindings = next_reload(&rx_reload) => {
                 let Some(new_bindings) = new_bindings else { break };
                 tracing::info!("portal hotkeys: reloading {} bindings", new_bindings.len());
+                let new_groups = group_bindings(&new_bindings);
+                let same_groups = new_groups.len() == groups.len() && new_groups.iter().zip(groups.iter()).all(|(a, b)| {
+                    a.id == b.id && a.description == b.description && a.trigger == b.trigger
+                });
                 engine.reset(&tx);
                 engine.reload(new_bindings.clone());
-                groups = group_bindings(&new_bindings);
+                groups = new_groups;
                 by_shortcut = groups
                     .iter()
                     .map(|g| (g.id.clone(), g.binding_ids.clone()))
                     .collect();
+
+                if same_groups {
+                    tracing::info!("portal hotkeys: shortcut triggers unchanged; preserving active portal session");
+                    continue;
+                }
 
                 // Re-creating the portal session on reload is required because
                 // GlobalShortcuts portal sessions allow bind_shortcuts to be called only once per session.
@@ -519,13 +528,11 @@ async fn run(
                             Err(e) => {
                                 let _ = new_session.close().await;
                                 tracing::warn!("Re-binding portal shortcuts failed: {e}");
-                                health.set_backend_failed(format!("re-binding shortcuts failed: {e}"));
                             }
                         }
                     }
                     Err(e) => {
                         tracing::warn!("Failed to create new portal session for reload: {e}");
-                        health.set_backend_failed(format!("re-binding session failed: {e}"));
                     }
                 }
             }

@@ -135,11 +135,7 @@ VoxCtrl provides a clean, native settings window and overlay environment:
 
 ### 📌 Interactive Settings UI
 * **General tab**: Configure core system attributes, including the local MCP JSON-RPC server toggles, record timeouts, and Wayland/X11 AT-SPI2 text injection behaviors.
-* **Visual tab**: A premium Cyber Obsidian interface that groups all aesthetic and presentation settings. It features an interactive **Overlay Style Selector** (supporting Voice Card, Waveform, Pulse Ring, Ocean Wave, or Disabled styles), toggles for displaying heads-up HUD overlays while speaking, and controls for sending system notifications on transcription. It also lets you configure if the Settings window should open automatically at launch or start minimized in the system tray.
-* **Audio tab**: Configure device gain, input indices, and toggle dynamic streaming/VAD threshold settings.
-* **Routing tab**: Define named targets (`targets.toml`), delivery properties, and post-processors.
-* **Hotkeys tab**: Setup keybindings (`bindings.toml`) and detect subset/exact-match conflicts in real time.
-* **Voice Output tab**: Pick a TTS engine, download its models or voices, and preview them for local speech synthesis.
+* **Visual tab**: A premium Cyber Obsidian interface that groups all aesthetic and presentation settings. It features an interactive **Overlay Style Selector** (supporting Voice Card, Waveform, Pulse Ring, Ocean Wave, Mono Bars, Neon Spectrum, Retro Terminal, Analog VU, or Disabled styles), toggles for displaying heads-up HUD overlays while speaking, **Command Trigger Overlay toggles and duration sliders**, and controls for sending system notifications on transcription. It also lets you configure if the Settings window should open automatically at launch or start minimized in the system tray.
 
 ### 🎨 Heads-Up HUD Overlay Styles
 
@@ -164,6 +160,9 @@ VoxCtrl features a dynamic transparent overlay window — always-on-top and full
 
 5. **Disabled (None) ❌**
    Turns off the transparent heads-up display entirely, relying purely on tray icon changes or system bus triggers for dictation feedback.
+
+### ⚡ Command Trigger UI Overlay
+Whenever a voice command trigger is matched (e.g. *"VoxCtrl notes Help me!"*), VoxCtrl displays a temporary glassmorphism HUD overlay pill (`⚡ NOTES ▸ Help me!`) showing the target name and text payload summary. The display duration (default: 3s) and enable/disable toggles are configurable under **Settings → Visual Tab**.
 
 ### ⚙️ Window Management & Focus Raising
 * **Foreground Focus Raising**: If the settings page is already open but hidden behind other windows, clicking the **⚙ Settings** button in the native system tray menu or double-clicking the system tray icon will trigger standard `show()` and `set_focus()` commands to immediately bring the settings dashboard to the absolute foreground of the screen.
@@ -205,6 +204,7 @@ VoxCtrl includes a **Voice Command Router** target (`delivery = "command"`) that
 - **Trigger Phrase**: Listens for `"VoxCtrl"` (e.g. `"VoxCtrl"`, `"voxctrl"`, `"vox ctrl"`).
 - **Conversational Command Support**: Accepts natural lead-in phrases (e.g. *"VoxCtrl send this to my notes. I love you."*, *"VoxCtrl add this to my personal notes, help"*, or *"VoxCtrl put this in Notes: hello"*).
 - **Target Resolution**: Matches spoken target names against all configured target IDs and Labels, automatically prioritizing specific multi-word targets (e.g. `"Personal Notes"` is matched before `"Notes"`).
+- **Command UI Overlay**: Displays a temporary purple/indigo HUD overlay (`⚡ TARGET ▸ Summary`) showing the executed command target and text summary for a configurable duration (default: 3s).
 - **Fallback**: If no `"VoxCtrl"` keyword is spoken, dictation types directly into your active window as normal.
 
 ---

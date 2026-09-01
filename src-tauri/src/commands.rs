@@ -132,12 +132,13 @@ pub async fn save_config(
     }
 
     let mut guard = state.config.lock().await;
+    let stop_key_changed = guard.data.tts.stop_key != new_config.tts.stop_key;
     guard.data = new_config.clone();
     guard.save().map_err(|e| e.to_string())?;
     info!("Config saved");
 
-    // Hot-reload the stop key binding in the evdev listener
-    {
+    // Hot-reload the stop key binding in the evdev listener if tts.stop_key changed
+    if stop_key_changed {
         let dir = voxctrl_routing::config_dir();
         let mut current_bindings = voxctrl_routing::load_bindings(&dir).unwrap_or_default();
         if !new_config.tts.stop_key.is_empty() {

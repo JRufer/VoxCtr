@@ -204,6 +204,46 @@ pub fn register_speak_target(app_handle: &tauri::AppHandle) {
     }));
 }
 
+pub fn register_command_trigger_target(app_handle: &tauri::AppHandle) {
+    let state = app_handle.state::<Arc<AppState>>().inner().clone();
+    let app_handle_clone = app_handle.clone();
+    voxctrl_routing::targets::set_command_trigger_callback(std::sync::Arc::new(
+        move |command_name, text_summary| {
+            let (show_overlay, duration_secs) = if let Ok(cfg) = state.config.try_lock() {
+                (
+                    cfg.data.ui.show_command_overlay,
+                    cfg.data.ui.command_overlay_duration_secs,
+                )
+            } else {
+                (true, 3)
+            };
+
+            if show_overlay {
+                let cmd_name = command_name.to_string();
+                let summary = text_summary.to_string();
+                let _ = app_handle_clone.emit(
+                    "command-executed",
+                    serde_json::json!({
+                        "command": cmd_name,
+                        "summary": summary,
+                        "duration_secs": duration_secs,
+                    }),
+                );
+
+                let overlay_msg = serde_json::json!({
+                    "type": "command",
+                    "command": cmd_name,
+                    "summary": summary,
+                    "duration_secs": duration_secs,
+                });
+                if let Ok(json_str) = serde_json::to_string(&overlay_msg) {
+                    let _ = state.overlay_tx.send(json_str);
+                }
+            }
+        },
+    ));
+}
+
 pub fn auto_download_speech_model_if_needed(
     app: &tauri::App,
     cfg_data: &Arc<AppConfig>,
