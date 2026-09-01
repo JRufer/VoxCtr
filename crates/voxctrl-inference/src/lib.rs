@@ -132,7 +132,7 @@ impl InferenceEngine {
         let first_target_id = target_ids.first().copied().unwrap_or("default");
         let target = targets.iter().find(|t| t.id == first_target_id);
 
-        let mut merged_prompt = String::new();
+        let mut merged_prompt = String::from("VoxCtrl is a voice control assistant application. VoxCtrl commands start with VoxCtrl. ");
 
         // 1. Target's initial prompt if defined
         if let Some(target_prompt) = target.and_then(|t| t.initial_prompt.as_ref()) {

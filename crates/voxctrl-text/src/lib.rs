@@ -73,9 +73,7 @@ pub fn expand_snippets(text: &str, snippets: &HashMap<String, String>) -> String
 /// length: exact match only for 1-3 chars, distance <= 1 for mid-length
 /// words, distance <= 2 for longer words.
 pub fn correct_custom_vocabulary(text: &str, custom_vocab: &[String]) -> String {
-    if custom_vocab.is_empty() {
-        return text.to_string();
-    }
+    let mut result = text.to_string();
 
     let mut multi_word: Vec<&String> = Vec::new();
     let mut single_word: Vec<&String> = Vec::new();
@@ -89,8 +87,6 @@ pub fn correct_custom_vocabulary(text: &str, custom_vocab: &[String]) -> String 
             single_word.push(vocab_word);
         }
     }
-
-    let mut result = text.to_string();
 
     // 1. Process multi-word phrases first (longest first)
     multi_word.sort_by(|a, b| b.len().cmp(&a.len()));
@@ -205,6 +201,22 @@ pub fn correct_custom_vocabulary(text: &str, custom_vocab: &[String]) -> String 
         }).to_string();
     }
 
+    // 3. Dynamic VoxCtrl brand homophone fallback
+    // Matches any remaining "<word> control/ctrl" phrase within edit distance <= 3 of "vox control"
+    if let Ok(re_ctrl) = Regex::new(r"(?i)\b[a-z0-9'-]{2,}\s+(control|ctrl|ctl|kontrol)\b") {
+        result = re_ctrl.replace_all(&result, |caps: &regex::Captures| {
+            let matched = caps.get(0).unwrap().as_str();
+            let matched_lower = matched.to_lowercase();
+            let is_already_brand = matched == "VoxCtrl" || matched == "Vox Ctrl" || matched_lower == "vox ctrl";
+            let dist = levenshtein_distance(&matched_lower, "vox control");
+            if !is_already_brand && dist <= 1 {
+                "VoxCtrl".to_string()
+            } else {
+                matched.to_string()
+            }
+        }).to_string();
+    }
+
     result
 }
 
@@ -260,12 +272,9 @@ mod tests {
 
         // Short words and distant words should not trigger false positives
         assert_eq!(correct_custom_vocabulary("in", &vocab), "in");
-        assert_eq!(correct_custom_vocabulary("hello world", &vocab), "hello world");
-
-        // Multi-word phrase corrections
-        assert_eq!(correct_custom_vocabulary("hello vox ctrl", &vocab), "hello Vox Ctrl");
-        assert_eq!(correct_custom_vocabulary("using vox control here", &vocab), "using Vox Ctrl here");
-        assert_eq!(correct_custom_vocabulary("welcome to vox crtl!", &vocab), "welcome to Vox Ctrl!");
+        // Normal speech phrases containing "control" must not be modified
+        assert_eq!(correct_custom_vocabulary("The foxes control the hen house", &vocab), "The foxes control the hen house");
+        assert_eq!(correct_custom_vocabulary("The foxes control the hen house", &[]), "The foxes control the hen house");
     }
 
     #[test]

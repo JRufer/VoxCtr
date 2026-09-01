@@ -275,25 +275,43 @@ impl DeliveryTarget for ExecTarget {
     async fn deliver(&self, text: &str) -> DeliveryResult {
         let template = match &self.0.command {
             Some(c) => c.clone(),
-            None => return DeliveryResult::err("No command configured"),
+            None => {
+                tracing::error!(target_id = %self.0.id, "Exec target failed: No command configured");
+                return DeliveryResult::err("No command configured");
+            }
         };
         let raw_parts: Vec<&str> = template.split_whitespace().collect();
         if raw_parts.is_empty() {
+            tracing::error!(target_id = %self.0.id, "Exec target failed: Empty command");
             return DeliveryResult::err("Empty command");
         }
         let has_placeholder = template.contains("{TEXT}") || template.contains("{text}");
         let cmd_binary = raw_parts[0].replace("{TEXT}", text).replace("{text}", text);
-        let mut cmd = tokio::process::Command::new(cmd_binary);
+        let mut cmd = tokio::process::Command::new(&cmd_binary);
+        let mut substituted_args = Vec::new();
         for part in &raw_parts[1..] {
             let substituted = part.replace("{TEXT}", text).replace("{text}", text);
+            substituted_args.push(substituted.clone());
             cmd.arg(substituted);
         }
         if !has_placeholder {
+            substituted_args.push(text.to_string());
             cmd.arg(text);
         }
+        tracing::info!(
+            target_id = %self.0.id,
+            command_template = %template,
+            binary = %cmd_binary,
+            args = ?substituted_args,
+            text_payload = %text,
+            "Activating Exec command target"
+        );
         match cmd.spawn() {
             Ok(_) => DeliveryResult::ok(text.into()),
-            Err(e) => DeliveryResult::err(e.to_string()),
+            Err(e) => {
+                tracing::error!(target_id = %self.0.id, error = %e, "Exec target failed to spawn command");
+                DeliveryResult::err(e.to_string())
+            }
         }
     }
 
@@ -1240,6 +1258,26 @@ fn clean_payload(post: &str) -> String {
     text_without_punct.to_string()
 }
 
+fn levenshtein_distance(s1: &str, s2: &str) -> usize {
+    let s1_chars: Vec<char> = s1.chars().collect();
+    let s2_chars: Vec<char> = s2.chars().collect();
+    let len1 = s1_chars.len();
+    let len2 = s2_chars.len();
+    let mut dp = vec![vec![0; len2 + 1]; len1 + 1];
+    for i in 0..=len1 { dp[i][0] = i; }
+    for j in 0..=len2 { dp[0][j] = j; }
+    for i in 1..=len1 {
+        for j in 1..=len2 {
+            if s1_chars[i - 1] == s2_chars[j - 1] {
+                dp[i][j] = dp[i - 1][j - 1];
+            } else {
+                dp[i][j] = 1 + std::cmp::min(dp[i - 1][j - 1], std::cmp::min(dp[i - 1][j], dp[i][j - 1]));
+            }
+        }
+    }
+    dp[len1][len2]
+}
+
 /// Parse text for keyword "VoxCtrl" and target name/label matching.
 /// Supports both direct commands (e.g. "VoxCtrl notes Hi there") and natural,
 /// conversational phrasing (e.g. "VoxCtrl add this to my notes. What are you doing here?").
@@ -1250,16 +1288,54 @@ pub fn parse_voice_command(
     targets: &[OutputTarget],
 ) -> Option<VoiceCommandParseResult> {
     let lower_text = text.to_lowercase();
-    let triggers = ["voxctrl", "vox ctrl", "vox-ctrl"];
-
     let mut found_pos = None;
     let mut trigger_len = 0;
 
-    for trigger in &triggers {
+    // 1. Exact & standard triggers
+    let exact_triggers = ["voxctrl", "vox ctrl", "vox-ctrl", "vox control"];
+    for trigger in &exact_triggers {
         if let Some(pos) = lower_text.find(trigger) {
             if found_pos.map_or(true, |p| pos < p) {
                 found_pos = Some(pos);
                 trigger_len = trigger.len();
+            }
+        }
+    }
+
+    // 2. Dynamic pattern trigger for any "<word> control" or "<word> ctrl" phrase
+    if found_pos.is_none() {
+        let words: Vec<&str> = lower_text.split_whitespace().collect();
+        for (i, word) in words.iter().enumerate() {
+            let clean_w = word.trim_matches(|c: char| c.is_ascii_punctuation());
+            if clean_w == "control" || clean_w == "ctrl" || clean_w == "ctl" || clean_w == "kontrol" {
+                if i > 0 {
+                    let start_idx = lower_text.find(words[0]).unwrap_or(0);
+                    let ctrl_pos = lower_text.find(word).unwrap_or(0);
+                    let end_pos = ctrl_pos + word.len();
+                    found_pos = Some(start_idx);
+                    trigger_len = end_pos - start_idx;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 3. Dynamic Levenshtein fuzzy match on leading token(s)
+    if found_pos.is_none() {
+        let words: Vec<&str> = lower_text.split_whitespace().collect();
+        if !words.is_empty() {
+            for len in (1..=2.min(words.len())).rev() {
+                let candidate = words[..len].join(" ");
+                let clean_cand = candidate.trim_matches(|c: char| c.is_ascii_punctuation());
+                let dist1 = levenshtein_distance(clean_cand, "voxctrl");
+                let dist2 = levenshtein_distance(clean_cand, "vox control");
+                if dist1 <= 2 || dist2 <= 3 {
+                    if let Some(pos) = lower_text.find(clean_cand) {
+                        found_pos = Some(pos);
+                        trigger_len = clean_cand.len();
+                        break;
+                    }
+                }
             }
         }
     }

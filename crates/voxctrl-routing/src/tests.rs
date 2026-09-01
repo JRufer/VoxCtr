@@ -1679,6 +1679,27 @@ fn test_parse_voice_command_matched_target() {
     let res5 = parse_voice_command("VoxCtrl send us to my notes. I love you.", &targets).expect("should match conversational send us to my notes");
     assert_eq!(res5.matched_target_id, "notes");
     assert_eq!(res5.payload, "I love you.");
+
+    let speak_targets = vec![
+        OutputTarget {
+            id: "speak".into(),
+            label: "Speak Text Aloud (TTS)".into(),
+            delivery: DeliveryType::Speak,
+            ..OutputTarget::default_inject()
+        },
+    ];
+
+    let res6 = parse_voice_command("box control speak text", &speak_targets).expect("should match box control homophone");
+    assert_eq!(res6.matched_target_id, "speak");
+    assert_eq!(res6.payload, "text");
+
+    let res7 = parse_voice_command("Box control, speak, eat my ass.", &speak_targets).expect("should match Box control homophone with punctuation");
+    assert_eq!(res7.matched_target_id, "speak");
+    assert_eq!(res7.payload, "eat my ass.");
+
+    let res8 = parse_voice_command("Walks control speak how are you?", &speak_targets).expect("should match Walks control dynamic trigger pattern");
+    assert_eq!(res8.matched_target_id, "speak");
+    assert_eq!(res8.payload, "how are you?");
 }
 
 #[test]

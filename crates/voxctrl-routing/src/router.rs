@@ -34,10 +34,17 @@ impl OutputTargetRouter {
 
         if let Some(ref cfg) = target_config {
             if cfg.delivery == DeliveryType::Command {
+                info!(
+                    from_target = target_id,
+                    incoming_text = text,
+                    command_template = ?cfg.command,
+                    "Activating Voice Command Router target"
+                );
                 if let Some(parsed) = parse_voice_command(text, &configs_guard) {
                     info!(
                         from_target = target_id,
                         matched_target = %parsed.matched_target_id,
+                        payload = %parsed.payload,
                         "Voice command parsed and rerouted"
                     );
                     let matched_id = parsed.matched_target_id.clone();
@@ -47,6 +54,7 @@ impl OutputTargetRouter {
                 } else {
                     info!(
                         from_target = target_id,
+                        incoming_text = text,
                         "Voice command trigger not matched; falling back to direct text injection"
                     );
                     drop(configs_guard);
