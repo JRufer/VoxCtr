@@ -206,7 +206,8 @@ jobs:
           for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
                      'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
                      'libgbm.so*' 'libdrm.so*' \
-                     'libxkbcommon.so*' 'libxkbcommon-x11.so*'; do
+                     'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
+                     'libwebkit2gtk-*.so*' 'libjavascriptcoregtk-*.so*'; do
             find "$root" -name "$pat" -print -delete 2>/dev/null || true
           done
 

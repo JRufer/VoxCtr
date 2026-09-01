@@ -316,6 +316,7 @@ for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
            'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
            'libgbm.so*' 'libdrm.so*' \
            'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
+           'libwebkit2gtk-*.so*' 'libjavascriptcoregtk-*.so*' \
            'libvulkan.so*' 'libssl.so*' 'libcrypto.so*' \
            'libcanberra-gtk3.so*' 'libcanberra.so*' \
            'libcanberra-gtk-module.so' 'libcanberra-gtk3-module.so' \
