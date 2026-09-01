@@ -308,15 +308,28 @@ chmod +x "$work/in.AppImage"
 
 root="$work/squashfs-root"
 
+# Bundle WebKitGTK 4.1 helper processes (WebKitNetworkProcess, WebKitWebProcess)
+helper_dir="/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
+if [ ! -d "$helper_dir" ] && [ -d "/usr/lib/webkit2gtk-4.1" ]; then
+    helper_dir="/usr/lib/webkit2gtk-4.1"
+fi
+if [ -d "$helper_dir" ]; then
+    mkdir -p "$root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
+    cp -r "$helper_dir"/* "$root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/"
+fi
+
+if [ -f "$root/AppRun" ] && ! grep -q "WEBKIT_EXEC_PATH" "$root/AppRun"; then
+    sed -i '2i export WEBKIT_EXEC_PATH="${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"' "$root/AppRun"
+    sed -i '3i export WEBKIT_INJECTED_BUNDLE_PATH="${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/injected-bundle"' "$root/AppRun"
+fi
+
 # Strip graphics, Wayland, input libraries, and host-dependent/security libraries
-# (like libglycin, libtinysparql, libtss2, libcanberra, and local GTK modules)
 # so the AppImage falls through to the host system's native versions at runtime.
-# This matches the clean build environment of the GitHub release.
 for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
            'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
            'libgbm.so*' 'libdrm.so*' \
            'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
-           'libwebkit2gtk-*.so*' 'libjavascriptcoregtk-*.so*' \
+           'libgstreamer-*.so*' 'libgst*.so*' \
            'libvulkan.so*' 'libssl.so*' 'libcrypto.so*' \
            'libcanberra-gtk3.so*' 'libcanberra.so*' \
            'libcanberra-gtk-module.so' 'libcanberra-gtk3-module.so' \
