@@ -192,7 +192,7 @@
 </div>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .history-root {
     @apply flex flex-col h-screen w-screen bg-[var(--bg)] text-[var(--text)] overflow-hidden;

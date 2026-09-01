@@ -1161,7 +1161,7 @@
 </section>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .row {
     @apply flex gap-2 mt-2;

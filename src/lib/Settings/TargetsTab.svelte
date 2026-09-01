@@ -211,7 +211,7 @@
 {/if}
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .targets-section {
     @apply flex flex-col gap-5 pb-10;

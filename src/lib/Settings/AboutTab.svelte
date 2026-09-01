@@ -95,7 +95,7 @@
 </section>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .about-card {
     @apply flex-row! items-start gap-5;

@@ -762,7 +762,7 @@
 {/if}
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .modal-backdrop {
     @apply fixed inset-0 bg-black/60 backdrop-blur-[4px] flex items-center justify-center z-[1000];

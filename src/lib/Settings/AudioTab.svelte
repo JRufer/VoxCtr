@@ -180,7 +180,7 @@
 </section>
 
 <style>
-  @reference "tailwindcss";
+  @reference "../../app.css";
 
   .val {
     @apply text-xs text-[var(--text-muted)] min-w-[36px] text-right;
