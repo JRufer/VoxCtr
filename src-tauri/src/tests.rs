@@ -342,6 +342,7 @@ fn validation_is_enforced_before_the_backend_has_answered() {
 
 #[test]
 fn hotkey_status_reports_the_portal_as_active_and_private() {
+    let _lock = crate::test_utils::get_env_lock().lock().unwrap();
     // The state the app is built for: the compositor owns the keys and
     // VoxCtrl has no access to input devices at all.
     let health = voxctrl_hotkeys::ListenerHealth::default();
@@ -362,6 +363,7 @@ fn hotkey_status_reports_the_portal_as_active_and_private() {
 
 #[test]
 fn hotkey_status_marks_the_evdev_fallback_as_not_private() {
+    let _lock = crate::test_utils::get_env_lock().lock().unwrap();
     // It works, but every keystroke on the machine passes through VoxCtrl,
     // and the user is entitled to know that.
     let health = voxctrl_hotkeys::ListenerHealth::default();
@@ -512,6 +514,7 @@ async fn open_shortcut_settings_explains_itself_when_nothing_is_installed() {
 
 #[test]
 fn hotkey_status_asks_for_attention_when_nothing_can_deliver_shortcuts() {
+    let _lock = crate::test_utils::get_env_lock().lock().unwrap();
     let health = voxctrl_hotkeys::ListenerHealth::default();
     health.set_supported(true);
     health.set_portal_error("no such interface".to_string());
@@ -532,6 +535,7 @@ fn hotkey_status_asks_for_attention_when_nothing_can_deliver_shortcuts() {
 
 #[test]
 fn hotkey_status_does_not_flash_a_failure_during_startup() {
+    let _lock = crate::test_utils::get_env_lock().lock().unwrap();
     // The portal handshake is async. Reporting "broken" for the few hundred
     // milliseconds before it answers would pop the setup window on every
     // launch of a perfectly working install.
