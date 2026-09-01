@@ -227,6 +227,8 @@ impl TtsEngineWorker {
                         continue;
                     }
                     let sink = sink_res.unwrap();
+                    let speed = if current_config.speed <= 0.0 { 1.0 } else { current_config.speed };
+                    sink.set_speed(speed.clamp(0.5, 2.5));
 
                     {
                         let mut guard = ACTIVE_SINK.lock().unwrap();
