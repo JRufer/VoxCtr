@@ -152,6 +152,9 @@
     } else if (cfg.tts.engine === "pocket_tts") {
       engineName = "Pocket-TTS";
       voice = cfg.tts.pocket_tts.voice;
+    } else if (cfg.tts.engine === "breeze_tts_2") {
+      engineName = "Breeze-TTS-2";
+      voice = null;
     } else if (cfg.tts.engine === "inflect_micro") {
       engineName = "Inflect Micro";
       voice = null;
@@ -194,6 +197,11 @@
       if (inflectDownloading) return "Downloading the model...";
       if (!inflectReady) return "Download the model first.";
     }
+    if (cfg.tts.engine === "breeze_tts_2") {
+      if (breezeChecking) return "Checking local model files...";
+      if (breezeDownloading) return "Downloading the model...";
+      if (!breezeReady) return "Download the model first.";
+    }
     return null;
   }
 
@@ -207,6 +215,9 @@
     }
     if (cfg.tts.engine === "pocket_tts") {
       return pocketTtsChecking || pocketTtsDownloading || !pocketTtsReady;
+    }
+    if (cfg.tts.engine === "breeze_tts_2") {
+      return breezeChecking || breezeDownloading || !breezeReady;
     }
     if (cfg.tts.engine === "inflect_micro") {
       return inflectChecking || inflectDownloading || !inflectReady || !inflectAvailable;
@@ -266,6 +277,7 @@
   );
 
   const engineOptions = [
+    { value: "breeze_tts_2", label: "Breeze-TTS-2 (neural, voice design)" },
     { value: "pocket_tts", label: "Pocket-TTS (neural, voice cloning)" },
     { value: "piper", label: "Piper (neural, high quality)" },
     { value: "inflect_micro", label: "Inflect Micro (neural, 38 MB)" },
@@ -394,11 +406,59 @@
 
   function onPocketTtsTokenChanged() { markDirty(); }
 
+  // ── Breeze-TTS-2 ───────────────────────────────────────────────────────────
+
+  let breezeReady = $state(false);
+  let breezeChecking = $state(false);
+  let breezeDownloading = $state(false);
+
+  async function checkBreezeReady() {
+    breezeChecking = true;
+    try {
+      breezeReady = await invoke<boolean>("check_breeze_tts_2_ready", {
+        modelDir: cfg.tts.breeze_tts_2.model_dir,
+      });
+    } catch (e) {
+      console.error("check_breeze_tts_2_ready:", e);
+      breezeReady = false;
+    } finally {
+      breezeChecking = false;
+    }
+  }
+
+  async function downloadBreezeTts2() {
+    if (breezeDownloading) return;
+    breezeDownloading = true;
+    try {
+      const token = cfg.tts.breeze_tts_2.hf_token || cfg.tts.pocket_tts.hf_token;
+      await invoke("download_breeze_tts_2", {
+        modelDir: cfg.tts.breeze_tts_2.model_dir,
+        hfToken: token,
+      });
+      breezeReady = true;
+    } catch (e) {
+      alert(`Failed to download Breeze-TTS-2 assets: ${e}`);
+    } finally {
+      breezeDownloading = false;
+    }
+  }
+
+  function onHfTokenChanged(e: Event) {
+    const val = (e.target as HTMLInputElement).value;
+    const tokenVal = val.trim() ? val.trim() : null;
+    cfg.tts.pocket_tts.hf_token = tokenVal;
+    cfg.tts.breeze_tts_2.hf_token = tokenVal;
+    markDirty();
+  }
+
   async function onEngineChanged() {
     markDirty();
     engineSwitching = true;
     try {
-      if (cfg.tts.engine === "pocket_tts") {
+      if (cfg.tts.engine === "breeze_tts_2") {
+        breezeReady = false;
+        await checkBreezeReady();
+      } else if (cfg.tts.engine === "pocket_tts") {
         pocketTtsReady = false;
         await loadPocketTtsVoices();
         await checkPocketTtsReady();
@@ -426,6 +486,10 @@
       validateVoiceDir();
     } else {
       checkAllVoicesDownloaded();
+    }
+
+    if (cfg.tts.engine === "breeze_tts_2") {
+      checkBreezeReady();
     }
 
     if (cfg.tts.engine === "pocket_tts") {
@@ -718,6 +782,102 @@
       {/if}
     </div>
     <p class="hint">Default voice directory: <code>~/.local/share/voxctrl/piper-voices/</code></p>
+  </div>
+  {/if}
+
+  <!-- ── Breeze-TTS-2 section ───────────────────────────────────────────── -->
+  {#if cfg.tts.engine === "breeze_tts_2"}
+  <div class="field-group">
+    <h3>Breeze-TTS-2 Voice</h3>
+
+    <div class="non-commercial-warning">
+      <div class="warning-header">
+        <span class="warning-icon">⚠️</span>
+        <strong>Non-Commercial License Warning</strong>
+      </div>
+      <p class="warning-text">
+        Breeze-TTS-2 model weights are released under the <strong>BreezeBlue Research and Non-Commercial License</strong>.
+        Commercial use requires a personal or commercial license directly from the creator (RESONIA, INC.).
+      </p>
+    </div>
+
+    <label class="field col">
+      <span class="field-title">Speaker Voice Prompt (Voice Design)</span>
+      <textarea
+        bind:value={cfg.tts.breeze_tts_2.speaker_prompt}
+        onchange={markDirty}
+        placeholder="Describe the voice of the speaker in natural language..."
+        rows="2"
+        class="field-input-textarea"
+      ></textarea>
+    </label>
+    <p class="hint" style="margin-top: -4px;">
+      Natural language description used by Breeze-TTS-2 to generate the speaker's voice (e.g. <em>"A calm female voice speaking clearly with a gentle tone"</em> or <em>"A deep, confident male narrator"</em>).
+    </p>
+
+    <div class="voice-status-container">
+      {#if breezeChecking}
+        <span class="status-checking">⏳ Checking local model files...</span>
+      {:else if breezeDownloading}
+        <span class="status-downloading">⏳ Downloading Breeze-TTS-2 model weights from HuggingFace...</span>
+      {:else}
+        <div class="status-missing-wrapper">
+          <span class={breezeReady ? "status-downloaded" : "status-missing"}>
+            {breezeReady ? "✔ Model weights downloaded and ready" : "❌ Model files missing"}
+          </span>
+          <button class="btn-download" onclick={downloadBreezeTts2} disabled={breezeReady || breezeDownloading}>
+            {breezeReady ? "Downloaded" : "📥 Download"}
+          </button>
+        </div>
+      {/if}
+    </div>
+
+    <div class="field">
+      <span>HuggingFace access token</span>
+      <input
+        type="password"
+        value={cfg.tts.breeze_tts_2.hf_token || cfg.tts.pocket_tts.hf_token || ""}
+        oninput={onHfTokenChanged}
+      />
+    </div>
+    <p class="hint">
+      Breeze-TTS-2 model weights are hosted on HuggingFace. Create a token at
+      <code>huggingface.co/settings/tokens</code> and accept the license at
+      <code>huggingface.co/BreezeBlue/Breeze-TTS-2</code> before downloading. This token is shared with Pocket-TTS.
+    </p>
+
+    <label class="field">
+      <span>GPU Acceleration (CUDA)</span>
+      <input type="checkbox" bind:checked={cfg.tts.breeze_tts_2.gpu} onchange={markDirty} />
+    </label>
+    <p class="hint" style="margin-top: -6px;">Use NVIDIA CUDA GPU acceleration for fastest inference speed.</p>
+
+    <label class="field">
+      <span>Pre-warm Model on Startup</span>
+      <input type="checkbox" bind:checked={cfg.tts.breeze_tts_2.prewarm} onchange={markDirty} />
+    </label>
+    <p class="hint" style="margin-top: -6px;">Pre-loads model tensors into GPU VRAM on startup so the first speech generation is instant.</p>
+
+    <label class="field">
+      <span>Sampling Temperature ({cfg.tts.breeze_tts_2.temperature.toFixed(2)})</span>
+      <input
+        type="range" min="0.1" max="1.0" step="0.05"
+        bind:value={cfg.tts.breeze_tts_2.temperature}
+        onchange={markDirty}
+        class="range-input"
+      />
+    </label>
+    <p class="hint" style="margin-top: -6px;">Controls voice expressiveness and variation. Default is 0.70.</p>
+
+    <div class="field">
+      <span>Model directory (leave blank for default)</span>
+      <input
+        type="text"
+        bind:value={cfg.tts.breeze_tts_2.model_dir}
+        onchange={markDirty}
+      />
+    </div>
+    <p class="hint">Default directory: <code>~/.local/share/voxctrl/models/breeze-tts-2/</code></p>
   </div>
   {/if}
 
@@ -1102,6 +1262,26 @@
 
   .custom-vocab-input::placeholder {
     @apply text-[var(--text-muted)] opacity-50;
+  }
+
+  .non-commercial-warning {
+    @apply bg-amber-950/30 border border-amber-500/40 rounded-[var(--radius)] p-3 mb-2 flex flex-col gap-1.5;
+  }
+  .warning-header {
+    @apply flex items-center gap-2 text-amber-400 text-xs font-semibold;
+  }
+  .warning-icon {
+    @apply text-sm;
+  }
+  .warning-text {
+    @apply text-[12px] text-amber-200/80 leading-relaxed m-0 max-w-none;
+  }
+
+  .field-input-textarea {
+    @apply w-full bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-[var(--radius)] p-2 px-3 text-[13px] resize-y mt-1 outline-none box-border transition-all duration-200 ease-out;
+  }
+  .field-input-textarea:focus {
+    @apply border-[var(--accent2)] shadow-[0_0_0_2px_rgba(79,195,247,0.2)];
   }
 
 </style>

@@ -11,12 +11,16 @@
 //! `voxctrl-inference` (which applies the same logic to STT output) via the
 //! `voxctrl-text` crate.
 
+pub mod breeze;
 mod engine;
 mod fifo;
 pub mod inflect;
 mod piper;
 mod pocket;
 
+pub use breeze::{
+    breeze_tts_2_model_dir, download_breeze_tts_2_assets, is_breeze_tts_2_ready,
+};
 pub use engine::{
     stop_current_playback, ErrorCallback, PlaybackCallback, TtsCommand, TtsEngineHandle,
     TtsEngineWorker, Utterance,

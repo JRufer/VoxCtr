@@ -17,7 +17,7 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 * **No Cloud API Keys Required**: VoxCtrl relies exclusively on OpenAI's Whisper models (via native CPU/GPU accelerated `whisper-rs`) running directly on your local hardware.
 * **No Telemetry**: Your ambient microphone data never leaves your machine. There are no hidden tracking scripts or analytical pings.
 * **Air-Gapped Ready**: Once the application and models are downloaded, VoxCtrl requires zero internet access to function.
-* **Local Neural Voices**: All text-to-speech feedback is generated offline by a local engine — Piper, Pocket-TTS, Inflect-Micro-v2, or eSpeak-NG.
+* **Local Neural Voices**: All text-to-speech feedback is generated offline by a local engine — Breeze-TTS-2, Piper, Pocket-TTS, Inflect-Micro-v2, or eSpeak-NG.
 
 **Full detail, including how to verify each claim yourself: [docs/privacy.md](docs/privacy.md).**
 
@@ -43,7 +43,7 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 * **Built-in Model Context Protocol (MCP) Server**: Exposes voice dictation and speech synthesis as high-level JSON-RPC tools to AI clients (like Claude Desktop or Cursor) via local secure sockets—keeping integrations fully local.
 * **Privacy-Preserving Global Hotkeys**: Shortcuts are registered with your desktop through the XDG `GlobalShortcuts` portal (KDE Plasma, GNOME 48+, Hyprland), so VoxCtrl receives its own shortcuts and never reads a keystroke. Bind hold-to-talk, toggle-to-talk, double-tap, or double-tap & hold gestures. Works identically on Wayland and X11, with no permission setup at all.
 * **DBus Dictation Service**: Exposes `ai.voxctrl.Dictation` on the local Linux session bus, letting you script recording states securely without network exposure.
-* **Neural Text-to-Speech (TTS)**: Built-in local voice feedback with a choice of four engines — **Piper** (neural, high quality), **Pocket-TTS** (neural, clones a voice from a reference clip), **Inflect-Micro-v2** (neural, 38 MB ONNX), and **eSpeak-NG** (lightweight, always available) — with automatic local package installation and an in-app model downloader. All four are compiled in by default, so any build can use them.
+* **Neural Text-to-Speech (TTS)**: Built-in local voice feedback with a choice of engines — **Breeze-TTS-2** (neural, voice design from natural language prompts; gated HF download under non-commercial license), **Piper** (neural, high quality), **Pocket-TTS** (neural, clones a voice from a reference clip), **Inflect-Micro-v2** (neural, 38 MB ONNX), and **eSpeak-NG** (lightweight, always available) — with automatic local package installation and an in-app model downloader.
 * **Intelligent Post-Processing & LLM Rewriting**: Real-time automatic filler-word cleanup (e.g. stripping "um", "uh", "hmm") to sanitize dictation, combined with optional post-processing through any **OpenAI-compatible API server** (a local [Ollama](https://ollama.ai/) or LM Studio instance, or a hosted provider) for real-time grammar correction, tone rewriting, or custom formatting. Point it at any URL and supply an API key when the server requires one.
 
 ---

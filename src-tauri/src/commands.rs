@@ -405,6 +405,18 @@ pub async fn download_voice(voice_name: String, voice_dir: String) -> Result<(),
 }
 
 #[tauri::command]
+pub async fn check_breeze_tts_2_ready(model_dir: String) -> Result<bool, String> {
+    Ok(voxctrl_tts::is_breeze_tts_2_ready(&model_dir))
+}
+
+#[tauri::command]
+pub async fn download_breeze_tts_2(model_dir: String, hf_token: Option<String>) -> Result<(), String> {
+    voxctrl_tts::download_breeze_tts_2_assets(&model_dir, hf_token)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn check_pocket_tts_ready(voice: String, voice_dir: String) -> Result<bool, String> {
     Ok(voxctrl_tts::is_pocket_tts_ready(&voice, &voice_dir))
 }

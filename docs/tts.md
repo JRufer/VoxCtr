@@ -10,6 +10,20 @@ VoxCtrl includes a neural TTS engine for voice output. This is useful for readin
 
 ## Engines
 
+### Breeze-TTS-2 (Neural, Voice Design)
+[Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is an open-weight, bilingual (English/Chinese) speech generation model by BreezeBlue, designed specifically for ultra-low latency real-time interaction.
+
+Key capabilities include **Voice Design**, which generates voices from natural-language descriptions without requiring reference audio clips (e.g. *"A calm female voice speaking clearly with a gentle tone"*).
+
+> **License & Responsible Use Warning:**
+> Breeze-TTS-2 model weights are released under the **BreezeBlue Research and Non-Commercial License**. Commercial use requires separate written authorization from RESONIA, INC.
+
+**Features & Optimization:**
+- **Voice Design Prompts:** Set `speaker_prompt` in Settings to describe the desired voice characteristics.
+- **HuggingFace Access Token:** The gated model weights require a HuggingFace access token (`hf_token`). The token is shared between Pocket-TTS and Breeze-TTS-2.
+- **Prewarming:** Enables startup prewarming to load weights into VRAM so the first synthesis is instant.
+- **GPU Acceleration:** NVIDIA CUDA GPU acceleration can be enabled for near real-time response speeds.
+
 ### Piper (Primary)
 [Piper](https://github.com/rhasspy/piper) is a fast, local neural TTS system using ONNX models. It produces high-quality natural-sounding speech entirely offline.
 

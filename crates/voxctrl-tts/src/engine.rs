@@ -12,6 +12,7 @@ use tracing::{debug, info, warn};
 use voxctrl_config::{TtsConfig, TtsEngine};
 use voxctrl_text::{correct_custom_vocabulary, expand_snippets};
 
+use crate::breeze::{speak_breeze_tts_2, BreezeModelSlot};
 use crate::inflect::speak_inflect_micro;
 use crate::piper::{get_voice_path, piper_binary, sample_rate_for_voice};
 use crate::pocket::speak_pocket_tts;
@@ -121,6 +122,7 @@ impl TtsEngineWorker {
         let prewarm = match config.engine {
             TtsEngine::PocketTts => config.pocket_tts.prewarm,
             TtsEngine::InflectMicro => config.inflect_micro.prewarm,
+            TtsEngine::BreezeTts2 => config.breeze_tts_2.prewarm,
             _ => false,
         };
         if prewarm {
@@ -158,6 +160,8 @@ impl TtsEngineWorker {
         let mut pocket_tts_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
         // Inflect-Micro-v2 ONNX sessions, cached for the same lifetime.
         let mut inflect_model: InflectModelSlot = None;
+        // Breeze-TTS-2 session, cached for the same lifetime.
+        let mut breeze_tts_2_model: BreezeModelSlot = None;
 
         // Persistent Rodio Output Stream - kept alive for the lifetime of this thread!
         let mut audio_context: Option<(rodio::OutputStream, rodio::OutputStreamHandle, Arc<rodio::Sink>)> = None;
@@ -236,6 +240,15 @@ impl TtsEngineWorker {
                             &self.config,
                             &utterance,
                             &mut inflect_model,
+                            &self.on_playback_start,
+                            &sink,
+                            &self.generation,
+                            generation,
+                        ),
+                        TtsEngine::BreezeTts2 => speak_breeze_tts_2(
+                            &self.config,
+                            &utterance,
+                            &mut breeze_tts_2_model,
                             &self.on_playback_start,
                             &sink,
                             &self.generation,

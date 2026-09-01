@@ -232,15 +232,29 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Enable TTS subsystem |
-| `engine` | string | `"piper"` | Synthesis engine: `"piper"`, `"pocket_tts"`, `"inflect_micro"`, or `"espeak"` |
+| `engine` | string | `"piper"` | Synthesis engine: `"breeze_tts_2"`, `"piper"`, `"pocket_tts"`, `"inflect_micro"`, or `"espeak"` |
 | `voice` | string | `"en-us-lessac-medium"` | Active Piper voice name (hyphen-delimited, e.g. `"en-us-ryan-high"`) |
 | `voice_dir` | string | `""` | Directory for Piper voice files; empty = `~/.local/share/voxctrl/piper-voices/`. Supports `~` expansion. |
 | `stop_key` | string[] | `["KEY_ESCAPE"]` | Keys that cancel current TTS playback |
 | `response_overlay` | bool | `true` | Show overlay indicator while TTS is speaking |
 | `speed` | float | `1.0` | Speech synthesis speed multiplier (0.5 – 2.0); not used by Pocket-TTS |
 | `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Piper |
+| `breeze_tts_2` | object | | Breeze-TTS-2 engine sub-configuration (see below) |
 | `pocket_tts` | object | | Pocket-TTS engine sub-configuration (see below) |
 | `inflect_micro` | object | | Inflect-Micro-v2 engine sub-configuration (see below) |
+
+**`breeze_tts_2` sub-object:**
+
+[Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is a bilingual speech generation model with natural-language voice design speaker prompts. The model weights are gated on HuggingFace under the **BreezeBlue Research and Non-Commercial License** — supply your access token via `hf_token` (shared with Pocket-TTS).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `speaker_prompt` | string | `"A calm and clear female voice speaking at a natural pace"` | Natural-language prompt describing the desired speaker voice for Voice Design |
+| `model_dir` | string | `""` | Directory holding model weights & tokenizer; empty = `~/.local/share/voxctrl/models/breeze-tts-2/` |
+| `hf_token` | string or null | `null` | HuggingFace access token used to download gated model weights (shared with Pocket-TTS) |
+| `prewarm` | bool | `false` | Pre-warm model weights and tensors on startup so first speech is instantaneous |
+| `gpu` | bool | `false` | Enable CUDA GPU acceleration for maximum performance |
+| `temperature` | float | `0.7` | Sampling temperature controlling voice expressiveness (0.1 – 1.0) |
 
 **`pocket_tts` sub-object:**
 
