@@ -302,6 +302,7 @@ pub enum TtsEngine {
     Espeak,
     PocketTts,
     InflectMicro,
+    #[serde(rename = "breeze_tts_2", alias = "breeze_tts2")]
     BreezeTts2,
 }
 
@@ -920,6 +921,19 @@ mod tests {
 
         let re_read_content = std::fs::read_to_string(&config_file_path).unwrap();
         assert!(re_read_content.contains(r#""timeout_secs": 30"#));
+    }
+
+    #[test]
+    fn test_breeze_tts_2_serde() {
+        let engine = TtsEngine::BreezeTts2;
+        let json = serde_json::to_string(&engine).unwrap();
+        assert_eq!(json, r#""breeze_tts_2""#);
+
+        let parsed1: TtsEngine = serde_json::from_str(r#""breeze_tts_2""#).unwrap();
+        assert_eq!(parsed1, TtsEngine::BreezeTts2);
+
+        let parsed2: TtsEngine = serde_json::from_str(r#""breeze_tts2""#).unwrap();
+        assert_eq!(parsed2, TtsEngine::BreezeTts2);
     }
 }
 
