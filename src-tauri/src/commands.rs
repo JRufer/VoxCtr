@@ -257,7 +257,7 @@ pub async fn save_bindings(
     info!("Bindings saved");
     
     // Hot reload the bindings in the active listener threads, always re-injecting the stop key.
-    let mut all_bindings = bindings;
+    let mut all_bindings = bindings.clone();
     {
         let cfg_guard = state.config.lock().await;
         if !cfg_guard.data.tts.stop_key.is_empty() {
@@ -289,6 +289,18 @@ pub async fn save_bindings(
         }
     }
     
+    // If running on Linux Mint desktop, keep native custom shortcut settings in sync.
+    if crate::mint_shortcuts::is_mint_desktop() {
+        if let Some(primary_binding) = bindings.iter().find(|b| !b.disabled && !b.keys.is_empty()) {
+            if let Ok(portal_accel) = voxctrl_hotkeys::trigger::accelerator(&primary_binding.keys) {
+                let gtk_accel = crate::mint_shortcuts::convert_to_gtk_accelerator(&portal_accel);
+                if let Err(e) = crate::mint_shortcuts::register_mint_shortcut(Some(&gtk_accel)) {
+                    tracing::warn!("Failed to sync Linux Mint native shortcut settings: {e}");
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 

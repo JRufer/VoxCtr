@@ -12,6 +12,7 @@ venv/
 AppDir/
 .AppDir/
 *.AppImage
+*.appimage
 appimagetool
 AppRun
 *.zsync

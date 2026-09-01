@@ -244,9 +244,38 @@ pub fn register_mint_shortcut(preferred_binding: Option<&str>) -> Result<String,
     Ok(format!("Registered shortcut {} in Linux Mint System Settings", binding))
 }
 
+/// Convert an XDG portal accelerator string (e.g. "CTRL+ALT+space") into GTK accelerator format (e.g. "<Primary><Alt>space").
+pub fn convert_to_gtk_accelerator(portal_accel: &str) -> String {
+    let tokens: Vec<&str> = portal_accel.split('+').collect();
+    if tokens.is_empty() {
+        return portal_accel.to_string();
+    }
+    let key = tokens.last().unwrap_or(&"");
+    let mut result = String::new();
+    for &m in &tokens[..tokens.len() - 1] {
+        match m {
+            "CTRL" => result.push_str("<Primary>"),
+            "ALT" => result.push_str("<Alt>"),
+            "SHIFT" => result.push_str("<Shift>"),
+            "LOGO" => result.push_str("<Super>"),
+            _ => {}
+        }
+    }
+    result.push_str(key);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_convert_to_gtk_accelerator() {
+        assert_eq!(convert_to_gtk_accelerator("CTRL+ALT+space"), "<Primary><Alt>space");
+        assert_eq!(convert_to_gtk_accelerator("LOGO+d"), "<Super>d");
+        assert_eq!(convert_to_gtk_accelerator("CTRL+SHIFT+Return"), "<Primary><Shift>Return");
+        assert_eq!(convert_to_gtk_accelerator("space"), "space");
+    }
 
     #[test]
     fn test_parse_custom_keybindings_list() {

@@ -257,9 +257,9 @@ async fn bind_groups(
 /// them. Pruning deleted shortcuts and syncing descriptions ensures that KDE's shortcut
 /// settings stay in sync with VoxCtrl's configured bindings, labels, and names.
 async fn sync_kde_shortcuts(groups: &[ShortcutGroup]) {
-    let group_descriptions: std::collections::HashMap<&str, &str> = groups
+    let group_details: std::collections::HashMap<&str, (&str, Option<&str>)> = groups
         .iter()
-        .map(|g| (g.id.as_str(), g.description.as_str()))
+        .map(|g| (g.id.as_str(), (g.description.as_str(), g.trigger.as_deref())))
         .collect();
 
     // 1. Unregister deleted shortcuts over D-Bus from KGlobalAccel
@@ -291,7 +291,7 @@ async fn sync_kde_shortcuts(groups: &[ShortcutGroup]) {
                 for action in actions {
                     if action.len() >= 2 {
                         let shortcut_id = &action[1];
-                        let is_stale = !group_descriptions.contains_key(shortcut_id.as_str());
+                        let is_stale = !group_details.contains_key(shortcut_id.as_str());
 
                         if is_stale {
                             let unregister_res: Result<bool, zbus::Error> = proxy
@@ -321,10 +321,12 @@ async fn sync_kde_shortcuts(groups: &[ShortcutGroup]) {
     }
 
     // 2. Synchronize descriptions in ~/.config/kglobalshortcutsrc
-    update_kglobalshortcutsrc(&group_descriptions).await;
+    update_kglobalshortcutsrc(&group_details).await;
 }
 
-async fn update_kglobalshortcutsrc(group_descriptions: &std::collections::HashMap<&str, &str>) {
+async fn update_kglobalshortcutsrc(
+    group_details: &std::collections::HashMap<&str, (&str, Option<&str>)>,
+) {
     let home = match std::env::var("HOME") {
         Ok(h) => std::path::PathBuf::from(h),
         Err(_) => return,
@@ -365,15 +367,32 @@ async fn update_kglobalshortcutsrc(group_descriptions: &std::collections::HashMa
                     new_lines.push(line.to_string());
                     continue;
                 }
-                if let Some(expected_desc) = group_descriptions.get(key) {
+                if let Some(&(expected_desc, trigger_opt)) = group_details.get(key) {
+                    let default_key = trigger_opt.unwrap_or("none");
                     let parts: Vec<&str> = val.split(',').collect();
                     if parts.len() >= 3 {
-                        let cur_key = parts[0];
-                        let def_key = parts[1];
+                        let cur_key = if parts[0] == "none" || parts[0].is_empty() {
+                            default_key
+                        } else {
+                            parts[0]
+                        };
+                        let def_key = if parts[1] == "none" || parts[1].is_empty() {
+                            default_key
+                        } else {
+                            parts[1]
+                        };
                         new_lines.push(format!("{key}={cur_key},{def_key},{expected_desc}"));
                     } else if parts.len() == 2 {
-                        let cur_key = parts[0];
-                        let def_key = parts[1];
+                        let cur_key = if parts[0] == "none" || parts[0].is_empty() {
+                            default_key
+                        } else {
+                            parts[0]
+                        };
+                        let def_key = if parts[1] == "none" || parts[1].is_empty() {
+                            default_key
+                        } else {
+                            parts[1]
+                        };
                         new_lines.push(format!("{key}={cur_key},{def_key},{expected_desc}"));
                     } else {
                         new_lines.push(format!("{key}={val},{expected_desc}"));
@@ -419,7 +438,7 @@ fn describe(groups: &[ShortcutGroup], shortcuts: &[Shortcut]) -> Vec<BoundShortc
 #[allow(clippy::too_many_arguments)]
 async fn run(
     portal: GlobalShortcuts,
-    session: Session<GlobalShortcuts>,
+    mut session: Session<GlobalShortcuts>,
     bindings: Vec<HotkeyBinding>,
     mut groups: Vec<ShortcutGroup>,
     tx: GestureSender,
@@ -486,11 +505,27 @@ async fn run(
                     .iter()
                     .map(|g| (g.id.clone(), g.binding_ids.clone()))
                     .collect();
-                match bind_groups(&portal, &session, &groups).await {
-                    Ok(bound) => health.set_bound_shortcuts(bound),
+
+                // Re-creating the portal session on reload is required because
+                // GlobalShortcuts portal sessions allow bind_shortcuts to be called only once per session.
+                match portal.create_session(Default::default()).await {
+                    Ok(new_session) => {
+                        match bind_groups(&portal, &new_session, &groups).await {
+                            Ok(bound) => {
+                                let _ = session.close().await;
+                                session = new_session;
+                                health.set_bound_shortcuts(bound);
+                            }
+                            Err(e) => {
+                                let _ = new_session.close().await;
+                                tracing::warn!("Re-binding portal shortcuts failed: {e}");
+                                health.set_backend_failed(format!("re-binding shortcuts failed: {e}"));
+                            }
+                        }
+                    }
                     Err(e) => {
-                        tracing::warn!("Re-binding portal shortcuts failed: {e}");
-                        health.set_backend_failed(format!("re-binding shortcuts failed: {e}"));
+                        tracing::warn!("Failed to create new portal session for reload: {e}");
+                        health.set_backend_failed(format!("re-binding session failed: {e}"));
                     }
                 }
             }
