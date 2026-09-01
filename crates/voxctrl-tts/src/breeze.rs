@@ -84,6 +84,34 @@ pub async fn download_breeze_tts_2_assets(model_dir: &str, hf_token: Option<Stri
 /// Cached model session slot for Breeze-TTS-2 worker thread
 pub type BreezeModelSlot = Option<pocket_tts::TTSModel>;
 
+fn split_text_clauses(text: &str, max_words_per_clause: usize) -> Vec<String> {
+    let mut clauses = Vec::new();
+    for paragraph in text.split(&['\n', '\r'][..]) {
+        let trimmed = paragraph.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let words: Vec<&str> = trimmed.split_whitespace().collect();
+        let mut current_chunk = Vec::new();
+
+        for word in words {
+            current_chunk.push(word);
+            let has_punct = word.ends_with('.') || word.ends_with(',') || word.ends_with(';') || word.ends_with(':') || word.ends_with('!') || word.ends_with('?');
+            if current_chunk.len() >= max_words_per_clause || has_punct {
+                clauses.push(current_chunk.join(" "));
+                current_chunk.clear();
+            }
+        }
+        if !current_chunk.is_empty() {
+            clauses.push(current_chunk.join(" "));
+        }
+    }
+    if clauses.is_empty() && !text.trim().is_empty() {
+        clauses.push(text.trim().to_string());
+    }
+    clauses
+}
+
 /// Called from TtsEngineWorker::run when config.engine == TtsEngine::BreezeTts2
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn speak_breeze_tts_2(
@@ -164,29 +192,40 @@ pub(crate) fn speak_breeze_tts_2(
         cfg.speaker_prompt, config.speed
     );
 
+    let clauses = split_text_clauses(&u.text, 8);
     let mut callback_fired = false;
-    for chunk in tts_model.generate_stream(&u.text, &voice_state) {
+
+    for clause in clauses {
         if generation_counter.load(std::sync::atomic::Ordering::SeqCst) != generation {
             break;
         }
-        let chunk = chunk.context("breeze generate (stream)")?;
-        let chunk = chunk.squeeze(0).context("squeeze breeze audio chunk")?;
-        let bytes = pocket_tts::audio::pcm_i16_le_bytes(&chunk).context("encode breeze audio chunk")?;
 
-        if !callback_fired {
-            callback_fired = true;
-            if let Some(ref cb) = on_playback_start {
-                cb();
+        for chunk in tts_model.generate_stream(&clause, voice_state) {
+            if generation_counter.load(std::sync::atomic::Ordering::SeqCst) != generation {
+                break;
+            }
+            let chunk = chunk.context("breeze generate (stream)")?;
+            let chunk = chunk.squeeze(0).context("squeeze breeze audio chunk")?;
+            let bytes = pocket_tts::audio::pcm_i16_le_bytes(&chunk).context("encode breeze audio chunk")?;
+
+            let samples: Vec<i16> = bytes
+                .chunks_exact(2)
+                .map(|b| i16::from_le_bytes([b[0], b[1]]))
+                .collect();
+
+            if !samples.is_empty() {
+                sink.append(rodio::buffer::SamplesBuffer::new(1, BREEZE_TTS_2_SAMPLE_RATE, samples));
+
+                if !callback_fired {
+                    callback_fired = true;
+                    sink.play();
+                    if let Some(ref cb) = on_playback_start {
+                        cb();
+                    }
+                }
             }
         }
-
-        let samples: Vec<i16> = bytes
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]))
-            .collect();
-        sink.append(rodio::buffer::SamplesBuffer::new(1, BREEZE_TTS_2_SAMPLE_RATE, samples));
     }
-    sink.play();
     Ok(())
 }
 
