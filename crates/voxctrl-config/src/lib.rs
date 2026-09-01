@@ -487,7 +487,9 @@ impl Default for TtsConfig {
             breeze_tts_2: BreezeTts2Config::default(),
             snippets: {
                 let mut map = std::collections::HashMap::new();
-                map.insert("VoxCtrl".into(), "Vox Control".into());
+                map.insert("VoxCtrl".into(), "Voks Con-trol".into());
+                map.insert("voxctrl".into(), "Voks Con-trol".into());
+                map.insert("Vox Control".into(), "Voks Con-trol".into());
                 map
             },
         }

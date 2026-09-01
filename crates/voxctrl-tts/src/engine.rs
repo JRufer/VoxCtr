@@ -202,9 +202,15 @@ impl TtsEngineWorker {
                     let is_prewarm = utterance.source_label.as_deref() == Some("prewarm");
 
                     if !is_prewarm {
-                        if !current_config.snippets.is_empty() {
-                            utterance.text = expand_snippets(&utterance.text, &current_config.snippets);
-                        }
+                        let mut snips = current_config.snippets.clone();
+                        // Guarantee explicit subword phonetic boundaries so Kyutai models (Pocket-TTS & Breeze-TTS-2)
+                        // never omit the 'Con' syllable or slur into 'crol'.
+                        snips.entry("VoxCtrl".to_string()).or_insert_with(|| "Voks Con-trol".to_string());
+                        snips.entry("voxctrl".to_string()).or_insert_with(|| "Voks Con-trol".to_string());
+                        snips.entry("Vox Control".to_string()).or_insert_with(|| "Voks Con-trol".to_string());
+                        snips.entry("vox control".to_string()).or_insert_with(|| "Voks Con-trol".to_string());
+
+                        utterance.text = expand_snippets(&utterance.text, &snips);
                         if !self.custom_vocabulary.is_empty() {
                             utterance.text = correct_custom_vocabulary(&utterance.text, &self.custom_vocabulary);
                         }
