@@ -40,6 +40,7 @@ pub enum TtsCommand {
         utterance: Utterance,
         generation: u32,
     },
+    UpdateConfig(TtsConfig),
     Shutdown,
 }
 
@@ -83,6 +84,10 @@ impl TtsEngineHandle {
     pub fn stop(&self) {
         self.generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         stop_current_playback();
+    }
+
+    pub fn update_config(&self, config: TtsConfig) {
+        let _ = self.tx.send(TtsCommand::UpdateConfig(config));
     }
 
     pub fn shutdown(&self) {
@@ -155,6 +160,8 @@ impl TtsEngineWorker {
 
     fn run(self) {
         info!("TTS engine started (engine={:?})", self.config.engine);
+        let mut current_config = self.config.clone();
+
         // pocket-tts model + per-voice cloned voice state, cached for the lifetime of this worker thread.
         let mut pocket_tts_model: Option<pocket_tts::TTSModel> = None;
         let mut pocket_tts_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
@@ -181,6 +188,10 @@ impl TtsEngineWorker {
 
         while let Ok(cmd) = self.rx.recv() {
             match cmd {
+                TtsCommand::UpdateConfig(new_cfg) => {
+                    info!("TTS worker config dynamically updated (engine={:?})", new_cfg.engine);
+                    current_config = new_cfg;
+                }
                 TtsCommand::Play { mut utterance, generation } => {
                     let current_gen = self.generation.load(std::sync::atomic::Ordering::SeqCst);
                     if generation < current_gen {
@@ -191,8 +202,8 @@ impl TtsEngineWorker {
                     let is_prewarm = utterance.source_label.as_deref() == Some("prewarm");
 
                     if !is_prewarm {
-                        if !self.config.snippets.is_empty() {
-                            utterance.text = expand_snippets(&utterance.text, &self.config.snippets);
+                        if !current_config.snippets.is_empty() {
+                            utterance.text = expand_snippets(&utterance.text, &current_config.snippets);
                         }
                         if !self.custom_vocabulary.is_empty() {
                             utterance.text = correct_custom_vocabulary(&utterance.text, &self.custom_vocabulary);
@@ -224,11 +235,11 @@ impl TtsEngineWorker {
                     // Runtime can panic during session creation when its shared
                     // library cannot be resolved, so this path is reachable.
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        match self.config.engine {
+                        match current_config.engine {
                         TtsEngine::Piper => self.speak_piper(&utterance, &sink),
                         TtsEngine::Espeak => self.speak_espeak(&utterance),
                         TtsEngine::PocketTts => speak_pocket_tts(
-                            &self.config,
+                            &current_config,
                             &utterance,
                             &mut pocket_tts_model,
                             &mut pocket_tts_voice_states,
@@ -238,7 +249,7 @@ impl TtsEngineWorker {
                             generation,
                         ),
                         TtsEngine::InflectMicro => speak_inflect_micro(
-                            &self.config,
+                            &current_config,
                             &utterance,
                             &mut inflect_model,
                             &self.on_playback_start,
@@ -247,7 +258,7 @@ impl TtsEngineWorker {
                             generation,
                         ),
                         TtsEngine::BreezeTts2 => speak_breeze_tts_2(
-                            &self.config,
+                            &current_config,
                             &utterance,
                             &mut breeze_tts_2_model,
                             &mut breeze_tts_2_voice_states,

@@ -84,32 +84,12 @@ pub async fn download_breeze_tts_2_assets(model_dir: &str, hf_token: Option<Stri
 /// Cached model session slot for Breeze-TTS-2 worker thread
 pub type BreezeModelSlot = Option<pocket_tts::TTSModel>;
 
-fn split_text_clauses(text: &str, max_words_per_clause: usize) -> Vec<String> {
-    let mut clauses = Vec::new();
-    for paragraph in text.split(&['\n', '\r'][..]) {
-        let trimmed = paragraph.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let words: Vec<&str> = trimmed.split_whitespace().collect();
-        let mut current_chunk = Vec::new();
-
-        for word in words {
-            current_chunk.push(word);
-            let has_punct = word.ends_with('.') || word.ends_with(',') || word.ends_with(';') || word.ends_with(':') || word.ends_with('!') || word.ends_with('?');
-            if current_chunk.len() >= max_words_per_clause || has_punct {
-                clauses.push(current_chunk.join(" "));
-                current_chunk.clear();
-            }
-        }
-        if !current_chunk.is_empty() {
-            clauses.push(current_chunk.join(" "));
-        }
-    }
-    if clauses.is_empty() && !text.trim().is_empty() {
-        clauses.push(text.trim().to_string());
-    }
-    clauses
+fn prompt_contains_word(prompt_lower: &str, target_words: &[&str]) -> bool {
+    let words: Vec<&str> = prompt_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    target_words.iter().any(|tw| words.contains(tw))
 }
 
 /// Called from TtsEngineWorker::run when config.engine == TtsEngine::BreezeTts2
@@ -157,18 +137,60 @@ pub(crate) fn speak_breeze_tts_2(
 
     // Map natural language speaker_prompt (Voice Design) to neural voice reference clip
     let prompt_lower = cfg.speaker_prompt.to_lowercase();
-    let ref_clip = if prompt_lower.contains("male") || prompt_lower.contains("man") || prompt_lower.contains("deep") {
-        if prompt_lower.contains("bold") || prompt_lower.contains("strong") {
+    let prompt_trim = cfg.speaker_prompt.trim();
+
+    let female_keywords = [
+        "female", "woman", "women", "girl", "lady", "she", "her", "alba", "anna", "vera", 
+        "high", "soft", "gentle", "sweet", "cute", "bright", "cheerful", "calm", "smooth", 
+        "friendly", "young", "female1", "female2"
+    ];
+    let male_keywords = [
+        "male", "man", "men", "guy", "boy", "he", "him", "his", "deep", "baritone", "bass", 
+        "bold", "narrator", "radio", "announcer", "strong", "charles", "michael", "heavy", 
+        "rough", "old", "hero", "male1", "male2"
+    ];
+
+    let is_female = prompt_contains_word(&prompt_lower, &female_keywords)
+        || prompt_lower.contains("female")
+        || prompt_lower.contains("woman")
+        || prompt_lower.contains("girl")
+        || prompt_lower.contains("lady")
+        || prompt_lower.contains("high")
+        || prompt_lower.contains("soft")
+        || prompt_lower.contains("gentle")
+        || prompt_lower.contains("sweet");
+
+    let is_male = !is_female && (
+        prompt_contains_word(&prompt_lower, &male_keywords)
+        || prompt_lower.contains("male")
+        || prompt_lower.contains("man")
+        || prompt_lower.contains("deep")
+        || prompt_lower.contains("narrator")
+        || prompt_lower.contains("baritone")
+        || prompt_lower.contains("bass")
+    );
+
+    let ref_clip = if prompt_trim.starts_with("hf://") || prompt_trim.ends_with(".wav") || prompt_trim.contains('/') {
+        prompt_trim
+    } else if is_female {
+        if prompt_lower.contains("warm") || prompt_lower.contains("expressive") || prompt_lower.contains("soft") || prompt_lower.contains("gentle") || prompt_lower.contains("sweet") || prompt_lower.contains("vera") {
+            "hf://kyutai/tts-voices/vctk/p229_023_enhanced.wav"
+        } else if prompt_lower.contains("alba") {
+            "hf://kyutai/tts-voices/alba-mackenna/casual.wav"
+        } else {
+            // Default female: high, clear, natural female voice (Anna)
+            "hf://kyutai/tts-voices/vctk/p228_023_enhanced.wav"
+        }
+    } else if is_male {
+        if prompt_lower.contains("bold") || prompt_lower.contains("strong") || prompt_lower.contains("announcer") || prompt_lower.contains("bass") || prompt_lower.contains("michael") {
             "hf://kyutai/tts-voices/vctk/p360_023_enhanced.wav"
         } else {
+            // Default male: standard male voice (Charles)
             "hf://kyutai/tts-voices/vctk/p254_023_enhanced.wav"
         }
-    } else if prompt_lower.contains("anna") {
-        "hf://kyutai/tts-voices/vctk/p228_023_enhanced.wav"
-    } else if prompt_lower.contains("vera") {
-        "hf://kyutai/tts-voices/vctk/p229_023_enhanced.wav"
     } else {
-        "hf://kyutai/tts-voices/alba-mackenna/casual.wav"
+        // Default when no gender specified: clear female voice (Anna)
+        "hf://kyutai/tts-voices/vctk/p228_023_enhanced.wav"
     };
 
     if !voice_states.contains_key(ref_clip) {
@@ -192,36 +214,28 @@ pub(crate) fn speak_breeze_tts_2(
         cfg.speaker_prompt, config.speed
     );
 
-    let clauses = split_text_clauses(&u.text, 8);
     let mut callback_fired = false;
-
-    for clause in clauses {
+    for chunk in tts_model.generate_stream(&u.text, voice_state) {
         if generation_counter.load(std::sync::atomic::Ordering::SeqCst) != generation {
             break;
         }
+        let chunk = chunk.context("breeze generate (stream)")?;
+        let chunk = chunk.squeeze(0).context("squeeze breeze audio chunk")?;
+        let bytes = pocket_tts::audio::pcm_i16_le_bytes(&chunk).context("encode breeze audio chunk")?;
 
-        for chunk in tts_model.generate_stream(&clause, voice_state) {
-            if generation_counter.load(std::sync::atomic::Ordering::SeqCst) != generation {
-                break;
-            }
-            let chunk = chunk.context("breeze generate (stream)")?;
-            let chunk = chunk.squeeze(0).context("squeeze breeze audio chunk")?;
-            let bytes = pocket_tts::audio::pcm_i16_le_bytes(&chunk).context("encode breeze audio chunk")?;
+        let samples: Vec<i16> = bytes
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
 
-            let samples: Vec<i16> = bytes
-                .chunks_exact(2)
-                .map(|b| i16::from_le_bytes([b[0], b[1]]))
-                .collect();
+        if !samples.is_empty() {
+            sink.append(rodio::buffer::SamplesBuffer::new(1, BREEZE_TTS_2_SAMPLE_RATE, samples));
 
-            if !samples.is_empty() {
-                sink.append(rodio::buffer::SamplesBuffer::new(1, BREEZE_TTS_2_SAMPLE_RATE, samples));
-
-                if !callback_fired {
-                    callback_fired = true;
-                    sink.play();
-                    if let Some(ref cb) = on_playback_start {
-                        cb();
-                    }
+            if !callback_fired {
+                callback_fired = true;
+                sink.play();
+                if let Some(ref cb) = on_playback_start {
+                    cb();
                 }
             }
         }
