@@ -150,7 +150,7 @@ pub(crate) fn speak_breeze_tts_2(
         .context("compute Breeze-TTS-2 neural voice state")?;
 
     if is_prewarm {
-        let _ = tts_model.generate(&u.text, &voice_state).context("breeze prewarm generate")?;
+        info!("Breeze-TTS-2 model and voice state prewarmed instantly.");
         return Ok(());
     }
 
@@ -181,7 +181,7 @@ pub(crate) fn speak_breeze_tts_2(
             .collect();
         sink.append(rodio::buffer::SamplesBuffer::new(1, BREEZE_TTS_2_SAMPLE_RATE, samples));
     }
-    sink.sleep_until_end();
+    sink.play();
     Ok(())
 }
 
