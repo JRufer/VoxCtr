@@ -143,11 +143,16 @@ pub(crate) fn speak_breeze_tts_2(
         "hf://kyutai/tts-voices/alba-mackenna/casual.wav"
     };
 
-    let clip_path = pocket_tts::weights::download_if_necessary(ref_clip)
-        .context("resolve Breeze-TTS-2 reference voice clip")?;
-    let voice_state = tts_model
-        .get_voice_state(&clip_path)
-        .context("compute Breeze-TTS-2 neural voice state")?;
+    if !voice_states.contains_key(ref_clip) {
+        info!("Computing Breeze-TTS-2 voice state embedding for {ref_clip}...");
+        let clip_path = pocket_tts::weights::download_if_necessary(ref_clip)
+            .context("resolve Breeze-TTS-2 reference voice clip")?;
+        let state = tts_model
+            .get_voice_state(&clip_path)
+            .context("compute Breeze-TTS-2 neural voice state")?;
+        voice_states.insert(ref_clip.to_string(), state);
+    }
+    let voice_state = voice_states.get(ref_clip).unwrap();
 
     if is_prewarm {
         info!("Breeze-TTS-2 model and voice state prewarmed instantly.");
