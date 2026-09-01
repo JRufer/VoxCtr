@@ -127,7 +127,7 @@ fn resolve_pocket_tts_voice_clip(id: &str, voice_dir: &str) -> Option<String> {
 
 // ── Pocket-TTS model variant / sample rate ────────────────────────────────────
 
-const POCKET_TTS_VARIANT: &str = "b6369a24";
+pub(crate) const POCKET_TTS_VARIANT: &str = "b6369a24";
 const POCKET_TTS_SAMPLE_RATE: u32 = 24000;
 // Gated weights repo; tokenizer + non-cloning fallback live in the ungated sibling repo.
 const POCKET_TTS_WEIGHTS_REPO: &str = "kyutai/pocket-tts";
