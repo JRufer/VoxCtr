@@ -139,15 +139,28 @@ pub(crate) fn speak_breeze_tts_2(
     let prompt_lower = cfg.speaker_prompt.to_lowercase();
     let prompt_trim = cfg.speaker_prompt.trim();
 
+    let female_pool = [
+        "hf://kyutai/tts-voices/vctk/p228_023_enhanced.wav", // Anna (Clear/High)
+        "hf://kyutai/tts-voices/vctk/p229_023_enhanced.wav", // Vera (Soft/Warm)
+        "hf://kyutai/tts-voices/vctk/p230_023_enhanced.wav", // Tense/Intense
+        "hf://kyutai/tts-voices/vctk/p231_023_enhanced.wav", // Bright/Young
+        "hf://kyutai/tts-voices/vctk/p234_023_enhanced.wav", // Expressive
+        "hf://kyutai/tts-voices/vctk/p236_023_enhanced.wav", // Resonant
+        "hf://kyutai/tts-voices/alba-mackenna/casual.wav",   // Alba (Casual)
+    ];
+
+    let male_pool = [
+        "hf://kyutai/tts-voices/vctk/p254_023_enhanced.wav", // Charles (Standard Male)
+        "hf://kyutai/tts-voices/vctk/p360_023_enhanced.wav", // Michael (Deep/Bass Male)
+        "hf://kyutai/tts-voices/vctk/p226_023_enhanced.wav", // Clear Male
+        "hf://kyutai/tts-voices/vctk/p227_023_enhanced.wav", // Warm Male
+        "hf://kyutai/tts-voices/vctk/p232_023_enhanced.wav", // Rich Male
+    ];
+
     let female_keywords = [
         "female", "woman", "women", "girl", "lady", "she", "her", "alba", "anna", "vera", 
         "high", "soft", "gentle", "sweet", "cute", "bright", "cheerful", "calm", "smooth", 
         "friendly", "young", "female1", "female2"
-    ];
-    let male_keywords = [
-        "male", "man", "men", "guy", "boy", "he", "him", "his", "deep", "baritone", "bass", 
-        "bold", "narrator", "radio", "announcer", "strong", "charles", "michael", "heavy", 
-        "rough", "old", "hero", "male1", "male2"
     ];
 
     let is_female = prompt_contains_word(&prompt_lower, &female_keywords)
@@ -155,42 +168,48 @@ pub(crate) fn speak_breeze_tts_2(
         || prompt_lower.contains("woman")
         || prompt_lower.contains("girl")
         || prompt_lower.contains("lady")
-        || prompt_lower.contains("high")
         || prompt_lower.contains("soft")
         || prompt_lower.contains("gentle")
         || prompt_lower.contains("sweet");
 
     let is_male = !is_female && (
-        prompt_contains_word(&prompt_lower, &male_keywords)
+        prompt_contains_word(&prompt_lower, &["male", "man", "men", "guy", "boy", "he", "him", "his", "deep", "baritone", "bass", "bold", "narrator", "radio", "announcer", "strong", "charles", "michael"])
         || prompt_lower.contains("male")
         || prompt_lower.contains("man")
         || prompt_lower.contains("deep")
         || prompt_lower.contains("narrator")
-        || prompt_lower.contains("baritone")
-        || prompt_lower.contains("bass")
     );
+
+    let prompt_hash = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        prompt_trim.hash(&mut h);
+        h.finish() as usize
+    };
 
     let ref_clip = if prompt_trim.starts_with("hf://") || prompt_trim.ends_with(".wav") || prompt_trim.contains('/') {
         prompt_trim
     } else if is_female {
-        if prompt_lower.contains("warm") || prompt_lower.contains("expressive") || prompt_lower.contains("soft") || prompt_lower.contains("gentle") || prompt_lower.contains("sweet") || prompt_lower.contains("vera") {
-            "hf://kyutai/tts-voices/vctk/p229_023_enhanced.wav"
+        if prompt_lower.contains("anna") {
+            female_pool[0]
+        } else if prompt_lower.contains("vera") {
+            female_pool[1]
         } else if prompt_lower.contains("alba") {
-            "hf://kyutai/tts-voices/alba-mackenna/casual.wav"
+            female_pool[6]
         } else {
-            // Default female: high, clear, natural female voice (Anna)
-            "hf://kyutai/tts-voices/vctk/p228_023_enhanced.wav"
+            female_pool[prompt_hash % female_pool.len()]
         }
     } else if is_male {
-        if prompt_lower.contains("bold") || prompt_lower.contains("strong") || prompt_lower.contains("announcer") || prompt_lower.contains("bass") || prompt_lower.contains("michael") {
-            "hf://kyutai/tts-voices/vctk/p360_023_enhanced.wav"
+        if prompt_lower.contains("michael") || prompt_lower.contains("deep") || prompt_lower.contains("bass") {
+            male_pool[1]
+        } else if prompt_lower.contains("charles") {
+            male_pool[0]
         } else {
-            // Default male: standard male voice (Charles)
-            "hf://kyutai/tts-voices/vctk/p254_023_enhanced.wav"
+            male_pool[prompt_hash % male_pool.len()]
         }
     } else {
-        // Default when no gender specified: clear female voice (Anna)
-        "hf://kyutai/tts-voices/vctk/p228_023_enhanced.wav"
+        // Default when no gender specified: hashed across female pool
+        female_pool[prompt_hash % female_pool.len()]
     };
 
     if !voice_states.contains_key(ref_clip) {
@@ -210,8 +229,8 @@ pub(crate) fn speak_breeze_tts_2(
     }
 
     info!(
-        "Synthesizing text with Breeze-TTS-2 in pure Rust (speaker_prompt='{}', speed={:.2})...",
-        cfg.speaker_prompt, config.speed
+        "Synthesizing text with Breeze-TTS-2 in pure Rust (prompt='{}', ref_clip='{}', speed={:.2})...",
+        prompt_trim, ref_clip, config.speed
     );
 
     let mut callback_fired = false;
