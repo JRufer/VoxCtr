@@ -229,10 +229,20 @@ jobs:
             fi
           done
 
+          # GLib must be stripped together with GStreamer: the host's
+          # libgstreamer-1.0 (loaded because we delete the bundled copy) is
+          # compiled against the host's GLib and may reference symbols newer
+          # than the build host's GLib 2.72 (e.g. g_once_init_leave_pointer,
+          # GLib 2.80) — keeping a bundled GLib on LD_LIBRARY_PATH then aborts
+          # with a symbol lookup error. glib/gio are on the standard AppImage
+          # excludelist for exactly this reason; every bundled library only
+          # needs GLib >= 2.72, which any host able to run this AppImage has.
           for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
                      'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
                      'libgbm.so*' 'libdrm.so*' \
                      'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
+                     'libglib-2.0.so*' 'libgobject-2.0.so*' 'libgio-2.0.so*' \
+                     'libgmodule-2.0.so*' 'libgthread-2.0.so*' \
                      'libgstreamer-*.so*' 'libgst*.so*'; do
             find "$root" -name "$pat" -print -delete 2>/dev/null || true
           done
