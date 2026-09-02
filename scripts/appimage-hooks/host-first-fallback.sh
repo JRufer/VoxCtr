@@ -6,8 +6,11 @@
 # libraries link against them (Arch's libmount links libsystemd, and needs
 # LIBSYSTEMD_251, newer than the copy the ubuntu-22.04 build host bundles),
 # so a bundled copy on LD_LIBRARY_PATH aborts the host library at startup.
-# They can't simply be stripped either: non-systemd distributions may not
-# ship them at all, and WebKitGTK would then fail to load.
+# They can't simply be stripped either: a host may not ship them at all, and
+# WebKitGTK would then fail to load — non-systemd distributions have no
+# libsystemd/libudev, and libgstgl-1.0.so.0 lives in libgstreamer-gl1.0-0,
+# which gstreamer1.0-plugins-base does not pull in, so a desktop with no
+# WebKit of its own can be missing it entirely.
 #
 # So for each fallback library, expose our copy only when the host has no
 # library of that soname. The symlinks live in a per-user runtime directory

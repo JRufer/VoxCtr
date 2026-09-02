@@ -241,6 +241,32 @@ jobs:
           mkdir -p "$root/usr/config"
           cp crates/voxctrl-tts/config/*.yaml "$root/usr/config/"
 
+          # Some libraries can be neither stripped nor left on the library path, so
+          # they are parked in usr/lib/fallback instead: the AppRun hook exposes each
+          # one only when the host has no library of that soname, so a host with its
+          # own copy always wins.
+          #
+          #   libsystemd / libudev — the host's own libmount (Arch) links libsystemd
+          #     and needs a newer LIBSYSTEMD_* version node than the build host's
+          #     copy, while non-systemd distributions may not ship them at all and the
+          #     bundled WebKitGTK needs them.
+          #   libgstgl-1.0 / libwayland-server — the bundled WebKitGTK links both
+          #     directly, and the strip patterns below would delete them.
+          #     libgstgl-1.0.so.0 ships in libgstreamer-gl1.0-0, which
+          #     gstreamer1.0-plugins-base does not depend on, so a desktop with no
+          #     WebKit of its own can be missing it entirely and the app then dies
+          #     with "error while loading shared libraries: libgstgl-1.0.so.0".
+          #
+          # This has to run before the strip loop below, which skips usr/lib/fallback.
+          # Keep this list in sync with build_appimage.sh.
+          mkdir -p "$root/usr/lib/fallback"
+          for pat in 'libsystemd.so*' 'libudev.so*' \
+                     'libgstgl-1.0.so*' 'libwayland-server.so*'; do
+            find "$root" -name "$pat" -not -path '*/fallback/*' -print \
+              -exec mv -t "$root/usr/lib/fallback/" {} + 2>/dev/null || true
+          done
+          echo "Host-first fallback libraries:"; ls -la "$root/usr/lib/fallback"
+
           # Everything below is deleted so the AppImage falls through to the
           # host's copy. The rule: once a library comes from the host, every
           # library it links against must come from the host too, or the
@@ -270,28 +296,21 @@ jobs:
             'libgstreamer-*.so*' 'libgst*.so*' 'liborc-0.4.so*' \
             'libunwind.so*' 'libdw.so*' 'libelf.so*' \
             'libbz2.so*' 'liblzma.so*' 'libzstd.so*'; do
-            find "$root" -name "$pat" -print -delete 2>/dev/null || true
+            find "$root" -name "$pat" -not -path '*/fallback/*' -print -delete 2>/dev/null || true
           done
 
-          # libsystemd/libudev can be neither stripped nor left on the library
-          # path: the host's own libmount (Arch) links libsystemd and needs a
-          # newer LIBSYSTEMD_* version node than the build host's copy, while
-          # non-systemd distributions may not ship them at all and the bundled
-          # WebKitGTK needs them. Park them in usr/lib/fallback; the AppRun
-          # hook exposes each one only when the host has no copy of that soname.
-          mkdir -p "$root/usr/lib/fallback"
-          for pat in 'libsystemd.so*' 'libudev.so*'; do
-            find "$root" -name "$pat" -not -path '*/fallback/*' -print \
-              -exec mv -t "$root/usr/lib/fallback/" {} + 2>/dev/null || true
-          done
+          # Install the AppRun hook that exposes usr/lib/fallback host-first.
           cp scripts/appimage-hooks/host-first-fallback.sh "$root/apprun-hooks/"
           chmod +x "$root/apprun-hooks/host-first-fallback.sh"
           if ! grep -q "host-first-fallback.sh" "$root/AppRun"; then
             sed -i '/^exec /i source "$this_dir"/apprun-hooks/host-first-fallback.sh' "$root/AppRun"
           fi
 
-          rm -f "$appimage"
-          ARCH=x86_64 ./appimagetool.bin "$root" "$appimage"
+          # Repackage. appimage-pack.sh embeds a runtime that also works on
+          # hosts without libfuse2 (Ubuntu 22.04 / Linux Mint 21 and newer ship
+          # fuse3 only), falling back to appimagetool's own runtime if it
+          # cannot fetch one, and verifies the result unpacks before returning.
+          ./scripts/appimage-pack.sh "$root" "$appimage" ./appimagetool.bin
           echo "Repackaged $appimage ($(du -h "$appimage" | cut -f1))"
 
       # CUDA build uses --bundles deb only: the CUDA toolkit populates system
@@ -402,7 +421,71 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: release-artifacts/*
+          # The "What's new" section below is version-specific: update it in the
+          # same commit that bumps the version (scripts/bump_version.sh), so a
+          # release never ships the previous version's notes. Everything under
+          # "## Downloads" is evergreen, and GitHub appends its own generated
+          # "What's Changed" list of merged PRs beneath all of this.
           body: |
+            ## What's new in 0.3.8
+
+            A Linux packaging and compatibility release: **no app behaviour
+            changes** — the AppImage now starts on desktops where 0.3.7 could
+            not.
+
+            ### The AppImage no longer needs `libfuse2`
+
+            Its runtime linked FUSE 2 and looked for a `fusermount` binary.
+            Ubuntu 22.04, Linux Mint 21 and everything newer ship fuse3
+            (`fusermount3`) and no `libfuse2`, so 0.3.7 died before it started:
+
+            ```
+            Error: No suitable fusermount binary found on the $PATH
+            ```
+
+            0.3.8 ships [uruntime](https://github.com/VHSgunzo/uruntime), which
+            uses FUSE 3 and extracts-and-runs itself when FUSE is unavailable
+            entirely. Nothing has to be installed first. (On 0.3.7 the
+            workarounds were `sudo apt install libfuse2` or launching with
+            `--appimage-extract-and-run`.)
+
+            ### Two libraries the AppImage assumed every desktop had
+
+            The bundled WebKitGTK links `libgstgl-1.0.so.0` and
+            `libwayland-server.so.0` directly, and both were stripped in favour
+            of the host's copies. `libgstgl-1.0.so.0` ships in
+            `libgstreamer-gl1.0-0`, which `gstreamer1.0-plugins-base` does not
+            pull in — so a desktop with no WebKit of its own had none, and the
+            app died with `error while loading shared libraries`. Both are now
+            carried as host-first fallbacks: your system's copy is used when you
+            have one, ours only when you do not.
+
+            ### Also since v0.3.7
+
+            - The GLib / GIO / GStreamer dependency closure is stripped as a
+              unit, so the host's libraries resolve against each other instead
+              of stale bundled ones (`g_once_init_leave_pointer`, `MOUNT_2_40`
+              and `GNUTLS_3_8_x` startup aborts).
+            - `libsystemd` / `libudev` are exposed host-first, fixing the
+              `LIBSYSTEMD_251` abort on Arch while still working on
+              distributions that ship neither.
+            - WebKitGTK's helper processes are bundled and found where WebKit
+              looks for them, fixing the `WebKitNetworkProcess` spawn crash.
+            - The TTS engines no longer change the process's working directory
+              to find their model config — that raced WebKit's helper spawn and
+              aborted the app. The config is bundled at `usr/config/` instead.
+            - Packaging now verifies the AppImage it produced can unpack itself
+              before a release is published.
+
+            ### Requirements
+
+            glibc 2.35 or newer and a GCC 12 libstdc++ — Ubuntu 22.04+, Linux
+            Mint 21+, Debian 12+, Fedora 36+, Arch, openSUSE Tumbleweed. Ubuntu
+            20.04, Mint 20, Debian 11 and RHEL 9 are below that baseline; build
+            from source there.
+
+            ---
+
             ## Downloads
 
             Pick the build for your platform and GPU:
@@ -420,6 +503,11 @@ jobs:
             **CPU builds** run on any hardware, including AMD, Intel, and ARM.
 
             ### Linux CPU / GPU — first run
+
+            Needs glibc 2.35 or newer (Ubuntu 22.04+, Linux Mint 21+, Debian
+            12+, Fedora 36+, Arch). Nothing has to be installed first — not
+            even `libfuse2`.
+
             ```bash
             chmod +x VoxCtrl_*-linux-x86_64*.AppImage
             # Optional: installs the desktop entry and text-injection helpers.

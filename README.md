@@ -224,6 +224,11 @@ That is the whole installation. Global shortcuts need no permissions, and
 VoxCtrl registers its own `.desktop` entry and icon under `~/.local/share/` on
 every Linux launch — no privileges, no install step.
 
+Nothing has to be installed first — not even `libfuse2`: the AppImage's runtime
+uses your system's FUSE 3, and extracts and runs itself when FUSE is
+unavailable. It needs glibc 2.35 or newer (Ubuntu 22.04+, Linux Mint 21+,
+Debian 12+, Fedora 36+, Arch); older distributions have to build from source.
+
 The only thing that can need a package manager is the helper that types text
 into other windows (`wtype` on Wayland, `xdotool` on X11). If it is missing, the
 setup window says so and offers to install it, or shows you the command. You can

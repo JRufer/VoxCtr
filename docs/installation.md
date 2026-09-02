@@ -3,11 +3,21 @@
 ## System Requirements
 
 ### Linux
-- **OS:** Any modern Linux distro (Ubuntu 20.04+, Fedora 36+, Arch, etc.)
+- **OS:** Any modern Linux distro — Ubuntu 22.04+, Linux Mint 21+, Debian 12+,
+  Fedora 36+, Arch, openSUSE Tumbleweed
+- **glibc 2.35 or newer**, with a libstdc++ from GCC 12 or newer. The AppImage
+  is built on Ubuntu 22.04, so that is the floor: Ubuntu 20.04 / Mint 20 /
+  Debian 11 / RHEL 9 are too old and the AppImage will not start on them.
 - **Display:** X11 or Wayland
 - **Audio:** PulseAudio or PipeWire (ALSA fallback supported)
 - **Required packages:** `libwebkit2gtk-4.1`, `libayatana-appindicator3` or `libappindicator3`
 - **Optional:** `wtype` (Wayland injection), `xdotool` (X11 injection)
+- **No `libfuse2` needed.** The AppImage ships a runtime that uses your
+  system's FUSE 3, and extracts and runs itself when FUSE is unavailable
+  entirely — so it starts on a stock Ubuntu 22.04 / Mint 21 desktop with
+  nothing installed first. (Releases up to and including 0.3.7 used a runtime
+  that needed `libfuse2`; on those, either `sudo apt install libfuse2` or run
+  the AppImage with `--appimage-extract-and-run`.)
 - **For Pocket-TTS:** a HuggingFace account with the [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) license accepted and an access token (see [Pocket-TTS](#pocket-tts) below)
 
 ### Windows
@@ -330,7 +340,19 @@ end to end. Its steps say which. The two it cannot fix for you:
 - Use a larger model for better non-English accuracy
 
 ### AppImage won't launch
-- Install FUSE: `sudo apt install fuse libfuse2`
+- `Error: No suitable fusermount binary found on the $PATH` — an older release
+  (0.3.7 or earlier), whose runtime needed FUSE 2. Either run it with
+  `./VoxCtrl.AppImage --appimage-extract-and-run`, install FUSE 2
+  (`sudo apt install libfuse2`), or download a newer release, whose runtime
+  uses FUSE 3 and needs nothing installed.
+- `version 'GLIBC_2.35' not found` or `GLIBCXX_3.4.30 not found` — the distro
+  is older than the AppImage's baseline (see [System Requirements](#linux)).
+  Ubuntu 20.04, Mint 20, Debian 11 and RHEL 9 cannot run it; build from source
+  on those.
+- `error while loading shared libraries: <name>` — a library your desktop is
+  missing. `libEGL.so.1`/`libGL.so.1` come from your graphics drivers
+  (`libegl1`, `libgl1` on Debian/Ubuntu); `libgtk-3.so.0`, `libglib-2.0.so.0`
+  and the GStreamer libraries come with any GTK desktop.
 - Or extract and run directly: `./VoxCtrl.AppImage --appimage-extract && squashfs-root/AppRun`
 
 ### Debugging & Crash Logs
