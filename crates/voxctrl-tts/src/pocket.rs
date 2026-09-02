@@ -137,62 +137,10 @@ const POCKET_TTS_TOKENIZER_REPO: &str = "kyutai/pocket-tts-without-voice-cloning
 const POCKET_TTS_TOKENIZER_REVISION: &str = "d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3";
 const POCKET_TTS_TOKENIZER_FILE: &str = "tokenizer.model";
 
-pub const POCKET_TTS_CONFIG_YAML: &str = r#"# sig: b6369a24
-
-weights_path: hf://kyutai/pocket-tts/tts_b6369a24.safetensors@427e3d61b276ed69fdd03de0d185fa8a8d97fc5b
-weights_path_without_voice_cloning: hf://kyutai/pocket-tts-without-voice-cloning/tts_b6369a24.safetensors@d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3
-
-flow_lm:
-  dtype: float32
-  flow:
-    depth: 6
-    dim: 512
-  transformer:
-    d_model: 1024
-    hidden_scale: 4
-    max_period: 10000
-    num_heads: 16
-    num_layers: 6
-  lookup_table:
-    dim: 1024
-    n_bins: 4000
-    tokenizer: sentencepiece
-    tokenizer_path: hf://kyutai/pocket-tts-without-voice-cloning/tokenizer.model@d4fdd22ae8c8e1cb3634e150ebeff1dab2d16df3
-
-mimi:
-  dtype: float32
-  sample_rate: 24000
-  channels: 1
-  frame_rate: 12.5
-  seanet:
-    dimension: 512
-    channels: 1
-    n_filters: 64
-    n_residual_layers: 1
-    ratios:
-    - 6
-    - 5
-    - 4
-    kernel_size: 7
-    residual_kernel_size: 3
-    last_kernel_size: 3
-    dilation_base: 2
-    pad_mode: constant
-    compress: 2
-  transformer:
-    d_model: 512
-    num_heads: 8
-    num_layers: 2
-    layer_scale: 0.01
-    context: 250
-    dim_feedforward: 2048
-    input_dimension: 512
-    output_dimensions:
-    - 512
-  quantizer:
-    dimension: 32
-    output_dimension: 512
-"#;
+/// Architecture config for the pocket-tts model variant, shared with the AppImage
+/// packaging (which bundles the same file at `usr/config/`, see
+/// `load_pocket_tts_model`).
+pub const POCKET_TTS_CONFIG_YAML: &str = include_str!("../config/b6369a24.yaml");
 
 /// Ensures `config/<variant>.yaml` exists relative to the current working directory,
 /// as well as in the user's local data directory (`~/.local/share/voxctrl/config/<variant>.yaml`),
@@ -220,6 +168,43 @@ pub fn ensure_pocket_tts_config() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Loads the pocket-tts model for `variant` without leaving the process's working
+/// directory changed.
+///
+/// `pocket_tts::TTSModel::load` only finds its architecture config at
+/// `config/<variant>.yaml` relative to the current working directory. When that
+/// file is already reachable from the cwd — the AppImage bundles it at `usr/config/`
+/// and AppRun starts the app in `usr/`; a dev checkout gets one written by
+/// `ensure_pocket_tts_config` — load directly. Only otherwise fall back to
+/// temporarily switching into the user's data directory, where
+/// `ensure_pocket_tts_config` also wrote a copy.
+///
+/// Avoiding the switch matters: the cwd is process-wide, and inside the AppImage
+/// WebKitGTK locates its helper processes (WebKitNetworkProcess, ...) through a
+/// path relative to the cwd. Swapping it from the TTS worker thread while the
+/// webview was spawning a helper aborted the whole app at startup.
+pub(crate) fn load_pocket_tts_model(variant: &str) -> Result<pocket_tts::TTSModel> {
+    ensure_pocket_tts_config().context("ensure pocket-tts config file")?;
+
+    let cwd_config = Path::new("config").join(format!("{variant}.yaml"));
+    if cwd_config.exists() {
+        return pocket_tts::TTSModel::load(variant);
+    }
+
+    let app_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("voxctrl");
+    let orig_cwd = std::env::current_dir().ok();
+    if app_dir.exists() {
+        let _ = std::env::set_current_dir(&app_dir);
+    }
+    let load_res = pocket_tts::TTSModel::load(variant);
+    if let Some(ref orig) = orig_cwd {
+        let _ = std::env::set_current_dir(orig);
+    }
+    load_res
 }
 
 /// Best-effort, network-free check for whether the model weights, tokenizer, and the
@@ -339,26 +324,8 @@ pub(crate) fn speak_pocket_tts(
     // Lazily load the model — stays alive for the worker thread lifetime.
     if model.is_none() {
         info!("Loading pocket-tts model (variant={POCKET_TTS_VARIANT})");
-        ensure_pocket_tts_config().context("ensure pocket-tts config file")?;
-
-        // pocket_tts::TTSModel::load searches for `config/b6369a24.yaml` relative to CWD.
-        // In read-only environments like AppImages, CWD (inside squashfs mount) cannot be written to.
-        // Temporarily switch CWD to the user's writable app data directory where config/b6369a24.yaml lives.
-        let app_dir = dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("voxctrl");
-        let orig_cwd = std::env::current_dir().ok();
-        if app_dir.exists() {
-            let _ = std::env::set_current_dir(&app_dir);
-        }
-
-        let load_res = pocket_tts::TTSModel::load(POCKET_TTS_VARIANT);
-
-        if let Some(ref orig) = orig_cwd {
-            let _ = std::env::set_current_dir(orig);
-        }
-
-        *model = Some(load_res.context("load pocket-tts model")?);
+        *model =
+            Some(load_pocket_tts_model(POCKET_TTS_VARIANT).context("load pocket-tts model")?);
     }
     let model = model.as_ref().unwrap();
 

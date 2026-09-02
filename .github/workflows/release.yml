@@ -212,22 +212,34 @@ jobs:
             fi
           done
 
+          # The bundled libwebkit2gtk has its helper-process directory compiled
+          # in as /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1, which the Tauri
+          # bundler rewrites to ././/lib/x86_64-linux-gnu/webkit2gtk-4.1 — a
+          # path relative to the working directory, which linuxdeploy's AppRun
+          # sets to $APPDIR/usr. Release builds of WebKitGTK honour no
+          # environment override for it (WEBKIT_EXEC_PATH exists only in
+          # developer-mode builds), so the helpers must sit at exactly that
+          # relative path. WEBKIT_INJECTED_BUNDLE_PATH is honoured, but as a
+          # single directory, not a colon-separated search path.
           if [ -n "$helper_dir" ]; then
             echo "Found WebKitGTK helper processes in $helper_dir, bundling into AppImage..."
-            mkdir -p "$root/usr/lib/webkit2gtk-4.1" \
-                     "$root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1" \
-                     "$root/lib/webkit2gtk-4.1"
-            cp -r "$helper_dir"/* "$root/usr/lib/webkit2gtk-4.1/"
+            mkdir -p "$root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
             cp -r "$helper_dir"/* "$root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/"
-            cp -r "$helper_dir"/* "$root/lib/webkit2gtk-4.1/"
           fi
 
           for script in "$root/AppRun" "$root/apprun-hooks/linuxdeploy-plugin-gtk.sh"; do
-            if [ -f "$script" ] && ! grep -q "WEBKIT_EXEC_PATH" "$script"; then
-              sed -i '2i export WEBKIT_EXEC_PATH="${APPDIR}/usr/lib/webkit2gtk-4.1:${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"' "$script"
-              sed -i '3i export WEBKIT_INJECTED_BUNDLE_PATH="${APPDIR}/usr/lib/webkit2gtk-4.1/injected-bundle:${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/injected-bundle"' "$script"
-            fi
+            [ -f "$script" ] || continue
+            sed -i '/^export WEBKIT_EXEC_PATH=/d; /^export WEBKIT_INJECTED_BUNDLE_PATH=/d' "$script"
+            sed -i '2i export WEBKIT_EXEC_PATH="${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"' "$script"
+            sed -i '3i export WEBKIT_INJECTED_BUNDLE_PATH="${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/injected-bundle"' "$script"
           done
+
+          # pocket_tts (the Pocket-TTS and Breeze-TTS-2 engines) finds its model
+          # config at config/<variant>.yaml relative to the working directory.
+          # Bundle it at usr/config so those engines load without changing the
+          # process's cwd — which, per the note above, WebKitGTK depends on.
+          mkdir -p "$root/usr/config"
+          cp crates/voxctrl-tts/config/*.yaml "$root/usr/config/"
 
           # Everything below is deleted so the AppImage falls through to the
           # host's copy. The rule: once a library comes from the host, every
