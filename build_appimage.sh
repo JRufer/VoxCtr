@@ -337,10 +337,17 @@ done
 
 # Strip graphics, Wayland, input libraries, and host-dependent/security libraries
 # so the AppImage falls through to the host system's native versions at runtime.
+# GLib must go together with GStreamer: the host's libgstreamer-1.0 (used
+# because we delete the bundled copy) is compiled against the host's GLib and
+# may reference symbols newer than the bundled GLib (e.g.
+# g_once_init_leave_pointer, GLib 2.80), causing a symbol lookup error at
+# startup if a bundled GLib shadows the host's on LD_LIBRARY_PATH.
 for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
            'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
            'libgbm.so*' 'libdrm.so*' \
            'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
+           'libglib-2.0.so*' 'libgobject-2.0.so*' 'libgio-2.0.so*' \
+           'libgmodule-2.0.so*' 'libgthread-2.0.so*' \
            'libgstreamer-*.so*' 'libgst*.so*' \
            'libvulkan.so*' 'libssl.so*' 'libcrypto.so*' \
            'libcanberra-gtk3.so*' 'libcanberra.so*' \
