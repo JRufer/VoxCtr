@@ -309,19 +309,31 @@ chmod +x "$work/in.AppImage"
 root="$work/squashfs-root"
 
 # Bundle WebKitGTK 4.1 helper processes (WebKitNetworkProcess, WebKitWebProcess)
-helper_dir="/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
-if [ ! -d "$helper_dir" ] && [ -d "/usr/lib/webkit2gtk-4.1" ]; then
-    helper_dir="/usr/lib/webkit2gtk-4.1"
-fi
-if [ -d "$helper_dir" ]; then
-    mkdir -p "$root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"
+helper_dir=""
+for dir in "/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1" "/usr/lib/webkit2gtk-4.1" "/usr/lib64/webkit2gtk-4.1"; do
+    if [ -d "$dir" ]; then
+        helper_dir="$dir"
+        break
+    fi
+done
+
+if [ -n "$helper_dir" ]; then
+    info "Found WebKitGTK helper processes in $helper_dir, bundling into AppImage..."
+    mkdir -p "$root/usr/lib/webkit2gtk-4.1" \
+             "$root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1" \
+             "$root/lib/webkit2gtk-4.1"
+    cp -r "$helper_dir"/* "$root/usr/lib/webkit2gtk-4.1/"
     cp -r "$helper_dir"/* "$root/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/"
+    cp -r "$helper_dir"/* "$root/lib/webkit2gtk-4.1/"
 fi
 
-if [ -f "$root/AppRun" ] && ! grep -q "WEBKIT_EXEC_PATH" "$root/AppRun"; then
-    sed -i '2i export WEBKIT_EXEC_PATH="${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"' "$root/AppRun"
-    sed -i '3i export WEBKIT_INJECTED_BUNDLE_PATH="${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/injected-bundle"' "$root/AppRun"
-fi
+# Append WEBKIT_EXEC_PATH export into linuxdeploy GTK apprun hook and AppRun
+for script in "$root/AppRun" "$root/apprun-hooks/linuxdeploy-plugin-gtk.sh"; do
+    if [ -f "$script" ] && ! grep -q "WEBKIT_EXEC_PATH" "$script"; then
+        sed -i '2i export WEBKIT_EXEC_PATH="${APPDIR}/usr/lib/webkit2gtk-4.1:${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1"' "$script"
+        sed -i '3i export WEBKIT_INJECTED_BUNDLE_PATH="${APPDIR}/usr/lib/webkit2gtk-4.1/injected-bundle:${APPDIR}/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/injected-bundle"' "$script"
+    fi
+done
 
 # Strip graphics, Wayland, input libraries, and host-dependent/security libraries
 # so the AppImage falls through to the host system's native versions at runtime.
