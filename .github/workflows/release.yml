@@ -229,21 +229,35 @@ jobs:
             fi
           done
 
-          # GLib must be stripped together with GStreamer: the host's
-          # libgstreamer-1.0 (loaded because we delete the bundled copy) is
-          # compiled against the host's GLib and may reference symbols newer
-          # than the build host's GLib 2.72 (e.g. g_once_init_leave_pointer,
-          # GLib 2.80) — keeping a bundled GLib on LD_LIBRARY_PATH then aborts
-          # with a symbol lookup error. glib/gio are on the standard AppImage
-          # excludelist for exactly this reason; every bundled library only
-          # needs GLib >= 2.72, which any host able to run this AppImage has.
-          for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
-                     'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
-                     'libgbm.so*' 'libdrm.so*' \
-                     'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
-                     'libglib-2.0.so*' 'libgobject-2.0.so*' 'libgio-2.0.so*' \
-                     'libgmodule-2.0.so*' 'libgthread-2.0.so*' \
-                     'libgstreamer-*.so*' 'libgst*.so*'; do
+          # Everything below is deleted so the AppImage falls through to the
+          # host's copy. The rule: once a library comes from the host, every
+          # library it links against must come from the host too, or the
+          # host's copy resolves its symbols against our stale bundled one and
+          # aborts at startup (seen in the wild: GStreamer needing
+          # g_once_init_leave_pointer from GLib 2.80; GLib needing MOUNT_2_40
+          # from libmount; GIO's TLS module needing GNUTLS_3_8_x). A library
+          # may only be stripped if its soname is stable across distros —
+          # libxml2 (.so.2 vs .so.16 on Arch) and libunistring (.so.2 vs
+          # .so.5) are deliberately kept bundled for that reason. Everything
+          # still bundled only needs the build host's (Ubuntu 22.04) versions
+          # of these, so any newer host satisfies them.
+          for pat in \
+            'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
+            'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
+            'libgbm.so*' 'libdrm.so*' \
+            'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
+            `# GLib family, and what the host's GLib/GIO link against` \
+            'libglib-2.0.so*' 'libgobject-2.0.so*' 'libgio-2.0.so*' \
+            'libgmodule-2.0.so*' 'libgthread-2.0.so*' \
+            'libpcre2-8.so*' 'libpcre.so*' 'libffi.so*' \
+            'libmount.so*' 'libblkid.so*' 'libselinux.so*' \
+            `# GIO loads the host's TLS module, which needs the host's gnutls stack` \
+            'libgiognutls.so' 'libgnutls.so*' 'libhogweed.so*' 'libnettle.so*' \
+            'libtasn1.so*' 'libp11-kit.so*' 'libidn2.so*' \
+            `# GStreamer, and what the host's GStreamer links against` \
+            'libgstreamer-*.so*' 'libgst*.so*' 'liborc-0.4.so*' \
+            'libunwind.so*' 'libdw.so*' 'libelf.so*' \
+            'libbz2.so*' 'liblzma.so*' 'libzstd.so*'; do
             find "$root" -name "$pat" -print -delete 2>/dev/null || true
           done
 

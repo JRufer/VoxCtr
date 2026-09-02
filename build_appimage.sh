@@ -337,22 +337,35 @@ done
 
 # Strip graphics, Wayland, input libraries, and host-dependent/security libraries
 # so the AppImage falls through to the host system's native versions at runtime.
-# GLib must go together with GStreamer: the host's libgstreamer-1.0 (used
-# because we delete the bundled copy) is compiled against the host's GLib and
-# may reference symbols newer than the bundled GLib (e.g.
-# g_once_init_leave_pointer, GLib 2.80), causing a symbol lookup error at
-# startup if a bundled GLib shadows the host's on LD_LIBRARY_PATH.
-for pat in 'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
-           'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
-           'libgbm.so*' 'libdrm.so*' \
-           'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
-           'libglib-2.0.so*' 'libgobject-2.0.so*' 'libgio-2.0.so*' \
-           'libgmodule-2.0.so*' 'libgthread-2.0.so*' \
-           'libgstreamer-*.so*' 'libgst*.so*' \
-           'libvulkan.so*' 'libssl.so*' 'libcrypto.so*' \
-           'libcanberra-gtk3.so*' 'libcanberra.so*' \
-           'libcanberra-gtk-module.so' 'libcanberra-gtk3-module.so' \
-           'libcolorreload-gtk-module.so' 'libwindow-decorations-gtk-module.so'; do
+# The rule: once a library comes from the host, every library it links against
+# must come from the host too, or the host's copy resolves its symbols against
+# our stale bundled one and aborts at startup (seen in the wild: GStreamer
+# needing g_once_init_leave_pointer from GLib 2.80; GLib needing MOUNT_2_40 from
+# libmount; GIO's TLS module needing GNUTLS_3_8_x). Only strip libraries whose
+# soname is stable across distros — libxml2 (.so.2 vs .so.16 on Arch) and
+# libunistring (.so.2 vs .so.5) are deliberately kept bundled for that reason.
+# Keep this list in sync with .github/workflows/release.yml.
+for pat in \
+    'libwayland-*.so*' 'libEGL.so*' 'libGL.so*' 'libGLX.so*' \
+    'libGLdispatch.so*' 'libOpenGL.so*' 'libglapi.so*' \
+    'libgbm.so*' 'libdrm.so*' \
+    'libxkbcommon.so*' 'libxkbcommon-x11.so*' \
+    `# GLib family, and what the host's GLib/GIO link against` \
+    'libglib-2.0.so*' 'libgobject-2.0.so*' 'libgio-2.0.so*' \
+    'libgmodule-2.0.so*' 'libgthread-2.0.so*' \
+    'libpcre2-8.so*' 'libpcre.so*' 'libffi.so*' \
+    'libmount.so*' 'libblkid.so*' 'libselinux.so*' \
+    `# GIO loads the host's TLS module, which needs the host's gnutls stack` \
+    'libgiognutls.so' 'libgnutls.so*' 'libhogweed.so*' 'libnettle.so*' \
+    'libtasn1.so*' 'libp11-kit.so*' 'libidn2.so*' \
+    `# GStreamer, and what the host's GStreamer links against` \
+    'libgstreamer-*.so*' 'libgst*.so*' 'liborc-0.4.so*' \
+    'libunwind.so*' 'libdw.so*' 'libelf.so*' \
+    'libbz2.so*' 'liblzma.so*' 'libzstd.so*' \
+    'libvulkan.so*' 'libssl.so*' 'libcrypto.so*' \
+    'libcanberra-gtk3.so*' 'libcanberra.so*' \
+    'libcanberra-gtk-module.so' 'libcanberra-gtk3-module.so' \
+    'libcolorreload-gtk-module.so' 'libwindow-decorations-gtk-module.so'; do
     find "$root" -name "$pat" -print -delete 2>/dev/null || true
 done
 
