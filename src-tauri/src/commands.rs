@@ -422,6 +422,54 @@ pub async fn download_breeze_tts_2(model_dir: String, hf_token: Option<String>) 
         .map_err(|e| e.to_string())
 }
 
+/// Everything the settings UI needs to describe the VoxCPM2 engine in one round
+/// trip: whether this build can speak with it, which backend it would use, and
+/// what (if anything) is still missing from the local checkpoint.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VoxCpm2Status {
+    /// Whether the inference backend was compiled into this build. When false
+    /// the model still downloads and the settings still save — only synthesis
+    /// is unavailable.
+    pub compiled: bool,
+    /// Human-readable compute backend, e.g. "GPU (wgpu: Vulkan / Metal / DX12)".
+    pub backend: String,
+    /// Whether a complete checkpoint is present locally.
+    pub ready: bool,
+    /// Required files that are still absent, named as the user will see them on
+    /// disk. Empty when `ready` is true.
+    pub missing: Vec<String>,
+    /// Absolute path the checkpoint is expected at, for display.
+    pub model_dir: String,
+}
+
+#[tauri::command]
+pub async fn voxcpm2_status(model_dir: String) -> Result<VoxCpm2Status, String> {
+    let missing = voxctrl_tts::voxcpm2_missing_files(&model_dir);
+    let resolved = if model_dir.trim().is_empty() {
+        voxctrl_tts::voxcpm2_model_dir().to_string_lossy().into_owned()
+    } else {
+        model_dir.clone()
+    };
+    Ok(VoxCpm2Status {
+        compiled: voxctrl_tts::VOXCPM2_COMPILED,
+        backend: voxctrl_tts::voxcpm2_backend_name().to_string(),
+        ready: missing.is_empty(),
+        missing,
+        model_dir: resolved,
+    })
+}
+
+#[tauri::command]
+pub async fn download_voxcpm2(
+    model_dir: String,
+    repo: String,
+    hf_token: Option<String>,
+) -> Result<(), String> {
+    voxctrl_tts::download_voxcpm2_assets(&model_dir, &repo, hf_token)
+        .await
+        .map_err(|e| format!("{e:#}"))
+}
+
 #[tauri::command]
 pub async fn check_pocket_tts_ready(voice: String, voice_dir: String) -> Result<bool, String> {
     Ok(voxctrl_tts::is_pocket_tts_ready(&voice, &voice_dir))

@@ -62,6 +62,18 @@
         <span class="credit-license">MIT License</span>
       </div>
       <div class="credit-item">
+        <a class="credit-name-link" href="https://github.com/OpenBMB/VoxCPM" target="_blank">VoxCPM2 (OpenBMB)</a>
+        <span class="credit-license">Apache 2.0</span>
+      </div>
+      <div class="credit-item">
+        <a class="credit-name-link" href="https://github.com/mii-nipah/voxcpm-rs" target="_blank">voxcpm-rs (pure-Rust VoxCPM2)</a>
+        <span class="credit-license">Apache 2.0</span>
+      </div>
+      <div class="credit-item">
+        <a class="credit-name-link" href="https://burn.dev" target="_blank">Burn</a>
+        <span class="credit-license">MIT / Apache 2.0</span>
+      </div>
+      <div class="credit-item">
         <a class="credit-name-link" href="https://huggingface.co/BreezeBlue/Breeze-TTS-2" target="_blank">Breeze-TTS-2 (BreezeBlue)</a>
         <span class="credit-license non-commercial">Non-Commercial License</span>
       </div>

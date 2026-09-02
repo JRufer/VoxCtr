@@ -246,6 +246,41 @@ await invoke('download_pocket_tts', {
 
 ---
 
+#### `voxcpm2_status(modelDir: string) → VoxCpm2Status`
+Everything the settings UI needs to describe the VoxCPM2 engine, in one call (no network access).
+
+```typescript
+interface VoxCpm2Status {
+  compiled: boolean;   // whether an inference backend was built into this app
+  backend: string;     // e.g. "GPU (wgpu: Vulkan / Metal / DX12)" or "not compiled in"
+  ready: boolean;      // a complete checkpoint is present locally
+  missing: string[];   // required files still absent, named as they appear on disk
+  model_dir: string;   // resolved checkpoint directory, for display
+}
+
+const status = await invoke<VoxCpm2Status>('voxcpm2_status', { modelDir: '' });
+```
+
+`missing` lists alternates together (`"model.safetensors or model.pth or model.pt"`), because
+the loader accepts any one of them. An in-flight download writes to a `.part` file, so a
+partial transfer reports as missing rather than ready. When `compiled` is `false` the model
+still downloads and the settings still save — only synthesis is unavailable.
+
+---
+
+#### `download_voxcpm2(modelDir: string, repo: string, hfToken: string | null) → void`
+Downloads the VoxCPM2 checkpoint (`config.json`, `tokenizer.json`, `audiovae.pth`, `model.safetensors` — roughly 4 GB) into `modelDir` (`""` = default directory). The weights are Apache-2.0 and ungated, so `hfToken` is only needed for a private mirror. Files already present are skipped, and each file is streamed to a `.part` file that is renamed only on success, so an interrupted download resumes cleanly at file granularity.
+
+```typescript
+await invoke('download_voxcpm2', {
+  modelDir: '',
+  repo: 'openbmb/VoxCPM2',
+  hfToken: null,
+});
+```
+
+---
+
 #### `inflect_micro_available() → boolean`
 Whether this build was compiled with the `inflect-micro` cargo feature. When `false` the engine can be selected and its model downloaded, but synthesis is unavailable — the Settings panel uses this to explain why Test TTS is disabled.
 

@@ -32,6 +32,13 @@ hf-hub = { workspace = true }
 # build, switch to `default-features = false, features = ["load-dynamic", "std",
 # "api-24"]` and ship a libonnxruntime alongside the app.
 ort = { version = "2.0.0-rc.12", optional = true }
+# VoxCPM2 inference, pure Rust on the Burn framework. Optional for the same
+# reason `ort` is: it is a large dependency tree, and the engine is one choice
+# among five. `burn` is a direct dependency only so the backend type can be
+# named here (`Wgpu` vs `NdArray`); which one is compiled in is decided by the
+# `voxcpm2-wgpu` / `voxcpm2-cpu` features below.
+voxcpm-rs = { version = "0.5", default-features = false, optional = true }
+burn = { version = "0.20.1", default-features = false, features = ["std"], optional = true }
 
 [features]
 default = []
@@ -40,6 +47,18 @@ default = []
 # eSpeak-NG phoneme frontend is a runtime dependency, checked for before
 # synthesis.
 inflect-micro = ["dep:ort"]
+
+# ── VoxCPM2 ───────────────────────────────────────────────────────────────────
+#
+# Pick exactly one backend feature; `voxcpm2` alone compiles the plumbing but no
+# inference backend, so use `voxcpm2-wgpu` or `voxcpm2-cpu`.
+#
+# The model has 2B parameters. On the GPU backend it generates faster than
+# realtime and meets the sub-second first-audio target; on CPU it is far slower
+# than realtime and is there for portability, not for live dictation feedback.
+voxcpm2 = ["dep:voxcpm-rs", "dep:burn"]
+voxcpm2-wgpu = ["voxcpm2", "voxcpm-rs/wgpu", "burn/wgpu"]
+voxcpm2-cpu = ["voxcpm2", "voxcpm-rs/cpu", "burn/ndarray"]
 
 [build-dependencies]
 cc = "1"

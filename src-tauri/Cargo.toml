@@ -72,7 +72,7 @@ x11rb = { version = "0.13", features = ["shape"] }
 # fetched at build time — so building requires network access to that host.
 # Use `--no-default-features --features custom-protocol` for an offline build
 # without either engine.
-default = ["custom-protocol", "moonshine", "inflect-micro"]
+default = ["custom-protocol", "moonshine", "inflect-micro", "voxcpm2"]
 custom-protocol = ["tauri/custom-protocol"]
 cuda = ["voxctrl-inference/cuda"]
 vulkan = ["voxctrl-inference/vulkan"]
@@ -85,6 +85,19 @@ moonshine = ["voxctrl-inference/moonshine"]
 # instead of failing obscurely. Needs `espeak-ng` installed at runtime for
 # phonemization either way.
 inflect-micro = ["voxctrl-tts/inflect-micro"]
+# Compiles the VoxCPM2 text-to-speech engine into the app, running the model in
+# pure Rust through the `voxcpm-rs` (Burn) crate — no Python, no ONNX Runtime.
+#
+# The GPU backend is the default because VoxCPM2 is a 2B-parameter model: on a
+# GPU it generates faster than realtime and returns first audio inside the
+# sub-second budget, while the CPU backend is far slower than realtime and is
+# only there for machines with no usable GPU. `wgpu` covers Vulkan, Metal and
+# DX12, so this needs no vendor-specific SDK at build time.
+#
+# Use `voxcpm2-cpu` instead of `voxcpm2` for the portable CPU build; enabling
+# neither leaves the engine selectable but non-speaking, and the UI says so.
+voxcpm2 = ["voxctrl-tts/voxcpm2-wgpu"]
+voxcpm2-cpu = ["voxctrl-tts/voxcpm2-cpu"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

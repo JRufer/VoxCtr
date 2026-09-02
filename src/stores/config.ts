@@ -98,9 +98,25 @@ export interface BreezeTts2Config {
   temperature: number;
 }
 
+export interface VoxCpm2Config {
+  voice_mode: "design" | "clone";
+  design_prompt: string;
+  cloned_voice: string;
+  style_prompt: string;
+  voice_dir: string;
+  model_dir: string;
+  model_repo: string;
+  hf_token: string | null;
+  cfg_value: number;
+  inference_timesteps: number;
+  chunk_patches: number;
+  max_len: number;
+  prewarm: boolean;
+}
+
 export interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro" | "breeze_tts_2";
+  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro" | "breeze_tts_2" | "voxcpm2";
   voice: string;
   voice_dir: string;
   stop_key: string[];
@@ -110,6 +126,7 @@ export interface TtsConfig {
   pocket_tts: PocketTtsConfig;
   inflect_micro: InflectMicroConfig;
   breeze_tts_2: BreezeTts2Config;
+  voxcpm2: VoxCpm2Config;
   snippets: Record<string, string>;
   custom_vocabulary: string[];
 }
@@ -205,6 +222,21 @@ const defaultConfig: AppConfig = {
       prewarm: false,
       gpu: false,
       temperature: 0.7,
+    },
+    voxcpm2: {
+      voice_mode: "design",
+      design_prompt: "A calm and clear female voice speaking at a natural pace",
+      cloned_voice: "",
+      style_prompt: "",
+      voice_dir: "",
+      model_dir: "",
+      model_repo: "openbmb/VoxCPM2",
+      hf_token: null,
+      cfg_value: 2.0,
+      inference_timesteps: 6,
+      chunk_patches: 2,
+      max_len: 750,
+      prewarm: true,
     },
     snippets: {
       "VoxCtrl": "Vox Control"
