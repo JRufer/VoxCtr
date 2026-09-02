@@ -345,6 +345,32 @@ done
 mkdir -p "$root/usr/config"
 cp "$ROOT_DIR"/crates/voxctrl-tts/config/*.yaml "$root/usr/config/"
 
+# Some libraries can be neither stripped nor left on the library path, so they
+# are parked in usr/lib/fallback instead: the AppRun hook exposes each one only
+# when the host has no library of that soname, so a host with its own copy
+# always wins.
+#
+#   libsystemd / libudev — the host's own libmount (Arch) links libsystemd and
+#     needs a newer LIBSYSTEMD_* version node than the build host's copy, while
+#     non-systemd distributions may not ship them at all and the bundled
+#     WebKitGTK needs them.
+#   libgstgl-1.0 / libwayland-server — the bundled WebKitGTK links both
+#     directly, and the strip patterns below would delete them.
+#     libgstgl-1.0.so.0 ships in libgstreamer-gl1.0-0, which
+#     gstreamer1.0-plugins-base does not depend on, so a desktop with no
+#     WebKit of its own can be missing it entirely and the app then dies with
+#     "error while loading shared libraries: libgstgl-1.0.so.0".
+#
+# This has to run before the strip loop below, which skips usr/lib/fallback.
+# Keep this list in sync with .github/workflows/release.yml.
+mkdir -p "$root/usr/lib/fallback"
+for pat in 'libsystemd.so*' 'libudev.so*' \
+           'libgstgl-1.0.so*' 'libwayland-server.so*'; do
+    find "$root" -name "$pat" -not -path '*/fallback/*' -print \
+        -exec mv -t "$root/usr/lib/fallback/" {} + 2>/dev/null || true
+done
+info "Host-first fallback libraries: $(ls "$root/usr/lib/fallback" | tr '\n' ' ')"
+
 # Strip graphics, Wayland, input libraries, and host-dependent/security libraries
 # so the AppImage falls through to the host system's native versions at runtime.
 # The rule: once a library comes from the host, every library it links against
@@ -376,29 +402,20 @@ for pat in \
     'libcanberra-gtk3.so*' 'libcanberra.so*' \
     'libcanberra-gtk-module.so' 'libcanberra-gtk3-module.so' \
     'libcolorreload-gtk-module.so' 'libwindow-decorations-gtk-module.so'; do
-    find "$root" -name "$pat" -print -delete 2>/dev/null || true
+    find "$root" -name "$pat" -not -path '*/fallback/*' -print -delete 2>/dev/null || true
 done
 
-# libsystemd/libudev can be neither stripped nor left on the library path: the
-# host's own libmount (Arch) links libsystemd and needs a newer LIBSYSTEMD_*
-# version node than the build host's copy, while non-systemd distributions may
-# not ship them at all and the bundled WebKitGTK needs them. Park them in
-# usr/lib/fallback; the AppRun hook exposes each one only when the host has no
-# copy of that soname.
-mkdir -p "$root/usr/lib/fallback"
-for pat in 'libsystemd.so*' 'libudev.so*'; do
-    find "$root" -name "$pat" -not -path '*/fallback/*' -print \
-        -exec mv -t "$root/usr/lib/fallback/" {} + 2>/dev/null || true
-done
+# Install the AppRun hook that exposes usr/lib/fallback host-first.
 cp "$ROOT_DIR/scripts/appimage-hooks/host-first-fallback.sh" "$root/apprun-hooks/"
 chmod +x "$root/apprun-hooks/host-first-fallback.sh"
 if ! grep -q "host-first-fallback.sh" "$root/AppRun"; then
     sed -i '/^exec /i source "$this_dir"/apprun-hooks/host-first-fallback.sh' "$root/AppRun"
 fi
 
-# Repackage the AppImage
-rm -f "$LATEST_BUNDLE"
-ARCH=x86_64 ./appimagetool.bin "$root" "$LATEST_BUNDLE" >/dev/null
+# Repackage the AppImage. appimage-pack.sh embeds a runtime that also works on
+# hosts without libfuse2 (Ubuntu 22.04 / Linux Mint 21 and newer ship fuse3
+# only), falling back to appimagetool's own runtime if it cannot fetch one.
+"$ROOT_DIR/scripts/appimage-pack.sh" "$root" "$LATEST_BUNDLE" "$ROOT_DIR/appimagetool.bin" >/dev/null
 
 rm -rf "$work"
 ok "AppImage successfully slimmed."

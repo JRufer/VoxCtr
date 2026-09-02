@@ -241,6 +241,32 @@ jobs:
           mkdir -p "$root/usr/config"
           cp crates/voxctrl-tts/config/*.yaml "$root/usr/config/"
 
+          # Some libraries can be neither stripped nor left on the library path, so
+          # they are parked in usr/lib/fallback instead: the AppRun hook exposes each
+          # one only when the host has no library of that soname, so a host with its
+          # own copy always wins.
+          #
+          #   libsystemd / libudev — the host's own libmount (Arch) links libsystemd
+          #     and needs a newer LIBSYSTEMD_* version node than the build host's
+          #     copy, while non-systemd distributions may not ship them at all and the
+          #     bundled WebKitGTK needs them.
+          #   libgstgl-1.0 / libwayland-server — the bundled WebKitGTK links both
+          #     directly, and the strip patterns below would delete them.
+          #     libgstgl-1.0.so.0 ships in libgstreamer-gl1.0-0, which
+          #     gstreamer1.0-plugins-base does not depend on, so a desktop with no
+          #     WebKit of its own can be missing it entirely and the app then dies
+          #     with "error while loading shared libraries: libgstgl-1.0.so.0".
+          #
+          # This has to run before the strip loop below, which skips usr/lib/fallback.
+          # Keep this list in sync with build_appimage.sh.
+          mkdir -p "$root/usr/lib/fallback"
+          for pat in 'libsystemd.so*' 'libudev.so*' \
+                     'libgstgl-1.0.so*' 'libwayland-server.so*'; do
+            find "$root" -name "$pat" -not -path '*/fallback/*' -print \
+              -exec mv -t "$root/usr/lib/fallback/" {} + 2>/dev/null || true
+          done
+          echo "Host-first fallback libraries:"; ls -la "$root/usr/lib/fallback"
+
           # Everything below is deleted so the AppImage falls through to the
           # host's copy. The rule: once a library comes from the host, every
           # library it links against must come from the host too, or the
@@ -270,28 +296,21 @@ jobs:
             'libgstreamer-*.so*' 'libgst*.so*' 'liborc-0.4.so*' \
             'libunwind.so*' 'libdw.so*' 'libelf.so*' \
             'libbz2.so*' 'liblzma.so*' 'libzstd.so*'; do
-            find "$root" -name "$pat" -print -delete 2>/dev/null || true
+            find "$root" -name "$pat" -not -path '*/fallback/*' -print -delete 2>/dev/null || true
           done
 
-          # libsystemd/libudev can be neither stripped nor left on the library
-          # path: the host's own libmount (Arch) links libsystemd and needs a
-          # newer LIBSYSTEMD_* version node than the build host's copy, while
-          # non-systemd distributions may not ship them at all and the bundled
-          # WebKitGTK needs them. Park them in usr/lib/fallback; the AppRun
-          # hook exposes each one only when the host has no copy of that soname.
-          mkdir -p "$root/usr/lib/fallback"
-          for pat in 'libsystemd.so*' 'libudev.so*'; do
-            find "$root" -name "$pat" -not -path '*/fallback/*' -print \
-              -exec mv -t "$root/usr/lib/fallback/" {} + 2>/dev/null || true
-          done
+          # Install the AppRun hook that exposes usr/lib/fallback host-first.
           cp scripts/appimage-hooks/host-first-fallback.sh "$root/apprun-hooks/"
           chmod +x "$root/apprun-hooks/host-first-fallback.sh"
           if ! grep -q "host-first-fallback.sh" "$root/AppRun"; then
             sed -i '/^exec /i source "$this_dir"/apprun-hooks/host-first-fallback.sh' "$root/AppRun"
           fi
 
-          rm -f "$appimage"
-          ARCH=x86_64 ./appimagetool.bin "$root" "$appimage"
+          # Repackage. appimage-pack.sh embeds a runtime that also works on
+          # hosts without libfuse2 (Ubuntu 22.04 / Linux Mint 21 and newer ship
+          # fuse3 only), falling back to appimagetool's own runtime if it
+          # cannot fetch one, and verifies the result unpacks before returning.
+          ./scripts/appimage-pack.sh "$root" "$appimage" ./appimagetool.bin
           echo "Repackaged $appimage ($(du -h "$appimage" | cut -f1))"
 
       # CUDA build uses --bundles deb only: the CUDA toolkit populates system
@@ -420,6 +439,11 @@ jobs:
             **CPU builds** run on any hardware, including AMD, Intel, and ARM.
 
             ### Linux CPU / GPU — first run
+
+            Needs glibc 2.35 or newer (Ubuntu 22.04+, Linux Mint 21+, Debian
+            12+, Fedora 36+, Arch). Nothing has to be installed first — not
+            even `libfuse2`.
+
             ```bash
             chmod +x VoxCtrl_*-linux-x86_64*.AppImage
             # Optional: installs the desktop entry and text-injection helpers.

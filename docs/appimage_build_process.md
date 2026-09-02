@@ -206,12 +206,20 @@ stay clean on a newer host. The rules, each learned from a startup crash:
 3. **Only strip a library whose soname is stable across distributions.**
    `libxml2` (`.so.16` on Arch) and `libunistring` (`.so.5` on newer hosts)
    stay bundled for that reason.
-4. **`libsystemd` / `libudev` are host-first with a fallback.** Arch's
-   `libmount` links `libsystemd`, so a bundled copy must not shadow the
-   host's; but non-systemd distributions may not have them at all and the
-   bundled WebKitGTK needs them. They live in `usr/lib/fallback/`, and the
+4. **Some libraries are host-first with a bundled fallback.** They live in
+   `usr/lib/fallback/`, and the
    `scripts/appimage-hooks/host-first-fallback.sh` AppRun hook exposes each
-   one only when the host has no library of that soname.
+   one only when the host has no library of that soname — so a host that has
+   its own copy always wins, and a host that has none still starts.
+   * `libsystemd` / `libudev`: Arch's `libmount` links `libsystemd`, so a
+     bundled copy must not shadow the host's; but non-systemd distributions
+     may not have them at all and the bundled WebKitGTK needs them.
+   * `libgstgl-1.0` / `libwayland-server`: the bundled WebKitGTK links both
+     directly, and rules 1 and 2 would otherwise delete them.
+     `libgstgl-1.0.so.0` ships in `libgstreamer-gl1.0-0`, which
+     `gstreamer1.0-plugins-base` does **not** depend on, so a desktop with no
+     WebKit of its own can be missing it and the app dies with
+     `error while loading shared libraries: libgstgl-1.0.so.0`.
 5. **WebKitGTK finds its helper processes relative to the working
    directory.** The Tauri bundler rewrites the compiled-in
    `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1` to
@@ -224,6 +232,28 @@ stay clean on a newer host. The rules, each learned from a startup crash:
    that reason — `pocket_tts::TTSModel::load` looks for it relative to the
    cwd, and the old workaround of temporarily switching cwd from the TTS
    worker raced WebKit's helper spawn and aborted the app.
+6. **The AppImage runtime must not need FUSE 2.** appimagetool's built-in
+   type-2 runtime statically links libfuse 2 and looks for a `fusermount`
+   binary; Ubuntu 22.04 / Linux Mint 21 and newer ship fuse3 (`fusermount3`)
+   and no `libfuse2`, so such an AppImage aborts with
+   `Error: No suitable fusermount binary found on the $PATH` before it ever
+   reaches `AppRun`. `scripts/appimage-pack.sh` therefore packages with
+   [uruntime](https://github.com/VHSgunzo/uruntime), which speaks FUSE 3 and
+   extracts-and-runs itself when no `fusermount` is usable. If that runtime
+   cannot be fetched, or the AppImage built with it does not unpack again,
+   packaging falls back to appimagetool's own runtime, so a build is never
+   left worse off than before.
+
+### Host baseline
+
+The release AppImages are built on the `ubuntu-22.04` runner, which sets the
+floor for what they run on: **glibc 2.35** (`hypot@GLIBC_2.35` in the overlay,
+WebKitGTK and cairo) and **`GLIBCXX_3.4.30`** (GCC 12's libstdc++, needed by
+`usr/bin/voxctrl` and WebKitGTK). Ubuntu 22.04+, Linux Mint 21+, Debian 12+ and
+Fedora 36+ satisfy both; Ubuntu 20.04, Mint 20, Debian 11 and RHEL 9 do not.
+Building locally with `build_appimage.sh` produces an AppImage with *your*
+distribution's baseline — on a rolling distro that is far higher than 22.04's,
+so ship CI artifacts, not local builds.
 
 ---
 
