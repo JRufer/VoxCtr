@@ -43,7 +43,7 @@ VoxCtrl/
     ├── voxctrl-inference/  # whisper.cpp/Moonshine transcription + post-processing
     ├── voxctrl-routing/    # OutputTarget + HotkeyBinding data models, router
     ├── voxctrl-inject/     # Text injection via wtype/xdotool/clipboard
-    ├── voxctrl-tts/        # Piper/Espeak/Pocket-TTS/Inflect-Micro TTS engine
+    ├── voxctrl-tts/        # VoxCPM2/Piper/Espeak/Pocket-TTS/Inflect-Micro TTS engine
     ├── voxctrl-mcp/        # MCP JSON-RPC server (Unix socket / named pipe)
     ├── voxctrl-dbus/       # DBus service (Linux session bus)
     ├── voxctrl-llm/        # OpenAI-compatible LLM HTTP client
@@ -183,5 +183,6 @@ App.svelte  (route switcher)
 | `~/.local/share/voxctrl/models/` | Downloaded Whisper GGUF models |
 | `~/.local/share/voxctrl/piper-voices/` | Downloaded Piper voice packs |
 | `~/.local/share/voxctrl/models/inflect-micro/` | Inflect-Micro-v2 ONNX graphs and symbol list |
+| `~/.local/share/voxctrl/models/voxcpm2/` | VoxCPM2 checkpoint (config, tokenizer, model and AudioVAE weights) |
 | `/tmp/voxctrl-mcp.sock` | MCP Unix domain socket (Linux) |
 | `\\.\pipe\voxctrl-mcp` | MCP named pipe (Windows) |

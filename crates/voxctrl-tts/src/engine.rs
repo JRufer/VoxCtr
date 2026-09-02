@@ -16,6 +16,7 @@ use crate::breeze::{speak_breeze_tts_2, BreezeModelSlot};
 use crate::inflect::speak_inflect_micro;
 use crate::piper::{get_voice_path, piper_binary, sample_rate_for_voice};
 use crate::pocket::speak_pocket_tts;
+use crate::voxcpm::{speak_voxcpm2, VoxCpmModelSlot};
 
 /// The worker's cached Inflect-Micro-v2 sessions. Without the `inflect-micro`
 /// feature there is no model type to cache, so the slot degenerates to `()` and
@@ -128,6 +129,7 @@ impl TtsEngineWorker {
             TtsEngine::PocketTts => config.pocket_tts.prewarm,
             TtsEngine::InflectMicro => config.inflect_micro.prewarm,
             TtsEngine::BreezeTts2 => config.breeze_tts_2.prewarm,
+            TtsEngine::VoxCpm2 => config.voxcpm2.prewarm,
             _ => false,
         };
         if prewarm {
@@ -170,6 +172,10 @@ impl TtsEngineWorker {
         // Breeze-TTS-2 session + per-voice cloned state, cached for the same lifetime.
         let mut breeze_tts_2_model: BreezeModelSlot = None;
         let mut breeze_tts_2_voice_states: HashMap<String, pocket_tts::ModelState> = HashMap::new();
+        // VoxCPM2 session (model + decoded reference-clip cache), cached for the
+        // same lifetime. Loading the checkpoint costs 20-25 s, so it happens at
+        // most once per worker thread.
+        let mut voxcpm2_session: VoxCpmModelSlot = None;
 
         // Persistent Rodio Output Stream - kept alive for the lifetime of this thread!
         let mut audio_context: Option<(rodio::OutputStream, rodio::OutputStreamHandle, Arc<rodio::Sink>)> = None;
@@ -270,6 +276,15 @@ impl TtsEngineWorker {
                             &utterance,
                             &mut breeze_tts_2_model,
                             &mut breeze_tts_2_voice_states,
+                            &self.on_playback_start,
+                            &sink,
+                            &self.generation,
+                            generation,
+                        ),
+                        TtsEngine::VoxCpm2 => speak_voxcpm2(
+                            &current_config,
+                            &utterance,
+                            &mut voxcpm2_session,
                             &self.on_playback_start,
                             &sink,
                             &self.generation,

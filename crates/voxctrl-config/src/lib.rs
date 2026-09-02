@@ -304,6 +304,8 @@ pub enum TtsEngine {
     InflectMicro,
     #[serde(rename = "breeze_tts_2", alias = "breeze_tts2")]
     BreezeTts2,
+    #[serde(rename = "voxcpm2", alias = "voxcpm_2", alias = "voxcpm")]
+    VoxCpm2,
 }
 
 impl Default for TtsEngine {
@@ -412,6 +414,153 @@ impl Default for BreezeTts2Config {
     }
 }
 
+fn default_voxcpm2_design_prompt() -> String {
+    "A calm and clear female voice speaking at a natural pace".into()
+}
+
+fn default_voxcpm2_cfg_value() -> f32 {
+    2.0
+}
+
+fn default_voxcpm2_inference_timesteps() -> u32 {
+    // Every timestep is one pass of the diffusion sampler and its cost is
+    // linear, so this is the second-biggest lever on latency. Upstream defaults
+    // to 10; 6 is the floor of the range that keeps quality intact and is
+    // meaningfully faster.
+    6
+}
+
+fn default_voxcpm2_chunk_patches() -> u32 {
+    // Generation granularity, not playback latency: the lead buffer decides when
+    // speech starts, so this no longer gates the first sound. What it does
+    // control is throughput — the AudioVAE re-decodes the accumulated latent per
+    // chunk, so the decode work over an utterance goes as O(N^2 / chunk_patches).
+    // Larger chunks therefore generate *faster*, which is what keeps playback
+    // from stalling. 4 balances that against feeding the sink smoothly.
+    4
+}
+
+fn default_voxcpm2_prebuffer_ms() -> u32 {
+    // Minimum audio to build up before playback starts. Once speech is playing,
+    // the sink drains in real time; if generation cannot refill it at least that
+    // fast, rodio splices silence into the middle of the sentence. This lead
+    // absorbs the jitter between chunks, and when generation is measurably
+    // slower than realtime the engine extends it automatically.
+    400
+}
+
+fn default_voxcpm2_max_len() -> u32 {
+    // Hard cap on generated patches, so a pathological input cannot generate
+    // indefinitely. 750 patches is roughly a minute of speech.
+    750
+}
+
+fn default_voxcpm2_prewarm() -> bool {
+    // Unlike the other neural engines this one defaults to on: VoxCPM2 is a 2B
+    // model whose checkpoint takes 20-25 s to load. Without prewarming the
+    // first utterance can never meet the latency target, so the default that
+    // makes the engine usable is the one that loads it up front.
+    true
+}
+
+fn default_voxcpm2_model_repo() -> String {
+    "openbmb/VoxCPM2".into()
+}
+
+fn default_voxcpm2_voice_mode() -> String {
+    "design".into()
+}
+
+/// VoxCPM2 (<https://github.com/OpenBMB/VoxCPM>) — a 2B-parameter tokenizer-free
+/// diffusion-autoregressive speech model under Apache-2.0, covering 30
+/// languages. VoxCtrl runs it in process through the pure-Rust `voxcpm-rs`
+/// crate (Burn), so there is no Python, no ONNX Runtime and no subprocess.
+///
+/// It offers the same two ways to pick a voice as Breeze-TTS-2 — natural-language
+/// *voice design* and *voice cloning* from a reference clip — and adds style
+/// control on top of a cloned voice.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoxCpm2Config {
+    /// Voice selection mode: "design" (natural-language description) or "clone"
+    /// (reference `.wav` clip).
+    #[serde(default = "default_voxcpm2_voice_mode")]
+    pub voice_mode: String,
+    /// Natural-language description of the speaker, used in "design" mode. The
+    /// model consumes it as a `(description)` prefix on the text.
+    #[serde(default = "default_voxcpm2_design_prompt")]
+    pub design_prompt: String,
+    /// Selected reference clip id from the shared voice folder, used in "clone" mode.
+    #[serde(default)]
+    pub cloned_voice: String,
+    /// Optional delivery instruction layered on top of a cloned voice
+    /// (e.g. "slightly faster, cheerful tone"). Empty = clone the clip as-is.
+    #[serde(default)]
+    pub style_prompt: String,
+    /// Shared voice directory for custom clips (empty = platform default
+    /// `~/.local/share/voxctrl/pocket-tts-voices/`, shared with Pocket-TTS and
+    /// Breeze-TTS-2).
+    #[serde(default)]
+    pub voice_dir: String,
+    /// Directory holding the checkpoint. Empty = platform default
+    /// (`~/.local/share/voxctrl/models/voxcpm2/`).
+    #[serde(default)]
+    pub model_dir: String,
+    /// HuggingFace repository the weights come from. Overridable so a mirror or
+    /// a fine-tune can be used without a rebuild.
+    #[serde(default = "default_voxcpm2_model_repo")]
+    pub model_repo: String,
+    /// HuggingFace access token. The default repository is Apache-2.0 and
+    /// ungated, so this is only needed for a private mirror.
+    #[serde(default)]
+    pub hf_token: Option<String>,
+    /// Classifier-free guidance scale. Higher follows the text and voice prompt
+    /// more closely; 1.5 to 3.0 is the useful range.
+    #[serde(default = "default_voxcpm2_cfg_value")]
+    pub cfg_value: f32,
+    /// Diffusion steps per patch. Linear in generation time; below 6 quality
+    /// degrades audibly.
+    #[serde(default = "default_voxcpm2_inference_timesteps")]
+    pub inference_timesteps: u32,
+    /// Audio patches generated per streamed chunk (~80 ms of audio each).
+    /// Affects generation throughput rather than when speech starts: decode work
+    /// falls as this rises, so larger values generate faster.
+    #[serde(default = "default_voxcpm2_chunk_patches")]
+    pub chunk_patches: u32,
+    /// Milliseconds of audio buffered before playback begins. The lead that
+    /// keeps the sink from running dry mid-sentence; raise it if speech ever
+    /// stalls partway through. Extended automatically when generation is
+    /// measured to be slower than realtime.
+    #[serde(default = "default_voxcpm2_prebuffer_ms")]
+    pub prebuffer_ms: u32,
+    /// Hard cap on generated patches per utterance (~80 ms of audio each).
+    #[serde(default = "default_voxcpm2_max_len")]
+    pub max_len: u32,
+    /// Load the checkpoint at app startup rather than on the first utterance.
+    #[serde(default = "default_voxcpm2_prewarm")]
+    pub prewarm: bool,
+}
+
+impl Default for VoxCpm2Config {
+    fn default() -> Self {
+        Self {
+            voice_mode: default_voxcpm2_voice_mode(),
+            design_prompt: default_voxcpm2_design_prompt(),
+            cloned_voice: String::new(),
+            style_prompt: String::new(),
+            voice_dir: String::new(),
+            model_dir: String::new(),
+            model_repo: default_voxcpm2_model_repo(),
+            hf_token: None,
+            cfg_value: default_voxcpm2_cfg_value(),
+            inference_timesteps: default_voxcpm2_inference_timesteps(),
+            chunk_patches: default_voxcpm2_chunk_patches(),
+            prebuffer_ms: default_voxcpm2_prebuffer_ms(),
+            max_len: default_voxcpm2_max_len(),
+            prewarm: default_voxcpm2_prewarm(),
+        }
+    }
+}
+
 fn default_inflect_micro_seed() -> u64 {
     0
 }
@@ -480,6 +629,8 @@ pub struct TtsConfig {
     #[serde(default)]
     pub breeze_tts_2: BreezeTts2Config,
     #[serde(default)]
+    pub voxcpm2: VoxCpm2Config,
+    #[serde(default)]
     pub snippets: std::collections::HashMap<String, String>,
 }
 
@@ -501,6 +652,7 @@ impl Default for TtsConfig {
             pocket_tts: PocketTtsConfig::default(),
             inflect_micro: InflectMicroConfig::default(),
             breeze_tts_2: BreezeTts2Config::default(),
+            voxcpm2: VoxCpm2Config::default(),
             snippets: {
                 let mut map = std::collections::HashMap::new();
                 map.insert("VoxCtrl".into(), "Voks Con-trol".into());
@@ -952,6 +1104,67 @@ mod tests {
 
         let parsed2: TtsEngine = serde_json::from_str(r#""breeze_tts2""#).unwrap();
         assert_eq!(parsed2, TtsEngine::BreezeTts2);
+    }
+
+    #[test]
+    fn test_voxcpm2_serde() {
+        let engine = TtsEngine::VoxCpm2;
+        let json = serde_json::to_string(&engine).unwrap();
+        assert_eq!(json, r#""voxcpm2""#);
+
+        for alias in [r#""voxcpm2""#, r#""voxcpm_2""#, r#""voxcpm""#] {
+            let parsed: TtsEngine = serde_json::from_str(alias).unwrap();
+            assert_eq!(parsed, TtsEngine::VoxCpm2, "alias {alias} must parse");
+        }
+    }
+
+    #[test]
+    fn test_voxcpm2_defaults_are_low_latency() {
+        let cfg = VoxCpm2Config::default();
+        assert_eq!(cfg.voice_mode, "design");
+        // Prewarm defaults on: a cold 2B PyTorch load can never meet the
+        // sub-second target, so the engine is unusable without it.
+        assert!(cfg.prewarm);
+        // Below the upstream defaults: these two are the latency knobs.
+        assert!(cfg.inference_timesteps < 10);
+        assert!(cfg.inference_timesteps >= 6, "below 6 steps quality degrades");
+        assert!(cfg.chunk_patches >= 1);
+        // A lead buffer, not zero: playback that starts on the first chunk
+        // starves as soon as one chunk takes longer than the last one plays.
+        assert!(cfg.prebuffer_ms >= 200);
+        assert_eq!(cfg.model_repo, "openbmb/VoxCPM2");
+    }
+
+    #[test]
+    fn test_voxcpm2_config_absent_from_json_uses_defaults() {
+        // An existing config file written before this engine existed has no
+        // `voxcpm2` key at all; it must still load.
+        let tts: TtsConfig = serde_json::from_str(
+            r#"{"enabled":true,"engine":"espeak","voice":"x","stop_key":[],"response_overlay":true}"#,
+        )
+        .unwrap();
+        assert_eq!(tts.voxcpm2.design_prompt, default_voxcpm2_design_prompt());
+        assert!(tts.voxcpm2.cloned_voice.is_empty());
+    }
+
+    #[test]
+    fn test_voxcpm2_config_round_trips() {
+        let tts = TtsConfig {
+            engine: TtsEngine::VoxCpm2,
+            voxcpm2: VoxCpm2Config {
+                voice_mode: "clone".into(),
+                cloned_voice: "my_voice".into(),
+                inference_timesteps: 4,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&tts).unwrap();
+        let back: TtsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.engine, TtsEngine::VoxCpm2);
+        assert_eq!(back.voxcpm2.voice_mode, "clone");
+        assert_eq!(back.voxcpm2.cloned_voice, "my_voice");
+        assert_eq!(back.voxcpm2.inference_timesteps, 4);
     }
 }
 

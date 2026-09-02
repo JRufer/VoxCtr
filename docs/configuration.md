@@ -232,16 +232,43 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Enable TTS subsystem |
-| `engine` | string | `"piper"` | Synthesis engine: `"breeze_tts_2"`, `"piper"`, `"pocket_tts"`, `"inflect_micro"`, or `"espeak"` |
+| `engine` | string | `"piper"` | Synthesis engine: `"voxcpm2"`, `"breeze_tts_2"`, `"piper"`, `"pocket_tts"`, `"inflect_micro"`, or `"espeak"` |
 | `voice` | string | `"en-us-lessac-medium"` | Active Piper voice name (hyphen-delimited, e.g. `"en-us-ryan-high"`) |
 | `voice_dir` | string | `""` | Directory for Piper voice files; empty = `~/.local/share/voxctrl/piper-voices/`. Supports `~` expansion. |
 | `stop_key` | string[] | `["KEY_ESCAPE"]` | Keys that cancel current TTS playback |
 | `response_overlay` | bool | `true` | Show overlay indicator while TTS is speaking |
 | `speed` | float | `1.0` | Speech synthesis speed multiplier (0.5 – 2.0); not used by Pocket-TTS |
 | `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Piper |
+| `voxcpm2` | object | | VoxCPM2 engine sub-configuration (see below) |
 | `breeze_tts_2` | object | | Breeze-TTS-2 engine sub-configuration (see below) |
 | `pocket_tts` | object | | Pocket-TTS engine sub-configuration (see below) |
 | `inflect_micro` | object | | Inflect-Micro-v2 engine sub-configuration (see below) |
+
+**`voxcpm2` sub-object:**
+
+[VoxCPM2](https://github.com/OpenBMB/VoxCPM) is a 2B-parameter multilingual speech model
+under **Apache-2.0**, run in process in pure Rust via the
+[`voxcpm-rs`](https://crates.io/crates/voxcpm-rs) crate (Burn) — no Python, no subprocess.
+The weights are public, so no access token is required. It supports both natural-language
+**voice design** and **voice cloning** from a reference clip. See [tts.md](tts.md#voxcpm2-neural-voice-design--voice-cloning)
+for the engine notes and the latency tuning guide.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `voice_mode` | string | `"design"` | `"design"` to describe the voice in words, or `"clone"` to use a reference clip |
+| `design_prompt` | string | `"A calm and clear female voice speaking at a natural pace"` | Natural-language speaker description, used in `design` mode. Applied as a `(description)` prefix on the text |
+| `cloned_voice` | string | `""` | Reference clip id used in `clone` mode: a built-in voice (`"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"`) or the filename stem of a clip in `voice_dir` |
+| `style_prompt` | string | `""` | Optional delivery instruction layered on a cloned voice (e.g. `"slightly faster, cheerful tone"`). Does not change the cloned identity. Ignored in `design` mode |
+| `voice_dir` | string | `""` | Directory scanned for custom `.wav` clips; empty = `~/.local/share/voxctrl/pocket-tts-voices/`, shared with Pocket-TTS and Breeze-TTS-2. A sibling `<name>.txt` transcript enables continuation-style cloning. Supports `~` expansion |
+| `model_dir` | string | `""` | Directory holding the checkpoint; empty = `~/.local/share/voxctrl/models/voxcpm2/`. Supports `~` expansion |
+| `model_repo` | string | `"openbmb/VoxCPM2"` | HuggingFace repository the weights are fetched from. Change only for a mirror or a fine-tune |
+| `hf_token` | string or null | `null` | Access token. Not needed for the default public repository; only for a private mirror |
+| `cfg_value` | float | `2.0` | Classifier-free guidance scale (1.5 – 3.0). Higher follows the text and voice prompt more closely |
+| `inference_timesteps` | int | `6` | Diffusion steps per patch. Linear cost, so it scales the whole generation; below 6 quality degrades audibly. Upstream defaults to 10 |
+| `chunk_patches` | int | `4` | Patches generated per streamed chunk (~80 ms each). A throughput control rather than a latency one: decode work over an utterance scales as `O(N² / chunk_patches)`, so larger values generate faster |
+| `prebuffer_ms` | int | `400` | Milliseconds of audio banked before playback starts — the time-to-first-sound control, and the cure for speech that stalls part-way through. Extended automatically when generation is measured slower than realtime; see [tts.md](tts.md#latency-and-smooth-playback) |
+| `max_len` | int | `750` | Hard cap on generated patches per utterance (~1 minute of speech) |
+| `prewarm` | bool | `true` | Load the checkpoint at startup rather than on the first utterance. On by default: a cold load costs 20–25 s, so leaving it off makes the first response miss the latency target |
 
 **`breeze_tts_2` sub-object:**
 

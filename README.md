@@ -17,7 +17,7 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 * **No Cloud API Keys Required**: VoxCtrl relies exclusively on OpenAI's Whisper models (via native CPU/GPU accelerated `whisper-rs`) running directly on your local hardware.
 * **No Telemetry**: Your ambient microphone data never leaves your machine. There are no hidden tracking scripts or analytical pings.
 * **Air-Gapped Ready**: Once the application and models are downloaded, VoxCtrl requires zero internet access to function.
-* **Local Neural Voices**: All text-to-speech feedback is generated offline by a local engine — Breeze-TTS-2, Piper, Pocket-TTS, Inflect-Micro-v2, or eSpeak-NG.
+* **Local Neural Voices**: All text-to-speech feedback is generated offline by a local engine — VoxCPM2, Breeze-TTS-2, Piper, Pocket-TTS, Inflect-Micro-v2, or eSpeak-NG.
 
 **Full detail, including how to verify each claim yourself: [docs/privacy.md](docs/privacy.md).**
 
@@ -43,7 +43,7 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 * **Built-in Model Context Protocol (MCP) Server**: Exposes voice dictation and speech synthesis as high-level JSON-RPC tools to AI clients (like Claude Desktop or Cursor) via local secure sockets—keeping integrations fully local.
 * **Privacy-Preserving Global Hotkeys**: Shortcuts are registered with your desktop through the XDG `GlobalShortcuts` portal (KDE Plasma, GNOME 48+, Hyprland), so VoxCtrl receives its own shortcuts and never reads a keystroke. Bind hold-to-talk, toggle-to-talk, double-tap, or double-tap & hold gestures. Works identically on Wayland and X11, with no permission setup at all.
 * **DBus Dictation Service**: Exposes `ai.voxctrl.Dictation` on the local Linux session bus, letting you script recording states securely without network exposure.
-* **Neural Text-to-Speech (TTS)**: Built-in local voice feedback with a choice of engines — **Breeze-TTS-2** (neural, voice design from natural language prompts; gated HF download under non-commercial license), **Piper** (neural, high quality), **Pocket-TTS** (neural, clones a voice from a reference clip), **Inflect-Micro-v2** (neural, 38 MB ONNX), and **eSpeak-NG** (lightweight, always available) — with automatic local package installation and an in-app model downloader.
+* **Neural Text-to-Speech (TTS)**: Built-in local voice feedback with a choice of engines — **VoxCPM2** (2B multilingual neural, voice design *and* voice cloning, Apache-2.0, pure Rust with sub-second streamed responses), **Breeze-TTS-2** (neural, voice design from natural language prompts; gated HF download under non-commercial license), **Piper** (neural, high quality), **Pocket-TTS** (neural, clones a voice from a reference clip), **Inflect-Micro-v2** (neural, 38 MB ONNX), and **eSpeak-NG** (lightweight, always available) — with automatic local package installation and an in-app model downloader.
 * **Intelligent Post-Processing & LLM Rewriting**: Real-time automatic filler-word cleanup (e.g. stripping "um", "uh", "hmm") to sanitize dictation, combined with optional post-processing through any **OpenAI-compatible API server** (a local [Ollama](https://ollama.ai/) or LM Studio instance, or a hosted provider) for real-time grammar correction, tone rewriting, or custom formatting. Point it at any URL and supply an API key when the server requires one.
 
 ---
@@ -372,6 +372,27 @@ cargo tauri dev
 npm run build
 npx tauri build
 ```
+
+### Text-to-speech build flags
+
+Every TTS engine except VoxCPM2's compute backend is a pure runtime choice. VoxCPM2 is a
+2B-parameter model whose backend is fixed at build time, and the default build compiles the
+GPU one:
+
+```bash
+npx tauri build                                       # VoxCPM2 on wgpu (Vulkan / Metal / DX12)
+npx tauri build -- --no-default-features \
+    --features custom-protocol,voxcpm2-cpu            # VoxCPM2 on CPU (ndarray)
+npx tauri build -- --no-default-features \
+    --features custom-protocol                        # no VoxCPM2, no ONNX engines (offline build)
+```
+
+A build without a VoxCPM2 backend still downloads the model and keeps its settings; only
+synthesis is unavailable, and Settings → TTS says so rather than failing on the first
+utterance. It also reports which backend the running build uses.
+
+See [docs/tts.md](docs/tts.md) for all six engines, the voice design and voice cloning
+workflows, and the VoxCPM2 latency tuning guide.
 
 ---
 

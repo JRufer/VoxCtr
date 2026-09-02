@@ -438,6 +438,8 @@ pub fn run() {
             download_voice,
             check_breeze_tts_2_ready,
             download_breeze_tts_2,
+            voxcpm2_status,
+            download_voxcpm2,
             check_pocket_tts_ready,
             download_pocket_tts,
             list_pocket_tts_voices,

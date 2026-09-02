@@ -10,6 +10,115 @@ VoxCtrl includes a neural TTS engine for voice output. This is useful for readin
 
 ## Engines
 
+### VoxCPM2 (Neural, Voice Design + Voice Cloning)
+
+[VoxCPM2](https://github.com/OpenBMB/VoxCPM) is OpenBMB's 2B-parameter, tokenizer-free
+diffusion-autoregressive speech model, covering 30 languages and released under
+**Apache-2.0** — so unlike Breeze-TTS-2 and Pocket-TTS there is no gated repository, no
+access token and no non-commercial restriction.
+
+The upstream reference implementation is Python and PyTorch. VoxCtrl does not use it.
+Synthesis runs **in process, in pure Rust** through the
+[`voxcpm-rs`](https://crates.io/crates/voxcpm-rs) crate on the [Burn](https://burn.dev)
+framework — the same shape of dependency as the `pocket-tts` crate behind Pocket-TTS.
+There is no Python interpreter, no subprocess and no ONNX Runtime anywhere in this path.
+
+**Two ways to choose a voice**, matching the Breeze-TTS-2 settings layout:
+
+- **Voice Design** — describe the speaker in natural language and the model invents a
+  voice to match. No reference audio at all. VoxCPM2 consumes the description as a
+  `(description)` prefix on the text, which VoxCtrl composes for you.
+- **Voice Cloning** — point at a reference `.wav` clip. Clips come from the voice folder
+  shared with Pocket-TTS and Breeze-TTS-2 (`~/.local/share/voxctrl/pocket-tts-voices/`),
+  so a clip dropped in once works with every engine. An optional **style instruction**
+  ("slightly faster, cheerful tone") shapes delivery without changing who the voice is.
+
+  Placing a transcript next to the clip (`myvoice.wav` + `myvoice.txt`) upgrades cloning
+  from imitation to *continuation*: the model is conditioned on the recording and its
+  text together, and tracks the reference speaker noticeably more closely.
+
+#### Latency and smooth playback
+
+The design target is **first audio in under a second, with no gaps once it starts**. Those
+two goals pull against each other, and the engine balances them explicitly.
+
+| Lever | What it does | Default |
+|---|---|---|
+| Pre-warm | Loads the checkpoint (20–25 s) and compiles GPU shaders at startup instead of on the first utterance | **on** |
+| Lead buffer | Audio banked before playback starts. The time-to-first-sound control, and the thing that keeps speech from stalling | 400 ms |
+| Chunk size | Patches generated at a time (~80 ms each). Affects generation throughput, not when speech starts | 4 |
+| Diffusion steps | Sampling steps per patch; cost is linear across the whole generation. Below 6 quality degrades audibly | 6 |
+
+**Why a lead buffer is required.** Once playback begins the audio device consumes sound in
+real time, and it does not wait. If the next chunk is not finished when the previous one
+runs out, rodio's sink splices in a block of silence and carries on — speech that stalls
+and resumes, over and over. Playing each generated chunk the moment it appears therefore
+sounds choppy on any machine where generation is not comfortably faster than playback.
+
+So VoxCtrl banks a lead first. It measures the **real-time factor** of generation — seconds
+of compute per second of audio — from the second chunk onward, excluding the one-off
+prefill so the figure reflects the steady-state rate:
+
+- **RTF below 0.8** (comfortably faster than realtime): the buffer only grows once playback
+  starts, so the configured 400 ms lead is already safe and speech begins immediately.
+- **RTF at or above 0.8**: playback would drain the buffer faster than generation refills
+  it. The lead is extended to cover the whole shortfall over the rest of the utterance,
+  `(RTF − 1) × remaining`, plus a margin for jitter. Speech starts later but does not break up.
+- **Generation finishes before the lead is reached**: the whole utterance is in hand, so it
+  is played as one complete buffer.
+
+Audio also reaches the sink as **one continuous source** per utterance rather than one per
+chunk. A per-chunk queue makes every chunk boundary a seam in the audio pipeline; a single
+source has no seams to hear.
+
+**If speech still breaks up**, raise **Lead Buffer** in Settings → TTS. Raising **Chunk
+Size** also helps for a different reason: the AudioVAE re-decodes the accumulated latent on
+each chunk, so decode work over an utterance scales as `O(N² / chunk_patches)` — bigger
+chunks generate faster. Lowering **Diffusion Steps** to 6 (or 5 at a small quality cost) is
+the other throughput lever.
+
+Two further optimizations are automatic. The loaded model is cached for the lifetime of the
+TTS worker thread, so the 20–25 s load is paid at most once per run. Reference clips are
+decoded and resampled once and kept as raw PCM, so cloning does not re-read a file per
+utterance.
+
+Stopping is cooperative and prompt: VoxCtrl hands the generator a cancel token that the
+model polls between diffusion steps, so pressing the stop key abandons the current step
+rather than finishing the chunk.
+
+The backend reports its own numbers — first chunk, playback start and the lead actually
+used are logged per utterance at `info` level, and Settings → TTS shows time-to-first-sound
+as **Run speed**.
+
+#### Requirements
+
+- **A GPU, in practice.** The default build compiles the `wgpu` backend, which covers
+  Vulkan, Metal and DX12 and needs no vendor SDK at build time. It does need a working
+  driver at runtime — on Linux that means the host's Vulkan loader and ICD, which the
+  AppImage uses from the host rather than bundling. A 2B model on the CPU backend is far
+  slower than realtime and will not meet the latency target; it exists for portability.
+- **~4 GB of disk** for the checkpoint (`config.json`, `tokenizer.json`,
+  `model.safetensors`, `audiovae.pth`), downloaded into
+  `~/.local/share/voxctrl/models/voxcpm2/` from Settings → TTS. The weights file is
+  streamed to a `.part` file and renamed on completion, so an interrupted download never
+  looks finished.
+- **No access token.** The repository is public; the token field exists only for private
+  mirrors.
+
+#### Build flags
+
+The engine ships in the default build. To choose the backend explicitly:
+
+```bash
+cargo tauri build                                        # GPU (wgpu) — the default
+cargo tauri build --no-default-features \
+    --features custom-protocol,voxcpm2-cpu               # CPU (ndarray) fallback
+```
+
+A build without either feature still downloads the model and saves these settings; only
+synthesis is unavailable, and Settings says so up front rather than failing on the first
+utterance. Settings → TTS also reports which backend the running build will use.
+
 ### Breeze-TTS-2 (Neural, Voice Design)
 [Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is an open-weight, bilingual (English/Chinese) speech generation model by BreezeBlue, designed specifically for ultra-low latency real-time interaction.
 
@@ -103,6 +212,10 @@ If Piper is unavailable or no voice is downloaded, VoxCtrl can use `espeak-ng`. 
 VoxCtrl supports **GPU Acceleration** for the **Piper** neural engine:
 
 *   **Piper:** Appends the `--cuda` CLI flag to the spawned `piper` subprocess command dynamically at runtime.
+
+VoxCPM2 is the exception to the table below: its backend is chosen at **build** time
+(`voxcpm2` for GPU via wgpu, `voxcpm2-cpu` for CPU) rather than by the `gpu` config flag,
+and Settings → TTS reports which one the running build has.
 
 Pocket-TTS (Candle-based) does not currently expose a GPU toggle in this crate version, and Inflect-Micro-v2 runs on ONNX Runtime's CPU provider, so the `gpu` config flag and the GPU setting in Settings → TTS only apply to Piper. Inflect is small enough (9.4M parameters) that CPU synthesis is fast; the upstream export also supports CUDA and DirectML providers, which VoxCtrl does not currently select.
 

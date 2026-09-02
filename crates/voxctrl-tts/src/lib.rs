@@ -4,6 +4,7 @@
 //! - [`piper`]   — Piper voice catalogue, path resolution, binary/voice download
 //! - [`pocket`]  — Pocket-TTS (Candle-based neural voice cloning) catalogue + synthesis
 //! - [`inflect`] — Inflect-Micro-v2 (ONNX VITS) phoneme frontend + synthesis
+//! - [`voxcpm`]  — VoxCPM2 (pure-Rust Burn port) voice design + cloning
 //! - [`engine`]  — utterance queue, worker thread, Piper/eSpeak synthesis
 //! - [`fifo`]    — named-pipe responder for external speak triggers
 //!
@@ -17,6 +18,7 @@ mod fifo;
 pub mod inflect;
 mod piper;
 mod pocket;
+pub mod voxcpm;
 
 pub use breeze::{
     breeze_tts_2_model_dir, download_breeze_tts_2_assets, is_breeze_tts_2_ready,
@@ -33,6 +35,10 @@ pub use inflect::{
 pub use piper::{
     download_piper_binary, download_voice, get_voice_path, is_voice_downloaded, piper_binary,
     piper_voices_dir, VoiceInfo, PIPER_VOICES,
+};
+pub use voxcpm::{
+    download_voxcpm2_assets, is_voxcpm2_ready, voxcpm2_backend_name, voxcpm2_missing_files,
+    voxcpm2_model_dir, VOXCPM2_COMPILED, VOXCPM2_DEFAULT_REPO,
 };
 pub use pocket::{
     download_pocket_tts_assets, is_pocket_tts_ready, pocket_tts_voice, pocket_tts_voice_catalogue,
