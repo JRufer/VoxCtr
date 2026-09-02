@@ -431,12 +431,22 @@ fn default_voxcpm2_inference_timesteps() -> u32 {
 }
 
 fn default_voxcpm2_chunk_patches() -> u32 {
-    // The direct time-to-first-audio knob. One patch is ~80 ms of audio and one
-    // autoregressive step, and streaming emits its first chunk only once this
-    // many patches exist. voxcpm-rs defaults to 5 (~400 ms of audio, and five
-    // steps of waiting); 2 halves the wait for the first sound at the cost of
-    // some redundant decode work later in the utterance.
-    2
+    // Generation granularity, not playback latency: the lead buffer decides when
+    // speech starts, so this no longer gates the first sound. What it does
+    // control is throughput — the AudioVAE re-decodes the accumulated latent per
+    // chunk, so the decode work over an utterance goes as O(N^2 / chunk_patches).
+    // Larger chunks therefore generate *faster*, which is what keeps playback
+    // from stalling. 4 balances that against feeding the sink smoothly.
+    4
+}
+
+fn default_voxcpm2_prebuffer_ms() -> u32 {
+    // Minimum audio to build up before playback starts. Once speech is playing,
+    // the sink drains in real time; if generation cannot refill it at least that
+    // fast, rodio splices silence into the middle of the sentence. This lead
+    // absorbs the jitter between chunks, and when generation is measurably
+    // slower than realtime the engine extends it automatically.
+    400
 }
 
 fn default_voxcpm2_max_len() -> u32 {
@@ -511,11 +521,17 @@ pub struct VoxCpm2Config {
     /// degrades audibly.
     #[serde(default = "default_voxcpm2_inference_timesteps")]
     pub inference_timesteps: u32,
-    /// Audio patches accumulated per streamed chunk. The direct
-    /// time-to-first-audio knob: lower speaks sooner, higher is more efficient
-    /// over a long utterance.
+    /// Audio patches generated per streamed chunk (~80 ms of audio each).
+    /// Affects generation throughput rather than when speech starts: decode work
+    /// falls as this rises, so larger values generate faster.
     #[serde(default = "default_voxcpm2_chunk_patches")]
     pub chunk_patches: u32,
+    /// Milliseconds of audio buffered before playback begins. The lead that
+    /// keeps the sink from running dry mid-sentence; raise it if speech ever
+    /// stalls partway through. Extended automatically when generation is
+    /// measured to be slower than realtime.
+    #[serde(default = "default_voxcpm2_prebuffer_ms")]
+    pub prebuffer_ms: u32,
     /// Hard cap on generated patches per utterance (~80 ms of audio each).
     #[serde(default = "default_voxcpm2_max_len")]
     pub max_len: u32,
@@ -538,6 +554,7 @@ impl Default for VoxCpm2Config {
             cfg_value: default_voxcpm2_cfg_value(),
             inference_timesteps: default_voxcpm2_inference_timesteps(),
             chunk_patches: default_voxcpm2_chunk_patches(),
+            prebuffer_ms: default_voxcpm2_prebuffer_ms(),
             max_len: default_voxcpm2_max_len(),
             prewarm: default_voxcpm2_prewarm(),
         }
@@ -1111,8 +1128,10 @@ mod tests {
         // Below the upstream defaults: these two are the latency knobs.
         assert!(cfg.inference_timesteps < 10);
         assert!(cfg.inference_timesteps >= 6, "below 6 steps quality degrades");
-        assert!(cfg.chunk_patches < 5, "must beat the crate default for first audio");
         assert!(cfg.chunk_patches >= 1);
+        // A lead buffer, not zero: playback that starts on the first chunk
+        // starves as soon as one chunk takes longer than the last one plays.
+        assert!(cfg.prebuffer_ms >= 200);
         assert_eq!(cfg.model_repo, "openbmb/VoxCPM2");
     }
 

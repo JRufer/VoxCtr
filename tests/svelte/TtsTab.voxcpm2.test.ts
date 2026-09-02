@@ -199,20 +199,32 @@ describe("TtsTab VoxCPM2 engine section", () => {
     });
   });
 
-  test("the chunk slider states the first-audio cost it controls", () => {
-    // One patch is ~80 ms of audio, so the label has to move with the slider —
-    // it is the only place the latency trade-off is visible to the user.
+  test("the chunk slider states the audio-per-chunk it controls", () => {
+    // One patch is ~80 ms of audio, so the label has to move with the slider.
     const cfg = configWithVoxcpm({ chunk_patches: 3 });
     render(TtsTab, { props: { cfg } });
 
     expect(screen.getByText("Chunk Size (3 patches ≈ 240 ms)")).toBeTruthy();
   });
 
+  test("the lead buffer is exposed as the fix for stalling speech", () => {
+    // Choppy playback is a starved audio sink, so the control that cures it has
+    // to be reachable and has to say what it is for.
+    const cfg = configWithVoxcpm({ prebuffer_ms: 800 });
+    render(TtsTab, { props: { cfg } });
+
+    expect(screen.getByText("Lead Buffer (800 ms)")).toBeTruthy();
+    expect(screen.getByText(/speech stalls or breaks up part-way through, raise this/)).toBeTruthy();
+  });
+
   test("defaults are the low-latency ones the engine needs", () => {
     const defaults = PRISTINE.tts.voxcpm2;
     expect(defaults.prewarm).toBe(true);
-    expect(defaults.chunk_patches).toBe(2);
+    expect(defaults.chunk_patches).toBe(4);
     expect(defaults.inference_timesteps).toBe(6);
+    // Playback must not start on the first chunk: the sink drains in real time
+    // and would starve before the next chunk arrived.
+    expect(defaults.prebuffer_ms).toBe(400);
     expect(defaults.voice_mode).toBe("design");
   });
 });

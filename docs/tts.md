@@ -37,29 +37,58 @@ There is no Python interpreter, no subprocess and no ONNX Runtime anywhere in th
   from imitation to *continuation*: the model is conditioned on the recording and its
   text together, and tracks the reference speaker noticeably more closely.
 
-#### Latency
+#### Latency and smooth playback
 
-The design target is **first audio in under a second**. Four things get us there, in
-descending order of impact:
+The design target is **first audio in under a second, with no gaps once it starts**. Those
+two goals pull against each other, and the engine balances them explicitly.
 
 | Lever | What it does | Default |
 |---|---|---|
 | Pre-warm | Loads the checkpoint (20–25 s) and compiles GPU shaders at startup instead of on the first utterance | **on** |
-| Streaming | Playback starts on the first generated chunk, so the wait is one chunk rather than the whole utterance | always |
-| Chunk size | Patches accumulated before the first chunk is emitted. One patch ≈ 80 ms of audio and one autoregressive step — the direct time-to-first-sound knob | 2 (≈160 ms) |
+| Lead buffer | Audio banked before playback starts. The time-to-first-sound control, and the thing that keeps speech from stalling | 400 ms |
+| Chunk size | Patches generated at a time (~80 ms each). Affects generation throughput, not when speech starts | 4 |
 | Diffusion steps | Sampling steps per patch; cost is linear across the whole generation. Below 6 quality degrades audibly | 6 |
 
-Two further optimizations are automatic. The loaded model is cached for the lifetime of
-the TTS worker thread, so the 20–25 s load is paid at most once per run. Reference clips
-are decoded and resampled once and kept as raw PCM, so cloning does not re-read a file
-per utterance.
+**Why a lead buffer is required.** Once playback begins the audio device consumes sound in
+real time, and it does not wait. If the next chunk is not finished when the previous one
+runs out, rodio's sink splices in a block of silence and carries on — speech that stalls
+and resumes, over and over. Playing each generated chunk the moment it appears therefore
+sounds choppy on any machine where generation is not comfortably faster than playback.
+
+So VoxCtrl banks a lead first. It measures the **real-time factor** of generation — seconds
+of compute per second of audio — from the second chunk onward, excluding the one-off
+prefill so the figure reflects the steady-state rate:
+
+- **RTF below 0.8** (comfortably faster than realtime): the buffer only grows once playback
+  starts, so the configured 400 ms lead is already safe and speech begins immediately.
+- **RTF at or above 0.8**: playback would drain the buffer faster than generation refills
+  it. The lead is extended to cover the whole shortfall over the rest of the utterance,
+  `(RTF − 1) × remaining`, plus a margin for jitter. Speech starts later but does not break up.
+- **Generation finishes before the lead is reached**: the whole utterance is in hand, so it
+  is played as one complete buffer.
+
+Audio also reaches the sink as **one continuous source** per utterance rather than one per
+chunk. A per-chunk queue makes every chunk boundary a seam in the audio pipeline; a single
+source has no seams to hear.
+
+**If speech still breaks up**, raise **Lead Buffer** in Settings → TTS. Raising **Chunk
+Size** also helps for a different reason: the AudioVAE re-decodes the accumulated latent on
+each chunk, so decode work over an utterance scales as `O(N² / chunk_patches)` — bigger
+chunks generate faster. Lowering **Diffusion Steps** to 6 (or 5 at a small quality cost) is
+the other throughput lever.
+
+Two further optimizations are automatic. The loaded model is cached for the lifetime of the
+TTS worker thread, so the 20–25 s load is paid at most once per run. Reference clips are
+decoded and resampled once and kept as raw PCM, so cloning does not re-read a file per
+utterance.
 
 Stopping is cooperative and prompt: VoxCtrl hands the generator a cancel token that the
 model polls between diffusion steps, so pressing the stop key abandons the current step
 rather than finishing the chunk.
 
-The backend actually reports its own numbers — first-chunk latency is logged per
-utterance at `info` level, and Settings → TTS shows the same figure as **Run speed**.
+The backend reports its own numbers — first chunk, playback start and the lead actually
+used are logged per utterance at `info` level, and Settings → TTS shows time-to-first-sound
+as **Run speed**.
 
 #### Requirements
 

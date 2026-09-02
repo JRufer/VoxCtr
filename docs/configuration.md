@@ -265,7 +265,8 @@ for the engine notes and the latency tuning guide.
 | `hf_token` | string or null | `null` | Access token. Not needed for the default public repository; only for a private mirror |
 | `cfg_value` | float | `2.0` | Classifier-free guidance scale (1.5 – 3.0). Higher follows the text and voice prompt more closely |
 | `inference_timesteps` | int | `6` | Diffusion steps per patch. Linear cost, so it scales the whole generation; below 6 quality degrades audibly. Upstream defaults to 10 |
-| `chunk_patches` | int | `2` | Patches accumulated before the first audio chunk plays (~80 ms each). The direct time-to-first-sound control; lower speaks sooner, higher is more efficient over long text |
+| `chunk_patches` | int | `4` | Patches generated per streamed chunk (~80 ms each). A throughput control rather than a latency one: decode work over an utterance scales as `O(N² / chunk_patches)`, so larger values generate faster |
+| `prebuffer_ms` | int | `400` | Milliseconds of audio banked before playback starts — the time-to-first-sound control, and the cure for speech that stalls part-way through. Extended automatically when generation is measured slower than realtime; see [tts.md](tts.md#latency-and-smooth-playback) |
 | `max_len` | int | `750` | Hard cap on generated patches per utterance (~1 minute of speech) |
 | `prewarm` | bool | `true` | Load the checkpoint at startup rather than on the first utterance. On by default: a cold load costs 20–25 s, so leaving it off makes the first response miss the latency target |
 

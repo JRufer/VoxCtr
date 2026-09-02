@@ -110,6 +110,7 @@ export interface VoxCpm2Config {
   cfg_value: number;
   inference_timesteps: number;
   chunk_patches: number;
+  prebuffer_ms: number;
   max_len: number;
   prewarm: boolean;
 }
@@ -234,7 +235,8 @@ const defaultConfig: AppConfig = {
       hf_token: null,
       cfg_value: 2.0,
       inference_timesteps: 6,
-      chunk_patches: 2,
+      chunk_patches: 4,
+      prebuffer_ms: 400,
       max_len: 750,
       prewarm: true,
     },

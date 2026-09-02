@@ -523,12 +523,9 @@
 
   function onVoxcpmSettingChanged() { markDirty(); }
 
-  // Roughly how long the user waits before the first sound: one chunk of
-  // patches, each ~80 ms of audio and one autoregressive step. Shown live so the
-  // two latency sliders have a visible consequence rather than being folklore.
-  let voxcpmFirstAudioEstimate = $derived(
-    Math.round(cfg.tts.voxcpm2.chunk_patches * 80)
-  );
+  // Each patch is ~80 ms of audio, so the slider can state what it is really
+  // choosing rather than leaving the unit as folklore.
+  let voxcpmChunkMs = $derived(Math.round(cfg.tts.voxcpm2.chunk_patches * 80));
 
   function onHfTokenChanged(e: Event) {
     const val = (e.target as HTMLInputElement).value;
@@ -1019,8 +1016,9 @@
       <p class="license-text">
         VoxCPM2 is a 2B-parameter model that runs in pure Rust with no Python and no subprocess.
         Keep <strong>Pre-warm</strong> on: loading the checkpoint takes 20–25 seconds, and prewarming
-        moves that to startup so the first spoken response does not pay for it. The two sliders below
-        control everything else about how quickly speech comes back.
+        moves that to startup so the first spoken response does not pay for it. <strong>Lead
+        Buffer</strong> below decides how soon speech starts; the other sliders decide how fast the
+        model generates it.
       </p>
     </div>
 
@@ -1031,7 +1029,24 @@
     <p class="hint" style="margin-top: -6px;">Loads the checkpoint and compiles GPU shaders at startup so the first utterance is fast.</p>
 
     <label class="field">
-      <span>Chunk Size ({cfg.tts.voxcpm2.chunk_patches} patches ≈ {voxcpmFirstAudioEstimate} ms)</span>
+      <span>Lead Buffer ({cfg.tts.voxcpm2.prebuffer_ms} ms)</span>
+      <input
+        type="range" min="200" max="3000" step="50"
+        bind:value={cfg.tts.voxcpm2.prebuffer_ms}
+        onchange={onVoxcpmSettingChanged}
+        class="range-input"
+      />
+    </label>
+    <p class="hint" style="margin-top: -6px;">
+      Audio buffered before speech starts, and the main time-to-first-sound control.
+      <strong>If speech stalls or breaks up part-way through, raise this.</strong> Once playback
+      begins the audio device consumes sound in real time, and a lead this long is what absorbs
+      the pauses between generated chunks. When generation is measured to be slower than
+      realtime the engine extends this automatically. Default is 400 ms.
+    </p>
+
+    <label class="field">
+      <span>Chunk Size ({cfg.tts.voxcpm2.chunk_patches} patches ≈ {voxcpmChunkMs} ms)</span>
       <input
         type="range" min="1" max="10" step="1"
         bind:value={cfg.tts.voxcpm2.chunk_patches}
@@ -1040,8 +1055,8 @@
       />
     </label>
     <p class="hint" style="margin-top: -6px;">
-      How much audio is generated before playback starts — the main time-to-first-sound control.
-      Lower speaks sooner; higher is more efficient across a long utterance. Default is 2.
+      How much audio the model generates at a time. This affects throughput rather than when
+      speech starts: larger chunks do less repeated decoding, so they generate faster. Default is 4.
     </p>
 
     <label class="field">
