@@ -421,7 +421,71 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: release-artifacts/*
+          # The "What's new" section below is version-specific: update it in the
+          # same commit that bumps the version (scripts/bump_version.sh), so a
+          # release never ships the previous version's notes. Everything under
+          # "## Downloads" is evergreen, and GitHub appends its own generated
+          # "What's Changed" list of merged PRs beneath all of this.
           body: |
+            ## What's new in 0.3.8
+
+            A Linux packaging and compatibility release: **no app behaviour
+            changes** — the AppImage now starts on desktops where 0.3.7 could
+            not.
+
+            ### The AppImage no longer needs `libfuse2`
+
+            Its runtime linked FUSE 2 and looked for a `fusermount` binary.
+            Ubuntu 22.04, Linux Mint 21 and everything newer ship fuse3
+            (`fusermount3`) and no `libfuse2`, so 0.3.7 died before it started:
+
+            ```
+            Error: No suitable fusermount binary found on the $PATH
+            ```
+
+            0.3.8 ships [uruntime](https://github.com/VHSgunzo/uruntime), which
+            uses FUSE 3 and extracts-and-runs itself when FUSE is unavailable
+            entirely. Nothing has to be installed first. (On 0.3.7 the
+            workarounds were `sudo apt install libfuse2` or launching with
+            `--appimage-extract-and-run`.)
+
+            ### Two libraries the AppImage assumed every desktop had
+
+            The bundled WebKitGTK links `libgstgl-1.0.so.0` and
+            `libwayland-server.so.0` directly, and both were stripped in favour
+            of the host's copies. `libgstgl-1.0.so.0` ships in
+            `libgstreamer-gl1.0-0`, which `gstreamer1.0-plugins-base` does not
+            pull in — so a desktop with no WebKit of its own had none, and the
+            app died with `error while loading shared libraries`. Both are now
+            carried as host-first fallbacks: your system's copy is used when you
+            have one, ours only when you do not.
+
+            ### Also since v0.3.7
+
+            - The GLib / GIO / GStreamer dependency closure is stripped as a
+              unit, so the host's libraries resolve against each other instead
+              of stale bundled ones (`g_once_init_leave_pointer`, `MOUNT_2_40`
+              and `GNUTLS_3_8_x` startup aborts).
+            - `libsystemd` / `libudev` are exposed host-first, fixing the
+              `LIBSYSTEMD_251` abort on Arch while still working on
+              distributions that ship neither.
+            - WebKitGTK's helper processes are bundled and found where WebKit
+              looks for them, fixing the `WebKitNetworkProcess` spawn crash.
+            - The TTS engines no longer change the process's working directory
+              to find their model config — that raced WebKit's helper spawn and
+              aborted the app. The config is bundled at `usr/config/` instead.
+            - Packaging now verifies the AppImage it produced can unpack itself
+              before a release is published.
+
+            ### Requirements
+
+            glibc 2.35 or newer and a GCC 12 libstdc++ — Ubuntu 22.04+, Linux
+            Mint 21+, Debian 12+, Fedora 36+, Arch, openSUSE Tumbleweed. Ubuntu
+            20.04, Mint 20, Debian 11 and RHEL 9 are below that baseline; build
+            from source there.
+
+            ---
+
             ## Downloads
 
             Pick the build for your platform and GPU:
