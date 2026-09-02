@@ -369,6 +369,23 @@ for pat in \
     find "$root" -name "$pat" -print -delete 2>/dev/null || true
 done
 
+# libsystemd/libudev can be neither stripped nor left on the library path: the
+# host's own libmount (Arch) links libsystemd and needs a newer LIBSYSTEMD_*
+# version node than the build host's copy, while non-systemd distributions may
+# not ship them at all and the bundled WebKitGTK needs them. Park them in
+# usr/lib/fallback; the AppRun hook exposes each one only when the host has no
+# copy of that soname.
+mkdir -p "$root/usr/lib/fallback"
+for pat in 'libsystemd.so*' 'libudev.so*'; do
+    find "$root" -name "$pat" -not -path '*/fallback/*' -print \
+        -exec mv -t "$root/usr/lib/fallback/" {} + 2>/dev/null || true
+done
+cp "$ROOT_DIR/scripts/appimage-hooks/host-first-fallback.sh" "$root/apprun-hooks/"
+chmod +x "$root/apprun-hooks/host-first-fallback.sh"
+if ! grep -q "host-first-fallback.sh" "$root/AppRun"; then
+    sed -i '/^exec /i source "$this_dir"/apprun-hooks/host-first-fallback.sh' "$root/AppRun"
+fi
+
 # Repackage the AppImage
 rm -f "$LATEST_BUNDLE"
 ARCH=x86_64 ./appimagetool.bin "$root" "$LATEST_BUNDLE" >/dev/null
