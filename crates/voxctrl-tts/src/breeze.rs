@@ -12,7 +12,7 @@ use voxctrl_config::TtsConfig;
 
 use crate::engine::{PlaybackCallback, Utterance};
 use crate::piper::expand_tilde;
-use crate::pocket::{ensure_pocket_tts_config, POCKET_TTS_VARIANT};
+use crate::pocket::{load_pocket_tts_model, POCKET_TTS_VARIANT};
 
 pub const BREEZE_TTS_2_SAMPLE_RATE: u32 = 24_000;
 const BREEZE_TTS_2_REPO: &str = "BreezeBlue/Breeze-TTS-2";
@@ -133,23 +133,9 @@ pub(crate) fn speak_breeze_tts_2(
 
     if model.is_none() {
         info!("Loading Breeze-TTS-2 neural speech model session in pure Rust...");
-        ensure_pocket_tts_config().context("ensure breeze config file")?;
-
-        let app_dir = dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("voxctrl");
-        let orig_cwd = std::env::current_dir().ok();
-        if app_dir.exists() {
-            let _ = std::env::set_current_dir(&app_dir);
-        }
-
-        let load_res = pocket_tts::TTSModel::load(POCKET_TTS_VARIANT);
-
-        if let Some(ref orig) = orig_cwd {
-            let _ = std::env::set_current_dir(orig);
-        }
-
-        *model = Some(load_res.context("load Breeze-TTS-2 neural model")?);
+        *model = Some(
+            load_pocket_tts_model(POCKET_TTS_VARIANT).context("load Breeze-TTS-2 neural model")?,
+        );
     }
     let tts_model = model.as_ref().unwrap();
 

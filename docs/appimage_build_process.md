@@ -183,6 +183,50 @@ the files — bump the files instead of overriding the tag.
 
 ---
 
+## 🧩 AppImage Runtime Library Policy
+
+The AppImage is deliberately **not** self-contained. The slimming step in
+`build_appimage.sh` and `.github/workflows/release.yml` (keep the two in sync)
+deletes bundled copies of libraries that must come from the host at runtime,
+and `ldd -r` of every bundled object under the AppImage's own library path must
+stay clean on a newer host. The rules, each learned from a startup crash:
+
+1. **Graphics, Wayland and input libraries come from the host** (Mesa, EGL,
+   libdrm, libwayland, libxkbcommon). Bundled copies from the Ubuntu 22.04
+   build host break the Slint overlay's Wayland frame callbacks and xkbcommon.
+2. **Once a library comes from the host, everything it links against must
+   come from the host too.** The host's copy resolves its symbols against
+   whatever is first on `LD_LIBRARY_PATH`; a stale bundled dependency makes it
+   abort with `undefined symbol` / `version ... not found`. This is why the
+   GLib family, GStreamer, the GIO TLS module and gnutls stack, and their
+   dependencies (pcre2, libffi, libmount, libblkid, libselinux, liborc,
+   libunwind, libdw, libelf, bz2, lzma, zstd) are all stripped together.
+   Everything still bundled only needs the Ubuntu 22.04 versions of these, so
+   any newer host satisfies it.
+3. **Only strip a library whose soname is stable across distributions.**
+   `libxml2` (`.so.16` on Arch) and `libunistring` (`.so.5` on newer hosts)
+   stay bundled for that reason.
+4. **`libsystemd` / `libudev` are host-first with a fallback.** Arch's
+   `libmount` links `libsystemd`, so a bundled copy must not shadow the
+   host's; but non-systemd distributions may not have them at all and the
+   bundled WebKitGTK needs them. They live in `usr/lib/fallback/`, and the
+   `scripts/appimage-hooks/host-first-fallback.sh` AppRun hook exposes each
+   one only when the host has no library of that soname.
+5. **WebKitGTK finds its helper processes relative to the working
+   directory.** The Tauri bundler rewrites the compiled-in
+   `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.1` to
+   `././/lib/x86_64-linux-gnu/webkit2gtk-4.1`, and linuxdeploy's AppRun starts
+   the app in `$APPDIR/usr` so that resolves. Release builds of WebKitGTK
+   honour no environment override for this (`WEBKIT_EXEC_PATH` only exists in
+   developer-mode builds), so the helpers must sit at exactly that relative
+   path, **and nothing in the app may change the process's working
+   directory.** The pocket-tts model config is bundled at `usr/config/` for
+   that reason — `pocket_tts::TTSModel::load` looks for it relative to the
+   cwd, and the old workaround of temporarily switching cwd from the TTS
+   worker raced WebKit's helper spawn and aborted the app.
+
+---
+
 ## 📋 Build Flags & Config Reference
 
 * **Tauri Config (`src-tauri/tauri.conf.json`)**:
