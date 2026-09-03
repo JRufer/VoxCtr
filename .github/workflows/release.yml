@@ -427,55 +427,66 @@ jobs:
           # "## Downloads" is evergreen, and GitHub appends its own generated
           # "What's Changed" list of merged PRs beneath all of this.
           body: |
-            ## What's new in 0.3.8
+            ## What's new in 0.3.9
 
-            A Linux packaging and compatibility release: **no app behaviour
-            changes** — the AppImage now starts on desktops where 0.3.7 could
-            not.
+            **Global shortcuts now work on Linux Mint, Cinnamon, MATE and
+            Xfce.** On those desktops 0.3.8 could not receive its own hotkeys at
+            all — the app ran, and holding a keybind did nothing.
 
-            ### The AppImage no longer needs `libfuse2`
+            ### Why they did not work
 
-            Its runtime linked FUSE 2 and looked for a `fusermount` binary.
-            Ubuntu 22.04, Linux Mint 21 and everything newer ship fuse3
-            (`fusermount3`) and no `libfuse2`, so 0.3.7 died before it started:
+            Cinnamon and MATE serve no XDG `GlobalShortcuts` portal, so VoxCtrl
+            fell through to reading input devices — which needs `input` group
+            membership VoxCtrl deliberately will not grant itself. That left a
+            native Cinnamon shortcut as the last resort, and it could not work
+            either: the command it registered named a D-Bus method that does not
+            exist (`toggle_recording`, where the service publishes
+            `ToggleRecording`). Registration looked healthy and the shortcut did
+            nothing. Worse, the setup window reported **"VoxCtrl is ready"**
+            throughout, because it only checked that a shortcut had been listed
+            — never that a key was bound to it.
 
-            ```
-            Error: No suitable fusermount binary found on the $PATH
-            ```
+            ### X11 shortcuts, with no permissions and no setup
 
-            0.3.8 ships [uruntime](https://github.com/VHSgunzo/uruntime), which
-            uses FUSE 3 and extracts-and-runs itself when FUSE is unavailable
-            entirely. Nothing has to be installed first. (On 0.3.7 the
-            workarounds were `sudo apt install libfuse2` or launching with
-            `--appimage-extract-and-run`.)
+            0.3.9 adds an X11 backend using XInput2 raw key events. Any X client
+            may ask the server for these: there is no group to join, no udev
+            rule, and nothing to change about your machine. It covers Cinnamon,
+            MATE and Xfce, and because it sees each key going down *and* coming
+            back up, every gesture style works — hold, toggle, double-tap,
+            double-tap-and-hold — as do bare-modifier triggers like
+            double-tapping Super, which no accelerator-based backend can
+            express.
 
-            ### Two libraries the AppImage assumed every desktop had
+            Like the existing device-reading fallback, this mode sees every
+            keystroke, not only VoxCtrl's shortcuts. Nothing is logged, stored,
+            or transmitted, and the Hotkeys tab says plainly which backend is
+            running. A desktop with a shortcuts portal (KDE Plasma, GNOME 48+,
+            Hyprland) still avoids it entirely.
 
-            The bundled WebKitGTK links `libgstgl-1.0.so.0` and
-            `libwayland-server.so.0` directly, and both were stripped in favour
-            of the host's copies. `libgstgl-1.0.so.0` ships in
-            `libgstreamer-gl1.0-0`, which `gstreamer1.0-plugins-base` does not
-            pull in — so a desktop with no WebKit of its own had none, and the
-            app died with `error while loading shared libraries`. Both are now
-            carried as host-first fallbacks: your system's copy is used when you
-            have one, ours only when you do not.
+            ### Gesture styles you cannot use are no longer offered
 
-            ### Also since v0.3.7
+            On a Wayland Cinnamon session VoxCtrl falls back to a native desktop
+            shortcut, and a desktop shortcut only reports the key going *down*.
+            A hold has no end, and a tap cannot be told from a hold. The Hotkeys
+            tab now offers exactly the styles the running backend can deliver
+            and explains what is missing, instead of offering four and silently
+            doing nothing for three of them. A binding you already saved keeps
+            its gesture, flagged rather than rewritten.
 
-            - The GLib / GIO / GStreamer dependency closure is stripped as a
-              unit, so the host's libraries resolve against each other instead
-              of stale bundled ones (`g_once_init_leave_pointer`, `MOUNT_2_40`
-              and `GNUTLS_3_8_x` startup aborts).
-            - `libsystemd` / `libudev` are exposed host-first, fixing the
-              `LIBSYSTEMD_251` abort on Arch while still working on
-              distributions that ship neither.
-            - WebKitGTK's helper processes are bundled and found where WebKit
-              looks for them, fixing the `WebKitNetworkProcess` spawn crash.
-            - The TTS engines no longer change the process's working directory
-              to find their model config — that raced WebKit's helper spawn and
-              aborted the app. The config is bundled at `usr/config/` instead.
-            - Packaging now verifies the AppImage it produced can unpack itself
-              before a release is published.
+            ### Also in this release
+
+            - The native Cinnamon/MATE shortcut route is repaired for Wayland
+              sessions: correct D-Bus method, one shortcut per binding (so text
+              reaches that binding's targets), numbered `customN` slots
+              allocated around your existing shortcuts so nothing is
+              overwritten and Cinnamon's Keyboard panel actually lists them.
+            - `gsettings` and `dbus-send` are now run with your desktop's
+              environment rather than the AppImage's. Inside the bundle they
+              were looking for Cinnamon's settings schemas in the AppDir and
+              concluding your desktop had no keyboard settings at all.
+            - The setup window no longer claims shortcuts are working when
+              nothing is bound, and reports why the X11 path was unavailable
+              when it was.
 
             ### Requirements
 
