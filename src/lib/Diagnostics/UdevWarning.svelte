@@ -16,6 +16,8 @@
     is_private: boolean;
     portal_error: string | null;
     portal_refused: boolean;
+    x11_error?: string | null;
+    supported_gestures?: string[];
     shortcuts: BoundShortcut[];
     session_type: string;
     devices_total: number;
@@ -256,7 +258,24 @@
               </ul>
             {/if}
 
-            {#if setup.hotkeys.backend === "evdev"}
+            {#if setup.hotkeys.backend === "x11"}
+              <p class="warn-note">
+                Your desktop does not offer the global-shortcuts portal, so VoxCtrl is
+                reading key events from the X server instead. This needed no permissions
+                and no setup, and every gesture style works — but in this mode every
+                keystroke passes through VoxCtrl. Nothing is stored or sent anywhere; a
+                desktop with portal support (KDE Plasma, GNOME 48+, Hyprland) avoids it
+                entirely.
+              </p>
+            {:else if setup.hotkeys.backend === "mint_dbus"}
+              <p class="warn-note">
+                Your desktop is holding VoxCtrl's shortcuts itself, which is why VoxCtrl
+                cannot read your keyboard here. It also means the desktop only reports the
+                key going down, never coming back up: hold and double-tap styles cannot
+                work on this route, and the Hotkeys tab offers only tap-to-start,
+                tap-to-stop.
+              </p>
+            {:else if setup.hotkeys.backend === "evdev"}
               <p class="warn-note">
                 Your desktop does not offer the global-shortcuts portal, so VoxCtrl is
                 falling back to reading input devices — access this machine already had,
@@ -306,6 +325,9 @@
                  portal. -->
             {#if setup.hotkeys.portal_error && setup.hotkeys.backend !== "portal" && setup.hotkeys.backend !== "evdev"}
               <span class="step-detail muted">Portal reported: {setup.hotkeys.portal_error}</span>
+            {/if}
+            {#if setup.hotkeys.x11_error && setup.hotkeys.backend !== "x11" && setup.hotkeys.backend !== "portal"}
+              <span class="step-detail muted">X11 shortcuts: {setup.hotkeys.x11_error}</span>
             {/if}
           </div>
         </li>

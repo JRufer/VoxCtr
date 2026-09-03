@@ -117,6 +117,17 @@
     trigger_description: string;
     bound: boolean;
   };
+  type GestureType = "hold" | "toggle" | "double_tap" | "double_tap_hold";
+
+  const GESTURE_LABELS: Record<GestureType, string> = {
+    hold: "Hold keys to dictate (Release to transcribe)",
+    toggle: "Tap once to start recording, tap again to finish",
+    double_tap: "Double-tap hotkey to trigger recording",
+    double_tap_hold: "Double-tap & hold keys to dictate (Release to transcribe)",
+  };
+
+  const GESTURE_ORDER: GestureType[] = ["hold", "toggle", "double_tap", "double_tap_hold"];
+
   type HotkeyStatus = {
     is_active: boolean;
     backend: string;
@@ -124,6 +135,11 @@
     portal_error: string | null;
     portal_refused: boolean;
     shortcuts: BoundShortcut[];
+    // Gesture styles the running backend can actually deliver. A backend that
+    // only learns about key presses (a Cinnamon/MATE native shortcut) cannot
+    // end a hold or tell a tap from a hold, so it reports "toggle" alone.
+    supported_gestures: GestureType[];
+    x11_error: string | null;
     session_type: string;
     devices_total: number;
     devices_readable: number;
@@ -188,6 +204,33 @@
     return map;
   });
 
+  // Only the gestures this machine can actually deliver are offered. Showing a
+  // style the running backend cannot serve is worse than not showing it: the
+  // user picks it, the shortcut does nothing, and nothing says why.
+  const supportedGestures = $derived<GestureType[]>(
+    hotkeyStatus?.supported_gestures?.length
+      ? GESTURE_ORDER.filter(g => hotkeyStatus!.supported_gestures.includes(g))
+      : GESTURE_ORDER,
+  );
+
+  const hiddenGestureCount = $derived(GESTURE_ORDER.length - supportedGestures.length);
+
+  // A binding saved before the backend changed may use a gesture that no longer
+  // works. It stays in the list, marked, rather than being silently rewritten:
+  // the user's configuration is theirs, and a quiet change to it would be a
+  // second invisible failure on top of the first.
+  const gestureOptions = $derived.by(() => {
+    const options = supportedGestures.map(g => ({ value: g, label: GESTURE_LABELS[g] }));
+    const current = editingBinding?.gesture as GestureType | undefined;
+    if (current && !supportedGestures.includes(current)) {
+      options.push({
+        value: current,
+        label: `${GESTURE_LABELS[current] ?? current} — not supported on this system`,
+      });
+    }
+    return options;
+  });
+
   onMount(async () => {
     targets = await invoke<OutputTarget[]>("get_targets");
     bindings = await invoke<HotkeyBinding[]>("get_bindings");
@@ -244,7 +287,8 @@
       id: "binding_" + Math.random().toString(36).substring(2, 6),
       label: "New Binding",
       keys: ["KEY_LEFTMETA", "KEY_SPACE"],
-      gesture: "hold",
+      // Never offer a new binding a gesture this backend cannot serve.
+      gesture: supportedGestures.includes("hold") ? "hold" : supportedGestures[0],
       target_id: targets[0].id,
       target_ids: [targets[0].id],
       tap_ms: 300,
@@ -902,15 +946,20 @@
 
         <label class="field col">
           <span class="field-title">Input Gesture Style</span>
-          <CustomSelect
-            bind:value={editingBinding.gesture}
-            options={[
-              { value: "hold", label: "Hold keys to dictate (Release to transcribe)" },
-              { value: "toggle", label: "Tap once to start recording, tap again to finish" },
-              { value: "double_tap", label: "Double-tap hotkey to trigger recording" },
-              { value: "double_tap_hold", label: "Double-tap & hold keys to dictate (Release to transcribe)" }
-            ]}
-          />
+          <CustomSelect bind:value={editingBinding.gesture} options={gestureOptions} />
+          {#if hiddenGestureCount > 0}
+            <span class="hint">
+              {hotkeyStatus?.backend === "mint_dbus"
+                ? "Your desktop delivers VoxCtrl's shortcuts itself and only reports the key going down, never coming back up — so hold and double-tap styles cannot work here and are not offered."
+                : `${hiddenGestureCount} gesture style${hiddenGestureCount === 1 ? "" : "s"} are hidden because the way this system delivers shortcuts cannot produce them.`}
+            </span>
+          {/if}
+          {#if editingBinding.gesture && !supportedGestures.includes(editingBinding.gesture as GestureType)}
+            <span class="warn-note">
+              ⚠️ This binding uses a gesture this system cannot deliver, so it will not fire.
+              Pick one of the styles above.
+            </span>
+          {/if}
         </label>
 
         <!-- Timings dynamic displays -->
@@ -1275,6 +1324,12 @@
 
   .badge {
     @apply text-[10px] py-0.5 px-2 rounded-xl font-semibold uppercase;
+  }
+
+  .warn-note {
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--accent-amber, #f0b429);
   }
 
   .badge.gesture {

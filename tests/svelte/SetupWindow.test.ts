@@ -83,10 +83,14 @@ describe("Setup window", () => {
     // Regression guard for the change this screen exists to make. Whatever the
     // state, the setup window must not present a button that widens the
     // machine's input permissions.
-    for (const backend of ["portal", "evdev", "none", "starting"]) {
+    for (const backend of ["portal", "x11", "mint_dbus", "evdev", "none", "starting"]) {
       invoke.mockReset();
       mockStatus({
-        hotkeys: { backend, is_active: backend !== "none", is_private: backend === "portal" },
+        hotkeys: {
+          backend,
+          is_active: backend !== "none",
+          is_private: backend === "portal" || backend === "mint_dbus",
+        },
         status: { hotkeys_active: backend !== "none", is_complete: false },
       });
 

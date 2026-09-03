@@ -7,6 +7,8 @@ pub mod trigger;
 mod linux;
 #[cfg(target_os = "linux")]
 pub mod portal;
+#[cfg(target_os = "linux")]
+mod x11;
 #[cfg(target_os = "windows")]
 mod windows;
 
@@ -34,11 +36,12 @@ pub fn channel() -> (GestureSender, GestureReceiver) {
 /// the returned handle.
 ///
 /// On Linux this prefers the XDG desktop portal, where the compositor owns the
-/// key grab and VoxCtrl is told nothing except that its own shortcut fired. The
-/// evdev fallback is only used when the portal is unavailable *and* the user
-/// has already given this process access to input devices — VoxCtrl never asks
-/// for that access, because granting it lets every program running as the user
-/// read the keyboard, not just this one.
+/// key grab and VoxCtrl is told nothing except that its own shortcut fired.
+/// Failing that it reads X11 raw key events, which any X client may ask for and
+/// which need no setup. The evdev fallback is only used when neither is
+/// available *and* the user has already given this process access to input
+/// devices — VoxCtrl never asks for that access, because granting it lets every
+/// program running as the user read the keyboard, not just this one.
 ///
 /// `ListenerHandle::health` reports which of those happened, so the app can say
 /// so at launch instead of failing silently.

@@ -94,7 +94,7 @@ pub fn start_mcp_server(callbacks: Arc<AppState>) {
 #[cfg(target_os = "linux")]
 pub fn start_dbus_service(app_state: Arc<AppState>) {
     let dbus_state = Arc::new(tokio::sync::Mutex::new(voxctrl_dbus::AppState::default()));
-    let (start_tx, mut start_rx) = tokio::sync::mpsc::channel::<()>(4);
+    let (start_tx, mut start_rx) = tokio::sync::mpsc::channel::<String>(4);
     let (stop_tx, mut stop_rx) = tokio::sync::mpsc::channel::<()>(4);
     let app_state_dbus = app_state.clone();
     let dbus_state_clone = dbus_state.clone();
@@ -103,27 +103,16 @@ pub fn start_dbus_service(app_state: Arc<AppState>) {
         loop {
             tokio::select! {
                 v = start_rx.recv() => {
-                    if v.is_some() {
-                        {
-                            let mut target = app_state_dbus.active_target.lock().await;
-                            if target.is_empty() {
-                                *target = "default_hold".to_string();
-                            }
-                            let mut binding_id = app_state_dbus.active_binding_id.lock().await;
-                            if binding_id.is_empty() {
-                                *binding_id = "default_hold".to_string();
-                            }
-                            let mut label = app_state_dbus.active_binding_label.lock().await;
-                            if label.is_empty() {
-                                *label = "Ctrl+Alt+Space".to_string();
-                            }
-                        }
-                        app_state_dbus.set_recording(true);
-                        let mut st = dbus_state_clone.lock().await;
-                        st.status = voxctrl_dbus::DictationStatus::Recording;
-                    } else {
-                        break;
-                    }
+                    let Some(binding_id) = v else { break };
+                    // A desktop shortcut names the binding it stands for, so
+                    // the transcription reaches the same targets it would have
+                    // if VoxCtrl had seen the keys itself. Without this every
+                    // shortcut would dictate into the default target no matter
+                    // which one the user pressed.
+                    apply_dbus_binding(&app_state_dbus, &binding_id).await;
+                    app_state_dbus.set_recording(true);
+                    let mut st = dbus_state_clone.lock().await;
+                    st.status = voxctrl_dbus::DictationStatus::Recording;
                 }
                 v = stop_rx.recv() => {
                     if v.is_some() {
@@ -142,6 +131,27 @@ pub fn start_dbus_service(app_state: Arc<AppState>) {
             tracing::error!("DBus service error: {e}");
         }
     });
+}
+
+/// Point the pipeline at the binding a D-Bus caller named, so its targets and
+/// its label are the ones used for this dictation.
+///
+/// An unknown or empty id leaves whatever the app already had, which is the
+/// "Focused Window" default on a fresh start.
+async fn apply_dbus_binding(state: &Arc<AppState>, binding_id: &str) {
+    if binding_id.is_empty() {
+        return;
+    }
+    let bindings =
+        voxctrl_routing::load_bindings(&voxctrl_routing::config_dir()).unwrap_or_default();
+    let Some(binding) = bindings.into_iter().find(|b| b.id == binding_id) else {
+        tracing::warn!("D-Bus asked for unknown binding '{binding_id}'; using the current target");
+        return;
+    };
+
+    *state.active_target.lock().await = binding.target_id.clone();
+    *state.active_binding_id.lock().await = binding.id.clone();
+    *state.active_binding_label.lock().await = binding.label.clone();
 }
 
 pub fn setup_tts_and_fifos(app_handle: &tauri::AppHandle, state: Arc<AppState>) {

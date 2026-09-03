@@ -296,15 +296,28 @@ pub async fn save_bindings(
         }
     }
     
-    // If running on Linux Mint desktop, keep native custom shortcut settings in sync.
-    if crate::mint_shortcuts::is_mint_desktop() {
-        if let Some(primary_binding) = bindings.iter().find(|b| !b.disabled && !b.keys.is_empty()) {
-            if let Ok(portal_accel) = voxctrl_hotkeys::trigger::accelerator(&primary_binding.keys) {
-                let gtk_accel = crate::mint_shortcuts::convert_to_gtk_accelerator(&portal_accel);
-                if let Err(e) = crate::mint_shortcuts::register_mint_shortcut(Some(&gtk_accel)) {
-                    tracing::warn!("Failed to sync Linux Mint native shortcut settings: {e}");
-                }
+    // Where the desktop owns the key grab, the saved bindings have to be pushed
+    // to it — nothing else will notice they changed. Narrowly gated: the Mint
+    // route is only right when it is already in use, or when nothing else
+    // worked at all. Registering it alongside a backend that watches the keys
+    // itself would fire every shortcut twice, and `Starting` has not finished
+    // deciding yet.
+    let backend = state.hotkey_health.backend();
+    if backend == voxctrl_hotkeys::Backend::MintDbus
+        || (backend == voxctrl_hotkeys::Backend::None
+            && crate::mint_shortcuts::is_mint_desktop())
+    {
+        match crate::mint_shortcuts::sync_mint_shortcuts(&bindings) {
+            Ok(registered) => {
+                state
+                    .hotkey_health
+                    .set_backend(voxctrl_hotkeys::Backend::MintDbus);
+                info!(
+                    "Mirrored {} binding(s) into Linux Mint's own shortcut settings",
+                    registered.len()
+                );
             }
+            Err(e) => tracing::warn!("Failed to sync Linux Mint native shortcut settings: {e}"),
         }
     }
 
@@ -785,6 +798,14 @@ pub struct HotkeyStatusPayload {
     /// What the compositor actually bound, which may differ from what VoxCtrl
     /// asked for — the user gets the final say in the portal's own dialog.
     pub shortcuts: Vec<voxctrl_hotkeys::BoundShortcut>,
+    /// Gesture styles the running backend can actually deliver, as the same
+    /// snake_case names the bindings file uses. The settings UI offers exactly
+    /// these, so a user is never shown a gesture that silently does nothing.
+    pub supported_gestures: Vec<voxctrl_routing::GestureType>,
+    /// Why the X11 backend was not used, when it was not. Distinct from
+    /// `portal_error`: a Wayland Cinnamon user needs both reasons to make sense
+    /// of why neither worked.
+    pub x11_error: Option<String>,
     /// `wayland`, `x11` or whatever `XDG_SESSION_TYPE` says.
     pub session_type: String,
     /// `/dev/input/event*` nodes present, and how many VoxCtrl could open.
@@ -910,15 +931,29 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
         false
     };
 
+    // A Mint shortcut that is registered and bound is a working backend even if
+    // the listener never claimed one — the desktop, not VoxCtrl, is holding it.
+    let effective_backend = if backend == voxctrl_hotkeys::Backend::None && mint_shortcut_registered
+    {
+        voxctrl_hotkeys::Backend::MintDbus
+    } else {
+        backend
+    };
+
     let needs_manual_enable = backend == voxctrl_hotkeys::Backend::Portal
         && desktop.as_deref() == Some("KDE");
-    let (devices_total, devices_readable) = match backend {
-        voxctrl_hotkeys::Backend::Portal | voxctrl_hotkeys::Backend::WindowsHook => (0, 0),
+    let (devices_total, devices_readable) = match effective_backend {
+        // None of these open an input device, so a device count would only
+        // invite the user to fix a permission problem they do not have.
+        voxctrl_hotkeys::Backend::Portal
+        | voxctrl_hotkeys::Backend::WindowsHook
+        | voxctrl_hotkeys::Backend::X11
+        | voxctrl_hotkeys::Backend::MintDbus => (0, 0),
         _ => count_input_devices(),
     };
     let shortcuts = health.bound_shortcuts();
 
-    let detail = match backend {
+    let detail = match effective_backend {
         voxctrl_hotkeys::Backend::Portal => {
             let unbound = shortcuts.iter().filter(|s| !s.bound).count();
             if unbound > 0 {
@@ -937,6 +972,19 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
         voxctrl_hotkeys::Backend::WindowsHook => {
             "Global shortcuts are active.".to_string()
         }
+        voxctrl_hotkeys::Backend::X11 => (
+            "Your desktop has no global-shortcuts portal, so VoxCtrl is reading X11 key \
+             events directly. Every gesture style works, including bare modifiers, and no \
+             permission setup was needed — but in this mode every keystroke passes through \
+             VoxCtrl."
+        )
+        .to_string(),
+        voxctrl_hotkeys::Backend::MintDbus => (
+            "Your desktop is handling VoxCtrl's shortcuts through its own keyboard settings. \
+             VoxCtrl cannot read your keyboard. This route only carries a press, never a \
+             release, so it can serve tap-to-start/tap-to-stop bindings and no other gesture."
+        )
+        .to_string(),
         voxctrl_hotkeys::Backend::Evdev => format!(
             "This desktop does not offer the global-shortcuts portal, so VoxCtrl is reading \
              input devices directly ({devices_readable} of {devices_total} readable). That \
@@ -950,10 +998,7 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
                 .to_string()
         }
         voxctrl_hotkeys::Backend::None => {
-            if mint_shortcut_registered {
-                "Linux Mint native desktop shortcut (Ctrl+Alt+Space) is registered in System Settings and triggers VoxCtrl over D-Bus."
-                    .to_string()
-            } else if is_mint_desktop {
+            if is_mint_desktop {
                 "This desktop (Linux Mint) does not provide the XDG global-shortcuts portal, but supports registering native custom shortcuts via System Settings / D-Bus."
                     .to_string()
             } else if devices_total == 0 {
@@ -976,24 +1021,22 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
 
     HotkeyStatusPayload {
         is_active,
-        backend: match backend {
+        backend: match effective_backend {
             voxctrl_hotkeys::Backend::Portal => "portal",
+            voxctrl_hotkeys::Backend::X11 => "x11",
+            voxctrl_hotkeys::Backend::MintDbus => "mint_dbus",
             voxctrl_hotkeys::Backend::Evdev => "evdev",
             voxctrl_hotkeys::Backend::WindowsHook => "windows_hook",
             voxctrl_hotkeys::Backend::Starting => "starting",
-            voxctrl_hotkeys::Backend::None => {
-                if mint_shortcut_registered {
-                    "mint_dbus"
-                } else {
-                    "none"
-                }
-            }
+            voxctrl_hotkeys::Backend::None => "none",
         }
         .to_string(),
         is_private: health.is_private() || (is_mint_desktop && mint_shortcut_registered),
         portal_error: health.portal_error(),
         portal_refused: health.portal_refused(),
         shortcuts,
+        supported_gestures: effective_backend.gestures().to_vec(),
+        x11_error: health.x11_error(),
         session_type: session_type(),
         devices_total,
         devices_readable,
@@ -1023,6 +1066,8 @@ fn test_override(value: &str) -> Option<HotkeyStatusPayload> {
         portal_error: None,
         portal_refused: false,
         shortcuts: Vec::new(),
+        supported_gestures: voxctrl_hotkeys::Backend::Portal.gestures().to_vec(),
+        x11_error: None,
         session_type: "wayland".to_string(),
         devices_total: 0,
         devices_readable: 0,
@@ -1277,17 +1322,18 @@ pub fn check_hotkey_keys_with(
     keys: &[String],
     health: &voxctrl_hotkeys::ListenerHealth,
 ) -> HotkeyKeysCheck {
-    use voxctrl_hotkeys::{Backend, TriggerProblem};
+    use voxctrl_hotkeys::TriggerProblem;
 
     let problem = match voxctrl_hotkeys::accelerator(keys) {
         Ok(accelerator) => return HotkeyKeysCheck::ok(Some(accelerator)),
         Err(problem) => problem,
     };
 
-    // Only the portal actually cannot deliver these. Blocking them everywhere
-    // would break bare-modifier shortcuts on the backends where VoxCtrl watches
-    // the keys itself and they work perfectly well.
-    let enforced = matches!(health.backend(), Backend::Portal | Backend::Starting);
+    // Only the backends that hand the grab to the desktop actually cannot
+    // deliver these. Blocking them everywhere would break bare-modifier
+    // shortcuts on the backends where VoxCtrl watches the keys itself — X11,
+    // evdev and the Windows hook — where they work perfectly well.
+    let enforced = !health.backend().sees_raw_keys();
 
     let hint = match problem {
         TriggerProblem::ModifiersOnly => Some(
@@ -1349,8 +1395,14 @@ pub async fn check_hotkey_status(
 }
 
 #[tauri::command]
-pub async fn register_mint_shortcut() -> Result<String, String> {
-    crate::mint_shortcuts::register_mint_shortcut(None)
+pub async fn register_mint_shortcut(
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+) -> Result<String, String> {
+    let result = crate::mint_shortcuts::register_mint_shortcut(None)?;
+    state
+        .hotkey_health
+        .set_backend(voxctrl_hotkeys::Backend::MintDbus);
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1361,6 +1413,9 @@ pub async fn approve_shortcuts(
         && state.hotkey_health.backend() == voxctrl_hotkeys::Backend::None
     {
         crate::mint_shortcuts::register_mint_shortcut(None)?;
+        state
+            .hotkey_health
+            .set_backend(voxctrl_hotkeys::Backend::MintDbus);
     } else if state.hotkey_health.backend() == voxctrl_hotkeys::Backend::Portal {
         let _ = open_shortcut_settings().await;
     } else {

@@ -44,15 +44,18 @@ mod linux {
 
     pub struct DictationInterface {
         pub state: Arc<Mutex<AppState>>,
-        /// Channels to send control commands back to the app coordinator
-        pub start_tx: tokio::sync::mpsc::Sender<()>,
+        /// Channels to send control commands back to the app coordinator. The
+        /// start channel carries the id of the binding that asked for it, so a
+        /// desktop shortcut can dictate into that binding's own targets. Empty
+        /// means "whichever binding the app would use by default".
+        pub start_tx: tokio::sync::mpsc::Sender<String>,
         pub stop_tx: tokio::sync::mpsc::Sender<()>,
     }
 
     #[interface(name = "ai.voxctrl.Dictation")]
     impl DictationInterface {
         async fn start_recording(&self) -> zbus::fdo::Result<()> {
-            let _ = self.start_tx.send(()).await;
+            let _ = self.start_tx.send(String::new()).await;
             Ok(())
         }
 
@@ -62,16 +65,17 @@ mod linux {
         }
 
         async fn toggle_recording(&self) -> zbus::fdo::Result<()> {
-            let status = {
-                let guard = self.state.lock().await;
-                guard.status.clone()
-            };
-            if status == DictationStatus::Recording {
-                let _ = self.stop_tx.send(()).await;
-            } else {
-                let _ = self.start_tx.send(()).await;
-            }
-            Ok(())
+            self.toggle(String::new()).await
+        }
+
+        /// Toggle dictation for one specific binding.
+        ///
+        /// This is what a Cinnamon/MATE native shortcut calls: the desktop owns
+        /// the key grab there, so the only way VoxCtrl learns *which* of the
+        /// user's bindings fired — and therefore which targets the text goes to
+        /// — is for the shortcut to name it.
+        async fn toggle_binding(&self, binding_id: String) -> zbus::fdo::Result<()> {
+            self.toggle(binding_id).await
         }
 
         async fn get_status(&self) -> zbus::fdo::Result<String> {
@@ -91,9 +95,25 @@ mod linux {
         async fn text_injected(ctx: &SignalContext<'_>, text: &str) -> zbus::Result<()>;
     }
 
+    impl DictationInterface {
+        /// Start `binding_id` if idle, stop whatever is running if not.
+        async fn toggle(&self, binding_id: String) -> zbus::fdo::Result<()> {
+            let status = {
+                let guard = self.state.lock().await;
+                guard.status.clone()
+            };
+            if status == DictationStatus::Recording {
+                let _ = self.stop_tx.send(()).await;
+            } else {
+                let _ = self.start_tx.send(binding_id).await;
+            }
+            Ok(())
+        }
+    }
+
     pub async fn start_service(
         state: Arc<Mutex<AppState>>,
-        start_tx: tokio::sync::mpsc::Sender<()>,
+        start_tx: tokio::sync::mpsc::Sender<String>,
         stop_tx: tokio::sync::mpsc::Sender<()>,
     ) -> Result<Connection> {
         let iface = DictationInterface {
@@ -141,7 +161,7 @@ pub use linux::{emit_status_changed, emit_text_injected, start_service};
 #[cfg(not(target_os = "linux"))]
 pub async fn start_service(
     _state: Arc<Mutex<AppState>>,
-    _start_tx: tokio::sync::mpsc::Sender<()>,
+    _start_tx: tokio::sync::mpsc::Sender<String>,
     _stop_tx: tokio::sync::mpsc::Sender<()>,
 ) -> Result<()> {
     tracing::warn!("DBus service not available on this platform");

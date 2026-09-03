@@ -61,19 +61,28 @@ systemd's own defaults (`/usr/lib/udev/rules.d/70-uaccess.rules`) grant `uaccess
 - `the_privileged_script_never_touches_input_permissions` (`src-tauri/src/installer.rs`)
 - `never offers to grant keyboard access` (`tests/svelte/SetupWindow.test.ts`)
 
-### The fallback, and being honest about it
+### The fallbacks, and being honest about them
 
-If your desktop provides no portal **and** your system already lets this process read input devices, VoxCtrl will use that access rather than refusing to work. In that mode every keystroke does pass through the process.
+If your desktop provides no portal, VoxCtrl reads keys itself: X11 raw key
+events (XInput2) where there is an X server, and `/dev/input/event*` only where
+your system already lets this process do so. In either mode every keystroke does
+pass through the process.
+
+The X11 backend needs no permission at all — any X client may ask the server for
+raw key events — so it is what a stock Cinnamon, MATE or Xfce desktop uses. That
+makes it *easier* to reach than the evdev fallback, not more private: it sees
+exactly as much. It is chosen over evdev because it asks the user for nothing,
+and it is ranked below the portal for precisely this reason.
 
 VoxCtrl does not hide this. The Hotkeys tab and the setup window both say so in plain language, and `is_private` is false throughout the status API. What it does *not* do in that mode:
 
 - log key names (the reader has no logging on the key path)
 - store them (key names are transient `String`s and a small set of held keys)
 - send them anywhere (they never cross into the UI layer, and no network path can reach them)
-- read mice, touchpads or tablets (only devices that look like keyboards are opened)
-- read its own injected keystrokes (synthetic devices — `uinput`, `XTEST`, anything named "virtual" — are always skipped)
+- read mice, touchpads or tablets (only devices that look like keyboards are opened; on X11 only key events are selected)
+- read its own injected keystrokes (synthetic devices — `uinput`, `XTEST`, anything named "virtual" — are always skipped, by name on evdev and by `sourceid` on X11)
 
-If you would rather it never happened at all, a desktop that implements the portal avoids it entirely. See [Hotkeys](hotkeys.md#linux--evdev-fallback).
+If you would rather it never happened at all, a desktop that implements the portal avoids it entirely — as does the native Cinnamon/MATE shortcut route, where the desktop holds the grab and VoxCtrl reads nothing. See [Hotkeys](hotkeys.md#linux--x11-raw-key-events-xinput2).
 
 ### Windows
 
@@ -158,7 +167,8 @@ sudo unshare -n sudo -u "$USER" ./VoxCtrl-x86_64.AppImage
 - `crates/voxctrl-hotkeys/src/portal.rs` — the portal backend, the whole data path
 - `crates/voxctrl-hotkeys/src/trigger.rs` — what VoxCtrl is allowed to ask a desktop to bind
 - `crates/voxctrl-hotkeys/src/gestures.rs` — gesture recognition, which never sees a key name
-- `crates/voxctrl-hotkeys/src/linux.rs` — the evdev fallback and why it is a fallback
+- `crates/voxctrl-hotkeys/src/linux.rs` — the backend order and why each is where it is
+- `crates/voxctrl-hotkeys/src/x11.rs` — the X11 backend, what it sees and what it filters
 - `src-tauri/src/installer.rs` — everything the installer does, in one file
 
 ---

@@ -13,6 +13,7 @@ use crate::state::AppState;
 
 mod commands;
 mod installer;
+mod host_env;
 mod mint_shortcuts;
 mod overlay_sidecar;
 mod pipeline;
