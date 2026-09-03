@@ -84,7 +84,8 @@ jobs:
             squashfs-tools \
             pkg-config \
             build-essential \
-            espeak-ng
+            espeak-ng \
+            xvfb
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -96,8 +97,16 @@ jobs:
       # voxctrl-tts's phoneme-frontend tests exercise the real `espeak-ng`
       # binary when it is present, and skip cleanly when it isn't — it is
       # installed above so they actually run here.
+      #
+      # Under xvfb-run for the same reason: the X11 hotkey backend's tests talk
+      # to a real X server when DISPLAY is set, and skip when it isn't. Only a
+      # real server rejects a malformed XISelectEvents request, and a version
+      # of that backend shipped selecting raw and hierarchy events in one mask
+      # — which every server refuses, so no key ever arrived — with the whole
+      # suite passing. Without a display here those tests silently skip and the
+      # gap reopens.
       - name: cargo test
-        run: cargo test -p voxctrl-config -p voxctrl-routing -p voxctrl-hotkeys -p voxctrl-tts -p voxctrl-app
+        run: xvfb-run -a cargo test -p voxctrl-config -p voxctrl-routing -p voxctrl-hotkeys -p voxctrl-tts -p voxctrl-app
 
   # ── Frontend type check ───────────────────────────────────────────────────────
   frontend-check:
