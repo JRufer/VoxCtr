@@ -46,8 +46,9 @@ use crate::{
 /// on every hotplug.
 const XI_ALL_MASTER_DEVICES: xinput::DeviceId = 1;
 
-/// `XIAllDevices`, for querying the device list — the slave keyboards that
-/// `sourceid` refers to are not master devices.
+/// `XIAllDevices`. Used to query the device list — the slave keyboards that
+/// `sourceid` refers to are not master devices — and to select hierarchy
+/// events, which the protocol permits on this device and no other.
 const XI_ALL_DEVICES: xinput::DeviceId = 0;
 
 /// X11 keycodes are evdev codes offset by 8, fixed by the X11 protocol.
@@ -144,25 +145,40 @@ pub fn start(
         )));
     }
 
-    let mask = xinput::EventMask {
+    // Raw events go on XIAllMasterDevices. Hierarchy events CANNOT: the protocol
+    // allows them only on XIAllDevices, and asking for both in one mask makes
+    // the server reject the whole request with BadValue — which selects
+    // nothing, so no key ever arrives. They are two requests for that reason,
+    // and because only the first one matters: raw key events are the backend,
+    // while hierarchy is a refresh hint for the XTEST filter.
+    let raw_mask = xinput::EventMask {
         deviceid: XI_ALL_MASTER_DEVICES,
-        mask: vec![
-            xinput::XIEventMask::RAW_KEY_PRESS
-                | xinput::XIEventMask::RAW_KEY_RELEASE
-                // Hotplug: a keyboard added later, or a new XTEST device, changes
-                // which source ids are worth listening to.
-                | xinput::XIEventMask::HIERARCHY,
-        ],
+        mask: vec![xinput::XIEventMask::RAW_KEY_PRESS | xinput::XIEventMask::RAW_KEY_RELEASE],
+    };
+    let hierarchy_mask = xinput::EventMask {
+        deviceid: XI_ALL_DEVICES,
+        mask: vec![xinput::XIEventMask::HIERARCHY],
     };
 
     // Raw events may only be selected on a root window. Every screen gets its
     // own selection so a multi-screen (not multi-monitor) display still works.
     let roots: Vec<u32> = conn.setup().roots.iter().map(|s| s.root).collect();
     for root in &roots {
-        conn.xinput_xi_select_events(*root, std::slice::from_ref(&mask))
+        conn.xinput_xi_select_events(*root, std::slice::from_ref(&raw_mask))
             .map_err(|e| X11Error::Select(format!("{e}")))?
             .check()
             .map_err(|e| X11Error::Select(format!("{e}")))?;
+
+        // Best-effort: without it a keyboard or XTEST device added later is not
+        // noticed until the next restart, which is worth a log line and not
+        // worth giving up working hotkeys over.
+        let hotplug = conn
+            .xinput_xi_select_events(*root, std::slice::from_ref(&hierarchy_mask))
+            .map_err(|e| format!("{e}"))
+            .and_then(|cookie| cookie.check().map_err(|e| format!("{e}")));
+        if let Err(e) = hotplug {
+            tracing::debug!("X11 device-hotplug notifications unavailable: {e}");
+        }
     }
     conn.flush().map_err(|e| X11Error::Select(format!("{e}")))?;
 
@@ -306,6 +322,138 @@ mod tests {
         // evdev's Debug renders these as "unknown key: N", which must never
         // reach a binding as if it were a key name.
         assert_eq!(key_name(60000), None);
+    }
+
+    /// The selection sequence `start` performs, against whatever X server
+    /// `DISPLAY` points at.
+    ///
+    /// Skips when there is no server. Run it under `xvfb-run -a cargo test` to
+    /// exercise it in CI or a container.
+    ///
+    /// This exists because the unit tests below cannot catch a protocol
+    /// violation: only a real server rejects one. The first shipped version of
+    /// this backend selected raw and hierarchy events in a single mask, which
+    /// every server refuses with BadValue, and nothing in the suite noticed.
+    #[test]
+    fn the_real_selection_sequence_is_accepted_by_an_x_server() {
+        let Ok(display) = std::env::var("DISPLAY") else {
+            eprintln!("skipped: no DISPLAY (run under xvfb-run to exercise this)");
+            return;
+        };
+
+        let (conn, _screen) = match RustConnection::connect(None) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("skipped: DISPLAY={display} is not connectable: {e}");
+                return;
+            }
+        };
+
+        let version = conn
+            .xinput_xi_query_version(MIN_XI_MAJOR, MIN_XI_MINOR)
+            .expect("XIQueryVersion should be sendable")
+            .reply()
+            .expect("this server should serve XInput2");
+        assert!(
+            supports_reliable_raw_events(version.major_version, version.minor_version),
+            "server offers XInput {}.{}",
+            version.major_version,
+            version.minor_version
+        );
+
+        let raw_mask = xinput::EventMask {
+            deviceid: XI_ALL_MASTER_DEVICES,
+            mask: vec![xinput::XIEventMask::RAW_KEY_PRESS | xinput::XIEventMask::RAW_KEY_RELEASE],
+        };
+        let hierarchy_mask = xinput::EventMask {
+            deviceid: XI_ALL_DEVICES,
+            mask: vec![xinput::XIEventMask::HIERARCHY],
+        };
+        let root = conn.setup().roots[0].root;
+
+        conn.xinput_xi_select_events(root, std::slice::from_ref(&raw_mask))
+            .expect("XISelectEvents should be sendable")
+            .check()
+            .expect("the server must accept raw key events on XIAllMasterDevices");
+
+        conn.xinput_xi_select_events(root, std::slice::from_ref(&hierarchy_mask))
+            .expect("XISelectEvents should be sendable")
+            .check()
+            .expect("the server must accept hierarchy events on XIAllDevices");
+
+        // The combination that shipped broken, pinned as an error so a future
+        // edit that merges the masks fails here instead of on a user's desktop.
+        let merged = xinput::EventMask {
+            deviceid: XI_ALL_MASTER_DEVICES,
+            mask: vec![
+                xinput::XIEventMask::RAW_KEY_PRESS
+                    | xinput::XIEventMask::RAW_KEY_RELEASE
+                    | xinput::XIEventMask::HIERARCHY,
+            ],
+        };
+        let merged_result = conn
+            .xinput_xi_select_events(root, std::slice::from_ref(&merged))
+            .expect("XISelectEvents should be sendable")
+            .check();
+        assert!(
+            merged_result.is_err(),
+            "selecting HIERARCHY on XIAllMasterDevices must be refused; if a \
+             server ever accepts it, this backend's split is still correct but \
+             this test's premise has changed"
+        );
+
+        // And the device query the XTEST filter is built from.
+        let devices = conn
+            .xinput_xi_query_device(XI_ALL_DEVICES)
+            .expect("XIQueryDevice should be sendable")
+            .reply()
+            .expect("the server must answer a device query");
+        assert!(!devices.infos.is_empty(), "a server always has core devices");
+    }
+
+    /// `start` itself, end to end, against a real server.
+    ///
+    /// The narrower test above checks the protocol requests in isolation; this
+    /// one runs the function the app actually calls, so a mistake anywhere in
+    /// its setup — version negotiation, either selection, thread spawning —
+    /// shows up as `Err` here rather than as "the app runs and no key works".
+    #[tokio::test]
+    async fn start_succeeds_and_claims_the_backend_on_a_real_server() {
+        if std::env::var("DISPLAY").is_err() {
+            eprintln!("skipped: no DISPLAY (run under xvfb-run to exercise this)");
+            return;
+        }
+
+        let (tx, _rx) = crate::channel();
+        let (_reload_tx, reload_rx) = crossbeam_channel::unbounded();
+        let health = Arc::new(ListenerHealth::default());
+
+        let result = start(Vec::new(), tx, reload_rx, health.clone());
+
+        assert!(result.is_ok(), "start must succeed on a real X server: {result:?}");
+        assert_eq!(health.backend(), Backend::X11);
+        assert!(health.is_active());
+    }
+
+    #[test]
+    fn hierarchy_events_are_never_selected_alongside_raw_events() {
+        // XI_HierarchyChanged may only be selected on XIAllDevices. Asking for
+        // it on XIAllMasterDevices — which is where raw events must go — makes
+        // the server reject the entire XISelectEvents request with BadValue, so
+        // nothing at all is selected and not one key ever arrives. That shipped
+        // once: "the X server refused raw key events ... bad_value: 11", 11
+        // being this very mask bit.
+        assert_ne!(
+            XI_ALL_DEVICES, XI_ALL_MASTER_DEVICES,
+            "the two selections must target different devices"
+        );
+
+        let raw = xinput::XIEventMask::RAW_KEY_PRESS | xinput::XIEventMask::RAW_KEY_RELEASE;
+        assert_eq!(
+            u32::from(raw) & u32::from(xinput::XIEventMask::HIERARCHY),
+            0,
+            "the raw-event mask must not carry HIERARCHY"
+        );
     }
 
     #[test]

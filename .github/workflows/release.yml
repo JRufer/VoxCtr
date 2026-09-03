@@ -427,66 +427,44 @@ jobs:
           # "## Downloads" is evergreen, and GitHub appends its own generated
           # "What's Changed" list of merged PRs beneath all of this.
           body: |
-            ## What's new in 0.3.9
+            ## What's new in 0.3.10
 
-            **Global shortcuts now work on Linux Mint, Cinnamon, MATE and
-            Xfce.** On those desktops 0.3.8 could not receive its own hotkeys at
-            all — the app ran, and holding a keybind did nothing.
+            **Fixes the X11 shortcut backend that 0.3.9 shipped broken.** On
+            Cinnamon, MATE and Xfce, 0.3.9 asked the X server for its key events
+            in a way the protocol does not allow, the server refused the whole
+            request, and no key ever arrived. The setup window reported it —
 
-            ### Why they did not work
+            ```
+            X11 shortcuts: the X server refused raw key events:
+            ... bad_value: 11 ... request_name: Some("XISelectEvents")
+            ```
 
-            Cinnamon and MATE serve no XDG `GlobalShortcuts` portal, so VoxCtrl
-            fell through to reading input devices — which needs `input` group
-            membership VoxCtrl deliberately will not grant itself. That left a
-            native Cinnamon shortcut as the last resort, and it could not work
-            either: the command it registered named a D-Bus method that does not
-            exist (`toggle_recording`, where the service publishes
-            `ToggleRecording`). Registration looked healthy and the shortcut did
-            nothing. Worse, the setup window reported **"VoxCtrl is ready"**
-            throughout, because it only checked that a shortcut had been listed
-            — never that a key was bound to it.
+            — and fell back to a native desktop shortcut, which serves only
+            tap-to-start/tap-to-stop. So on those desktops 0.3.9 delivered none
+            of the hold or double-tap styles it was written to deliver.
 
-            ### X11 shortcuts, with no permissions and no setup
+            The cause: VoxCtrl asked for raw key events and device-hotplug
+            notifications in a single request. Hotplug notifications may only be
+            requested for "all devices" and raw key events only for "all master
+            devices", and mixing them makes the server reject both. They are two
+            requests now, and only the first has to succeed.
 
-            0.3.9 adds an X11 backend using XInput2 raw key events. Any X client
-            may ask the server for these: there is no group to join, no udev
-            rule, and nothing to change about your machine. It covers Cinnamon,
-            MATE and Xfce, and because it sees each key going down *and* coming
-            back up, every gesture style works — hold, toggle, double-tap,
-            double-tap-and-hold — as do bare-modifier triggers like
-            double-tapping Super, which no accelerator-based backend can
-            express.
+            0.3.9's other fixes were sound and are unchanged — the native
+            Cinnamon/MATE shortcut route, the setup window no longer claiming
+            shortcuts work when nothing is bound, and gesture styles the running
+            backend cannot deliver no longer being offered. What 0.3.10 adds is
+            that the X11 backend those fixes were the fallback *for* now
+            actually runs.
 
-            Like the existing device-reading fallback, this mode sees every
-            keystroke, not only VoxCtrl's shortcuts. Nothing is logged, stored,
-            or transmitted, and the Hotkeys tab says plainly which backend is
-            running. A desktop with a shortcuts portal (KDE Plasma, GNOME 48+,
-            Hyprland) still avoids it entirely.
+            ### How this got past 0.3.9, and what stops it next time
 
-            ### Gesture styles you cannot use are no longer offered
-
-            On a Wayland Cinnamon session VoxCtrl falls back to a native desktop
-            shortcut, and a desktop shortcut only reports the key going *down*.
-            A hold has no end, and a tap cannot be told from a hold. The Hotkeys
-            tab now offers exactly the styles the running backend can deliver
-            and explains what is missing, instead of offering four and silently
-            doing nothing for three of them. A binding you already saved keeps
-            its gesture, flagged rather than rewritten.
-
-            ### Also in this release
-
-            - The native Cinnamon/MATE shortcut route is repaired for Wayland
-              sessions: correct D-Bus method, one shortcut per binding (so text
-              reaches that binding's targets), numbered `customN` slots
-              allocated around your existing shortcuts so nothing is
-              overwritten and Cinnamon's Keyboard panel actually lists them.
-            - `gsettings` and `dbus-send` are now run with your desktop's
-              environment rather than the AppImage's. Inside the bundle they
-              were looking for Cinnamon's settings schemas in the AppDir and
-              concluding your desktop had no keyboard settings at all.
-            - The setup window no longer claims shortcuts are working when
-              nothing is bound, and reports why the X11 path was unavailable
-              when it was.
+            Only a real X server rejects a malformed request; no unit test can.
+            The suite passed in full while the backend could not select a single
+            key event. VoxCtrl's tests now talk to a real X server when one is
+            present — including a test that runs the backend's own startup path
+            end to end, and one that pins the exact malformed request as an
+            error — and CI runs them under a virtual display so they cannot
+            silently skip.
 
             ### Requirements
 
