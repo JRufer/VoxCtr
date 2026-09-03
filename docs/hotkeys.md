@@ -6,7 +6,9 @@
 
 VoxCtrl listens for global shortcuts that work regardless of which application has focus.
 
-On Linux it does this through the **XDG desktop portal**, so **VoxCtrl does not read your keyboard**. Your desktop owns the key grab and tells VoxCtrl one thing: that its own shortcut fired. VoxCtrl never sees what you type in your browser, your terminal, your password manager, or anywhere else — not because it chooses not to look, but because it is never given the data.
+On Linux it prefers the **XDG desktop portal**, where **VoxCtrl does not read your keyboard**. Your desktop owns the key grab and tells VoxCtrl one thing: that its own shortcut fired. VoxCtrl never sees what you type in your browser, your terminal, your password manager, or anywhere else — not because it chooses not to look, but because it is never given the data.
+
+Where no portal exists, VoxCtrl falls back in order: **X11 raw key events**, then **evdev**, then a **native Cinnamon/MATE shortcut**. Each is described below, and the app always says which one is running.
 
 This is a change from earlier versions, which read `/dev/input/event*` directly. See [Why this changed](#why-this-changed) below.
 
@@ -14,17 +16,32 @@ This is a change from earlier versions, which read `/dev/input/event*` directly.
 
 ## What VoxCtrl can and cannot see
 
-| | Portal (default) | evdev fallback |
-|---|---|---|
-| Can see keystrokes in other apps | **No** | Yes, all of them |
-| Needs a udev rule or `input` group | **No** | Yes |
-| Needs any permission setup | **No** | Yes, and VoxCtrl will not do it for you |
-| Who chooses the keys | You, through your desktop | You, in VoxCtrl |
-| Works on Wayland | Yes | Yes |
-| Works on X11 | Yes | Yes |
-| Works with no desktop (bare TTY) | No | Yes |
+| | Portal (preferred) | X11 raw events | evdev fallback | Mint native shortcut |
+|---|---|---|---|---|
+| Can see keystrokes in other apps | **No** | Yes, all of them | Yes, all of them | **No** |
+| Needs a udev rule or `input` group | **No** | **No** | Yes | **No** |
+| Needs any permission setup | **No** | **No** | Yes, and VoxCtrl will not do it for you | **No** |
+| Who chooses the keys | You, through your desktop | You, in VoxCtrl | You, in VoxCtrl | You, in VoxCtrl |
+| Works on Wayland | Yes | No | Yes | Yes |
+| Works on X11 | Yes | Yes | Yes | Yes |
+| Works with no desktop (bare TTY) | No | No | Yes | No |
+| Gesture styles it can deliver | All four | All four | All four | `toggle` only |
+| Bare-modifier triggers (double-tap Super) | No | Yes | Yes | No |
 
 The Settings → Hotkeys tab and the setup window both state which of these is in use, live. If it says your desktop is handling the shortcuts, VoxCtrl is not reading your keyboard.
+
+### Gesture styles and the backend
+
+A backend that reports individual key **presses and releases** can serve every
+gesture: `hold`, `toggle`, `double_tap` and `double_tap_hold`. A backend that
+only ever learns that a key went *down* cannot end a hold and cannot tell a tap
+from a hold, so it can serve `toggle` and nothing else.
+
+`Backend::gestures()` in `crates/voxctrl-hotkeys/src/health.rs` is the single
+definition of that, and the Hotkeys tab offers exactly what it returns — a
+gesture style the running backend cannot deliver is not shown at all, rather
+than offered and silently doing nothing. A binding saved under a different
+backend keeps its gesture and is flagged instead of being rewritten.
 
 ---
 
@@ -82,7 +99,7 @@ The key recorder in Settings → Hotkeys **refuses these while you are recording
 
 The rule is defined once, in `crates/voxctrl-hotkeys/src/trigger.rs`, and the settings UI validates against it over IPC — so what the recorder accepts and what the portal can register cannot drift apart.
 
-On the evdev fallback and on Windows, VoxCtrl watches the keys itself and a bare modifier genuinely works. There the recorder accepts it and shows a note that it will stop working if shortcut delivery ever moves to the portal, rather than blocking something that works on your machine today.
+On the X11 and evdev backends and on Windows, VoxCtrl watches the keys itself and a bare modifier genuinely works. There the recorder accepts it and shows a note that it will stop working if shortcut delivery ever moves to the portal, rather than blocking something that works on your machine today.
 
 #### If the portal refuses the session
 
@@ -132,22 +149,79 @@ A binding saved before this rule existed is not deleted and not silently broken.
 
 If your desktop refuses a shortcut for any other reason, the binding is flagged **not bound by your desktop**.
 
+### Linux — X11 raw key events (XInput2)
+
+The backend for X11 desktops that serve no portal and are not getting one —
+Cinnamon, MATE, Xfce, and most wlroots compositors' Xwayland-less X11 cousins.
+
+VoxCtrl selects `XI_RawKeyPress` / `XI_RawKeyRelease` on the root window through
+XInput2. Raw events are delivered independently of which window has focus, which
+is what makes them usable as global shortcuts, and **any X client may ask for
+them** — there is no group to join, no udev rule, and nothing for VoxCtrl to
+change about the machine. That is what makes this usable where the evdev
+fallback can only report that it is locked out.
+
+It carries the same privacy cost as evdev: raw events are every key you press,
+not only VoxCtrl's own shortcuts. So it ranks below the portal, and the app says
+which one it is running. It also sees presses *and* releases, so every gesture
+style works here, including bare-modifier triggers like double-tapping Super
+that no accelerator-based backend can express.
+
+X11 keycodes are evdev codes offset by 8, and key names come from the `evdev`
+crate rather than a table of VoxCtrl's own — so a binding recorded under one
+backend keeps working under the other. Synthetic devices (`XTEST`, `uinput`,
+anything named "virtual") are filtered by `sourceid`, so VoxCtrl never reads
+back the transcription it types out.
+
+To disable this path for testing, set `VOXCTRL_DISABLE_X11_HOTKEYS=1`.
+
 ### Linux Mint (Cinnamon / MATE) — Native D-Bus Shortcut Integration
 
-Linux Mint's Cinnamon and MATE desktop environments do not yet implement the XDG `GlobalShortcuts` portal interface. To work out-of-the-box on Linux Mint without needing keylogger/evdev permissions:
+Cinnamon and MATE implement no XDG `GlobalShortcuts` portal. On an X11 session
+the X11 backend above covers them completely; this route is for the case where
+even that is unavailable — a Wayland Cinnamon session, or an X server without
+XInput2.
 
 1. VoxCtrl registers a native session D-Bus interface (`ai.voxctrl.Dictation`).
-2. The setup window detects Linux Mint and provides an **"Add Mint Native Shortcut"** button (or via `gsettings`).
-3. This creates a custom keybinding under `org.cinnamon.desktop.keybindings` or `org.mate.SettingsDaemon.plugins.media-keys` bound to `Ctrl+Alt+Space` that executes:
+2. Saving bindings mirrors every `toggle` binding into a custom keybinding under
+   `org.cinnamon.desktop.keybindings` or
+   `org.mate.SettingsDaemon.plugins.media-keys`, each running:
    ```bash
-   dbus-send --session --dest=ai.voxctrl.Dictation --type=method_call /ai/voxctrl/Dictation ai.voxctrl.Dictation.toggle_recording
+   dbus-send --session --dest=ai.voxctrl.Dictation --type=method_call \
+     /ai/voxctrl/Dictation ai.voxctrl.Dictation.ToggleBinding string:'<binding id>'
    ```
-4. This allows dictation toggle directly from Mint's native system shortcut manager with zero special permissions required.
+   The shortcut names the binding it stands for, so the transcription reaches
+   that binding's own targets rather than a global default.
+3. Zero special permissions are required, and VoxCtrl reads no keystrokes.
 
+Four things about this path are easy to get wrong, and all four have bitten it:
+
+- **The method name is PascalCase.** `zbus` publishes `toggle_binding` as
+  `ToggleBinding`. A command naming the Rust spelling invokes nothing at all:
+  registration looks perfectly healthy and the shortcut does nothing.
+- **Child keys are written before the slot joins `custom-list`.** The settings
+  daemon reacts to the list changing by reading the entry it names; an entry it
+  reads first and finds empty stays unbound, and nothing re-notifies it.
+- **Slots are numbered `customN` and allocated around the user's own.**
+  Cinnamon's Keyboard applet enumerates `customN` and lists nothing else, so a
+  shortcut registered under a name of VoxCtrl's own would be invisible and
+  unfixable in System Settings — and writing `custom0` blind would overwrite
+  whatever the user already had there.
+- **`gsettings` needs the host's environment.** Inside the AppImage, linuxdeploy's
+  GTK hook exports `GSETTINGS_SCHEMA_DIR` into the AppDir, so an inherited
+  environment sends `gsettings` looking for Cinnamon's schemas in the bundle,
+  where they are not. It then reports that this desktop has no keybinding
+  support, which is indistinguishable from a desktop that genuinely has none.
+  `src-tauri/src/host_env.rs` strips the bundle back out for host programs.
+
+Because a custom keybinding fires on key-**press** and reports nothing on
+release, this backend advertises `toggle` alone (see
+[Gesture styles and the backend](#gesture-styles-and-the-backend)); hold and
+double-tap styles are not offered while it is running.
 
 ### Linux — evdev fallback
 
-Only used when the portal is unavailable, **and only if your system already allows this process to read input devices**. VoxCtrl never grants itself that access.
+Only used when neither the portal nor the X11 backend is available, **and only if your system already allows this process to read input devices**. VoxCtrl never grants itself that access.
 
 In this mode VoxCtrl reads `/dev/input/event*` directly, which means every keystroke on the system passes through the process. Nothing is logged, stored, or transmitted — key names live briefly in memory and never cross into the UI layer or any network call — but the app is honest about it rather than quiet: the Hotkeys tab and setup window both say so in plain language.
 

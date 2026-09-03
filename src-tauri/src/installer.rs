@@ -196,7 +196,13 @@ Keywords=whisper;voice;dictation;wayland;
 
     #[cfg(target_os = "linux")]
     {
-        if crate::mint_shortcuts::is_mint_desktop() && !crate::mint_shortcuts::is_mint_shortcut_registered() {
+        // Only worth doing where nothing better can serve shortcuts: on an X11
+        // Mint session VoxCtrl reads the keys itself and every gesture works,
+        // and a native shortcut registered alongside that would fire a second
+        // time on the same keypress.
+        if crate::mint_shortcuts::is_mint_desktop()
+            && !crate::mint_shortcuts::is_mint_shortcut_registered()
+        {
             let _ = crate::mint_shortcuts::register_mint_shortcut(None);
         }
     }

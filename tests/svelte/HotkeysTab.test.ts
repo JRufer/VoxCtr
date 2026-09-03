@@ -57,6 +57,8 @@ function hotkeyStatus(overrides: Record<string, unknown> = {}) {
     portal_error: null,
     portal_refused: false,
     shortcuts: [],
+    supported_gestures: ["hold", "toggle", "double_tap", "double_tap_hold"],
+    x11_error: null,
     session_type: "wayland",
     devices_total: 0,
     devices_readable: 0,
@@ -802,5 +804,123 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     expect(screen.queryByText(/not accepted/i)).toBeNull();
     // Only the first (rejected) capture called check_hotkey_keys; the re-record of original did not
     expect(keysCheckCalls).toHaveLength(1);
+  });
+
+  describe("gesture styles the running backend cannot deliver", () => {
+    const ALL_GESTURE_LABELS = [
+      /Hold keys to dictate/i,
+      /Tap once to start recording/i,
+      /Double-tap hotkey to trigger/i,
+      /Double-tap & hold keys/i,
+    ];
+
+    function toggleBinding() {
+      return [
+        {
+          id: "bind1",
+          keys: ["KEY_LEFTCTRL", "KEY_LEFTALT", "KEY_D"],
+          gesture: "toggle",
+          target_id: "default",
+          tap_ms: 300,
+          hold_threshold_ms: 200,
+          label: "Dictate",
+          disabled: false,
+        },
+      ] as HotkeyBinding[];
+    }
+
+    /// The dropdown only renders its options once opened, so every assertion
+    /// about what is on offer has to open it first.
+    async function openGestureOptions(container: HTMLElement): Promise<string[]> {
+      const field = Array.from(container.querySelectorAll("label")).find(l =>
+        l.textContent?.includes("Input Gesture Style"),
+      );
+      if (!field) throw new Error("gesture field not rendered");
+      const trigger = field.querySelector("button.custom-select-trigger");
+      if (!trigger) throw new Error("gesture dropdown has no trigger");
+      await fireEvent.click(trigger);
+      return Array.from(field.querySelectorAll("button.custom-dropdown-item")).map(
+        b => b.textContent?.trim() ?? "",
+      );
+    }
+
+    test("offers every style when the backend can deliver every style", async () => {
+      mockBindings = toggleBinding();
+      mockHotkeyStatus = hotkeyStatus({ backend: "x11", is_private: false });
+
+      const { container } = render(HotkeysTab);
+      await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+      const options = await openGestureOptions(container);
+
+      expect(options).toHaveLength(4);
+      for (const label of ALL_GESTURE_LABELS) {
+        expect(options.some(o => label.test(o))).toBe(true);
+      }
+    });
+
+    test("hides hold and double-tap when the desktop only reports key presses", async () => {
+      // A Cinnamon/MATE native shortcut runs a command on key-down and says
+      // nothing on key-up: a hold has no end and a tap cannot be told from a
+      // hold. Offering those would give the user a shortcut that does nothing.
+      mockBindings = toggleBinding();
+      mockHotkeyStatus = hotkeyStatus({
+        backend: "mint_dbus",
+        supported_gestures: ["toggle"],
+      });
+
+      const { container } = render(HotkeysTab);
+      await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+      const options = await openGestureOptions(container);
+
+      expect(options).toHaveLength(1);
+      expect(options[0]).toMatch(/Tap once to start recording/i);
+    });
+
+    test("says why the missing styles are missing", async () => {
+      // Silently shrinking the list would read as a bug in the app.
+      mockBindings = toggleBinding();
+      mockHotkeyStatus = hotkeyStatus({
+        backend: "mint_dbus",
+        supported_gestures: ["toggle"],
+      });
+
+      render(HotkeysTab);
+      await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+
+      expect(await screen.findByText(/never coming back up/i)).toBeTruthy();
+    });
+
+    test("keeps a saved binding's unsupported gesture visible instead of rewriting it", async () => {
+      // The binding was configured under a backend that could serve it. Quietly
+      // changing the user's configuration would be a second invisible failure
+      // on top of the shortcut not firing.
+      mockBindings = [{ ...toggleBinding()[0], gesture: "hold" }];
+      mockHotkeyStatus = hotkeyStatus({
+        backend: "mint_dbus",
+        supported_gestures: ["toggle"],
+      });
+
+      const { container } = render(HotkeysTab);
+      await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+      const options = await openGestureOptions(container);
+
+      expect(options).toHaveLength(2);
+      expect(options.some(o => /not supported on this system/i.test(o))).toBe(true);
+      expect(screen.queryByText(/will not fire/i)).toBeTruthy();
+    });
+
+    test("falls back to offering everything when the backend reports nothing", async () => {
+      // An older backend payload, or a status call that failed. Hiding every
+      // style would leave an empty dropdown, which is worse than showing one
+      // that might not work.
+      mockBindings = toggleBinding();
+      mockHotkeyStatus = hotkeyStatus({ supported_gestures: [] });
+
+      const { container } = render(HotkeysTab);
+      await fireEvent.click(await screen.findByRole("button", { name: /Edit/i }));
+      const options = await openGestureOptions(container);
+
+      expect(options).toHaveLength(4);
+    });
   });
 });

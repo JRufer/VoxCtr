@@ -1,15 +1,18 @@
 //! Linux hotkey backends.
 //!
-//! Two of them, tried in order:
+//! Three of them, tried in order:
 //!
 //! 1. The XDG `GlobalShortcuts` portal. The compositor grabs the keys and tells
 //!    VoxCtrl only that its own shortcut fired. No device access, no permission
 //!    setup, nothing to install.
-//! 2. Reading `/dev/input/event*` with evdev — used only when the portal is not
-//!    available *and* the user has already arranged for this process to be able
-//!    to read input devices.
+//! 2. X11 raw key events (XInput2). No portal, but also no permissions: any X
+//!    client may ask for them. This is what covers the X11 desktops that have
+//!    no shortcuts portal and are not getting one — Cinnamon, MATE, Xfce.
+//! 3. Reading `/dev/input/event*` with evdev — used only when neither of the
+//!    above is available *and* the user has already arranged for this process
+//!    to be able to read input devices.
 //!
-//! VoxCtrl never installs the udev rule that would make (2) work. That rule
+//! VoxCtrl never installs the udev rule that would make (3) work. That rule
 //! grants every process running as the user the ability to read every keystroke
 //! on the system, which is a change to the machine's security posture that an
 //! app should not be making on the user's behalf — systemd's own defaults
@@ -33,8 +36,8 @@ const RESCAN_BLOCKED_INTERVAL: Duration = Duration::from_secs(2);
 /// up newly plugged-in keyboards, so it can be lazy.
 const RESCAN_HEALTHY_INTERVAL: Duration = Duration::from_secs(10);
 
-/// What the evdev reader threads report to the coordinator.
-enum ReaderEvent {
+/// What a key-reading backend's threads report to the coordinator.
+pub(crate) enum ReaderEvent {
     Key { name: String, down: bool },
     /// A keyboard went away. Anything held on it is never coming back up.
     SourceLost,
@@ -64,13 +67,30 @@ pub fn start(
             // listener task can fail — setting it here would race that.
             Ok(()) => {}
             Err(e) => {
-                tracing::info!(
-                    "Desktop portal shortcuts unavailable ({e}); falling back to reading \
-                     input devices, which needs access this app will not request for you"
-                );
+                tracing::info!("Desktop portal shortcuts unavailable ({e})");
                 health.set_portal_error(e.to_string());
                 health.set_portal_refused(matches!(e, crate::portal::PortalError::Rejected(_)));
-                start_evdev(bindings, tx, device_path, rx_reload, health);
+
+                // X11 before evdev: it needs no permissions at all, so it works
+                // on a stock desktop where the evdev path can only report that
+                // it is locked out.
+                match crate::x11::start(
+                    bindings.clone(),
+                    tx.clone(),
+                    rx_reload.clone(),
+                    health.clone(),
+                ) {
+                    Ok(()) => {}
+                    Err(e) => {
+                        tracing::info!(
+                            "X11 raw key events unavailable ({e}); falling back to reading \
+                             input devices, which needs access this app will not request \
+                             for you"
+                        );
+                        health.set_x11_error(e.to_string());
+                        start_evdev(bindings, tx, device_path, rx_reload, health);
+                    }
+                }
             }
         }
     });
@@ -278,7 +298,7 @@ fn run_reader(device_path: String, event_tx: crossbeam_channel::Sender<ReaderEve
     }
 }
 
-fn run_coordinator(
+pub(crate) fn run_coordinator(
     bindings: Vec<HotkeyBinding>,
     tx: GestureSender,
     rx_reload: crate::ReloaderReceiver,
@@ -356,15 +376,24 @@ pub(crate) struct InputScan {
 /// Virtual/synthetic devices are skipped so VoxCtrl never reacts to the
 /// keystrokes it (or another automation tool) injects itself.
 pub(crate) fn is_eligible_keyboard(name: &str, has_key_a: bool) -> bool {
-    let name = name.to_ascii_lowercase();
-    if name.contains("virtual")
-        || name.contains("uinput")
-        || name.contains("xtest")
-        || name.contains("passthrough")
-    {
+    if is_synthetic_device_name(name) {
         return false;
     }
     has_key_a
+}
+
+/// True for a device that reports keystrokes some program injected rather than
+/// keystrokes a person typed.
+///
+/// Shared with the X11 backend, which filters the same devices by `sourceid`:
+/// both would otherwise read back the transcription VoxCtrl types out and
+/// retrigger the hotkey inside it.
+pub(crate) fn is_synthetic_device_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.contains("virtual")
+        || name.contains("uinput")
+        || name.contains("xtest")
+        || name.contains("passthrough")
 }
 
 /// Sweep `/dev/input` for keyboards, counting the devices that exist but are

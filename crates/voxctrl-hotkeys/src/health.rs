@@ -14,6 +14,8 @@ use std::sync::{
     Mutex,
 };
 
+use voxctrl_routing::GestureType;
+
 /// Which mechanism is delivering shortcuts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +25,13 @@ pub enum Backend {
     /// `org.freedesktop.portal.GlobalShortcuts` — the compositor owns the key
     /// grab and VoxCtrl reads no input devices.
     Portal,
+    /// X11 raw key events (XInput2). Needs no permissions, and sees every
+    /// press and release, so every gesture style works.
+    X11,
+    /// A native Cinnamon/MATE custom shortcut that pokes VoxCtrl over D-Bus.
+    /// The desktop runs a command on key-press and never reports the release,
+    /// so this can only ever serve `toggle`.
+    MintDbus,
     /// Reading `/dev/input/event*` directly. Only reachable when the user has
     /// already granted this process access to input devices.
     Evdev,
@@ -30,6 +39,45 @@ pub enum Backend {
     WindowsHook,
     /// No mechanism is available; shortcuts cannot fire.
     None,
+}
+
+/// Gesture styles a backend that only learns about key *presses* can serve.
+///
+/// A desktop that runs a command on key-down tells VoxCtrl nothing on key-up,
+/// so there is no release to end a hold with and no way to tell a tap from a
+/// hold. Only `toggle` survives that.
+const PRESS_ONLY_GESTURES: &[GestureType] = &[GestureType::Toggle];
+
+/// Every gesture style, for the backends that see raw presses and releases.
+const ALL_GESTURES: &[GestureType] = &[
+    GestureType::Hold,
+    GestureType::Toggle,
+    GestureType::DoubleTap,
+    GestureType::DoubleTapHold,
+];
+
+impl Backend {
+    /// Gesture styles this backend can actually deliver.
+    ///
+    /// The settings UI offers exactly these, so a user is never given a choice
+    /// that silently does nothing on their desktop.
+    pub fn gestures(self) -> &'static [GestureType] {
+        match self {
+            Self::MintDbus => PRESS_ONLY_GESTURES,
+            // `Starting` and `None` are not verdicts about what this machine can
+            // do — one has not finished deciding and the other is broken in a
+            // way the setup window explains properly. Narrowing the choices on
+            // either would hide gestures that do work here.
+            Self::Portal | Self::X11 | Self::Evdev | Self::WindowsHook | Self::Starting
+            | Self::None => ALL_GESTURES,
+        }
+    }
+
+    /// True when VoxCtrl watches the key stream itself, so a trigger need not be
+    /// expressible as a desktop accelerator — bare modifiers included.
+    pub fn sees_raw_keys(self) -> bool {
+        matches!(self, Self::X11 | Self::Evdev | Self::WindowsHook)
+    }
 }
 
 /// One shortcut as the compositor actually bound it.
@@ -56,6 +104,10 @@ pub struct ListenerHealth {
     backend: Mutex<Option<Backend>>,
     /// Why the portal could not be used, if it could not.
     portal_error: Mutex<Option<String>>,
+    /// Why the X11 backend could not be used, if it could not. Separate from
+    /// the portal's reason: "no shortcuts portal" and "not an X11 session" are
+    /// different facts and a user on Wayland-Cinnamon needs both.
+    x11_error: Mutex<Option<String>>,
     /// The portal is present and answered, but refused the session. A different
     /// problem from "this desktop has no portal", and it needs different advice.
     portal_refused: AtomicBool,
@@ -110,6 +162,17 @@ impl ListenerHealth {
         self.portal_refused.load(Ordering::Relaxed)
     }
 
+    /// Why the X11 backend was not used. `None` means it was, or was never
+    /// reached because something better answered first.
+    pub fn x11_error(&self) -> Option<String> {
+        self.x11_error.lock().ok().and_then(|e| e.clone())
+    }
+
+    /// Gesture styles the running backend can deliver.
+    pub fn gestures(&self) -> &'static [GestureType] {
+        self.backend().gestures()
+    }
+
     pub fn bound_shortcuts(&self) -> Vec<BoundShortcut> {
         self.bound_shortcuts.lock().map(|s| s.clone()).unwrap_or_default()
     }
@@ -120,7 +183,7 @@ impl ListenerHealth {
             return true;
         }
         match self.backend() {
-            Backend::Portal | Backend::WindowsHook => true,
+            Backend::Portal | Backend::WindowsHook | Backend::X11 | Backend::MintDbus => true,
             Backend::Evdev => self.keyboards_open() > 0,
             // Still deciding which backend to use — don't report a problem yet.
             Backend::Starting => true,
@@ -137,7 +200,10 @@ impl ListenerHealth {
 
     /// Shortcuts are working without VoxCtrl having any access to input devices.
     pub fn is_private(&self) -> bool {
-        matches!(self.backend(), Backend::Portal | Backend::WindowsHook)
+        matches!(
+            self.backend(),
+            Backend::Portal | Backend::WindowsHook | Backend::MintDbus
+        )
     }
 
     pub fn set_supported(&self, supported: bool) {
@@ -159,6 +225,12 @@ impl ListenerHealth {
     pub fn clear_portal_error(&self) {
         if let Ok(mut e) = self.portal_error.lock() {
             *e = None;
+        }
+    }
+
+    pub fn set_x11_error(&self, error: String) {
+        if let Ok(mut e) = self.x11_error.lock() {
+            *e = Some(error);
         }
     }
 
@@ -301,5 +373,58 @@ mod tests {
         h.set_backend_failed("the portal session ended".to_string());
         assert!(!h.is_active());
         assert!(h.bound_shortcuts().is_empty());
+    }
+
+    #[test]
+    fn the_x11_backend_is_active_and_serves_every_gesture() {
+        let h = ListenerHealth::default();
+        h.set_supported(true);
+        h.set_portal_error("no such interface".to_string());
+        h.set_backend(Backend::X11);
+
+        assert!(h.is_active());
+        assert!(!h.is_private(), "raw X11 key events are every keystroke");
+        assert!(
+            !h.permission_blocked(),
+            "X11 raw events need no device permission, so nothing is blocked"
+        );
+        assert_eq!(h.gestures().len(), 4);
+        assert!(h.backend().sees_raw_keys());
+    }
+
+    #[test]
+    fn a_press_only_backend_advertises_toggle_and_nothing_else() {
+        // A Cinnamon custom shortcut runs a command on key-down and reports no
+        // release: a hold has no end and a tap cannot be told from a hold. The
+        // settings UI offers exactly what this returns, so getting it wrong
+        // means offering a gesture that silently does nothing.
+        let h = ListenerHealth::default();
+        h.set_supported(true);
+        h.set_backend(Backend::MintDbus);
+
+        assert_eq!(h.gestures(), &[GestureType::Toggle]);
+        assert!(h.is_active());
+        assert!(h.is_private(), "the desktop holds the grab, VoxCtrl reads nothing");
+        assert!(
+            !h.backend().sees_raw_keys(),
+            "a bare modifier cannot be registered as a desktop accelerator"
+        );
+    }
+
+    #[test]
+    fn a_backend_that_watches_keys_itself_never_hides_a_gesture() {
+        // Hiding a style on these would take away something that works.
+        for backend in [Backend::X11, Backend::Evdev, Backend::WindowsHook, Backend::Portal] {
+            assert_eq!(backend.gestures().len(), 4, "{backend:?} lost a gesture");
+        }
+    }
+
+    #[test]
+    fn an_undecided_or_broken_backend_still_offers_every_gesture() {
+        // Neither is a verdict about what this machine can do, and an empty
+        // gesture list would leave the settings UI with nothing to show.
+        for backend in [Backend::Starting, Backend::None] {
+            assert_eq!(backend.gestures().len(), 4, "{backend:?} narrowed the choices");
+        }
     }
 }
