@@ -4,6 +4,7 @@
   import Overlay from "./lib/Overlay/Overlay.svelte";
   import History from "./lib/History/History.svelte";
   import UdevWarning from "./lib/Diagnostics/UdevWarning.svelte";
+  import SetupWizard from "./lib/Wizard/SetupWizard.svelte";
 
   // Determine which view to render based on the URL path
   const path = window.location.pathname;
@@ -12,6 +13,7 @@
     if (path.startsWith("/overlay")) return "overlay";
     if (path.startsWith("/history")) return "history";
     if (path.startsWith("/udev-warning")) return "udev-warning";
+    if (path.startsWith("/wizard")) return "wizard";
     return "settings";
   }
 
@@ -28,6 +30,8 @@
   <History />
 {:else if view === "udev-warning"}
   <UdevWarning />
+{:else if view === "wizard"}
+  <SetupWizard />
 {:else}
   <Settings />
 {/if}

@@ -258,6 +258,20 @@ pub fn auto_download_speech_model_if_needed(
     app: &tauri::App,
     cfg_data: &Arc<AppConfig>,
 ) {
+    // A machine that has never run the wizard gets the wizard and nothing else.
+    // Every decision this function would make for the user — which model to
+    // fetch, whether to open Settings — is a step the wizard asks about, so
+    // making them here first would download the wrong model and bury the
+    // wizard behind a window the user did not ask for.
+    if !cfg_data.ui.setup_completed {
+        if let Some(window) = app.get_webview_window(crate::window::WIZARD_WINDOW) {
+            show_and_focus_window(&window);
+            return;
+        }
+        // No wizard window in this build: fall through to the old behaviour
+        // rather than leaving a new install with no visible setup at all.
+    }
+
     let mut show_settings = cfg_data.ui.auto_show_settings;
     // Only the whisper-cpp path needs a GGUF model on disk. A Moonshine
     // selection uses whisper-cpp (and thus its model) unless the

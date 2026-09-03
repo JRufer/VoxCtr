@@ -11,6 +11,9 @@ static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 /// Label of the first-run setup window.
 pub const SETUP_WINDOW: &str = "udev-warning";
 
+/// Label of the first-launch setup wizard window.
+pub const WIZARD_WINDOW: &str = "wizard";
+
 /// Minimum gap between "finish the setup" notifications, so holding a
 /// push-to-talk key does not produce a wall of toasts.
 pub const SETUP_NOTICE_INTERVAL: Duration = Duration::from_secs(60);

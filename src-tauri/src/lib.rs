@@ -462,6 +462,7 @@ pub fn run() {
             approve_shortcuts,
             install_system_integration,
             get_setup_status,
+            finish_setup_wizard,
             download_configured_model,
             open_settings_tab,
             stop_tts,

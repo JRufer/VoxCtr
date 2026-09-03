@@ -41,6 +41,20 @@
         "url": "/history"
       },
       {
+        "label": "wizard",
+        "title": "VoxCtrl — First-Run Setup",
+        "width": 1180,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 620,
+        "center": true,
+        "visible": false,
+        "resizable": true,
+        "decorations": true,
+        "acceptFirstMouse": true,
+        "url": "/wizard"
+      },
+      {
         "label": "udev-warning",
         "title": "VoxCtrl Setup",
         "width": 580,

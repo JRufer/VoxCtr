@@ -1,0 +1,322 @@
+/* ═══════════════════════════════════════════════════════
+   VoxCtrl — first-run wizard design tokens
+
+   The wizard uses the voxctrl brand palette (cyan primary,
+   gold accent, terminal-flavoured monospace labels) rather
+   than the obsidian palette the Settings window uses. It is
+   a full-screen, one-off experience, so it gets to look like
+   the product's front door instead of a settings pane.
+
+   Everything is scoped under .vx-wizard so none of it can
+   leak into the Settings or Overlay windows, which share the
+   same bundle.
+   ═══════════════════════════════════════════════════════ */
+
+.vx-wizard {
+  /* ---- surfaces ---- */
+  --vx-bg-0: #0e1116;
+  --vx-bg-1: #14181f;
+  --vx-bg-2: #1a1f28;
+  --vx-bg-3: #232a35;
+  --vx-bg-4: #2d3540;
+
+  /* ---- lines ---- */
+  --vx-line: #2a313c;
+  --vx-line-2: #3a4350;
+
+  /* ---- text ---- */
+  --vx-txt-0: #e8edf3;
+  --vx-txt-1: #b6bfcb;
+  --vx-txt-2: #7e8896;
+  --vx-txt-3: #555f6c;
+
+  /* ---- cyan (primary) ---- */
+  --vx-cyan-0: #22d4ef;
+  --vx-cyan-1: #7ae8f8;
+  --vx-cyan-2: #5cc4d8;
+  --vx-cyan-d: #0d8ea3;
+  --vx-cyan-b: rgba(34, 212, 239, 0.45);
+
+  /* ---- gold (accent) ---- */
+  --vx-gold-0: #e8a019;
+  --vx-gold-1: #f5c842;
+  --vx-gold-glow: rgba(232, 160, 25, 0.3);
+
+  /* ---- status ---- */
+  --vx-good: #6ad48a;
+  --vx-warn: #ffb454;
+  --vx-bad: #f4636e;
+
+  /* ---- type ---- */
+  --vx-mono: ui-monospace, "JetBrains Mono", SFMono-Regular, Consolas, monospace;
+
+  /* ---- motion ---- */
+  --vx-ease: cubic-bezier(0.21, 0.6, 0.35, 1);
+
+  /* ---- effects ---- */
+  --vx-sel-bg: linear-gradient(180deg, rgba(34, 212, 239, 0.07), rgba(34, 212, 239, 0.01)), var(--vx-bg-1);
+  --vx-sel-shadow: 0 18px 40px -20px rgba(34, 212, 239, 0.35), 0 0 0 1px rgba(34, 212, 239, 0.15);
+  --vx-panel-shadow: 0 12px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--vx-line);
+  --vx-btn-shadow: 0 6px 24px rgba(34, 212, 239, 0.25), 0 0 0 1px rgba(34, 212, 239, 0.4) inset;
+
+  color: var(--vx-txt-0);
+  background: var(--vx-bg-0);
+}
+
+/* ── Shared primitives ─────────────────────────────────── */
+
+.vx-wizard .vx-eyebrow {
+  font-family: var(--vx-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--vx-cyan-2);
+}
+
+.vx-wizard .vx-label {
+  font-family: var(--vx-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--vx-txt-3);
+}
+
+.vx-wizard h2.vx-title {
+  margin: 8px 0 6px;
+  font-size: 30px;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  font-weight: 600;
+}
+
+.vx-wizard p.vx-lede {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--vx-txt-1);
+}
+
+.vx-wizard p.vx-lede b {
+  color: var(--vx-txt-0);
+  font-weight: 600;
+}
+
+/* Selectable card: the wizard's one repeated interaction. */
+.vx-wizard .vx-card {
+  border: 1px solid var(--vx-line);
+  border-radius: 14px;
+  background: var(--vx-bg-1);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition: border-color 0.28s var(--vx-ease), background 0.28s var(--vx-ease),
+    box-shadow 0.28s var(--vx-ease);
+}
+
+.vx-wizard .vx-card:hover:not(.vx-on) {
+  border-color: var(--vx-line-2);
+}
+
+.vx-wizard .vx-card.vx-on {
+  border-color: var(--vx-cyan-b);
+  background: var(--vx-sel-bg);
+  box-shadow: var(--vx-sel-shadow);
+}
+
+/* Round check mark shown on the selected card. */
+.vx-wizard .vx-check {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--vx-line-2);
+  background: transparent;
+  display: grid;
+  place-items: center;
+  font-family: var(--vx-mono);
+  font-size: 12px;
+  color: #00222a;
+  transition: all 0.25s;
+}
+
+.vx-wizard .vx-card.vx-on .vx-check {
+  border-color: var(--vx-cyan-0);
+  background: var(--vx-cyan-0);
+}
+
+.vx-wizard .vx-check > span {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.vx-wizard .vx-card.vx-on .vx-check > span {
+  opacity: 1;
+}
+
+/* Buttons */
+.vx-wizard .vx-btn {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  border: 1px solid var(--vx-line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--vx-txt-0);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.vx-wizard .vx-btn:hover:not(:disabled) {
+  border-color: var(--vx-line-2);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.vx-wizard .vx-btn.vx-primary {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: linear-gradient(180deg, var(--vx-cyan-0), var(--vx-cyan-d));
+  color: #00222a;
+  box-shadow: var(--vx-btn-shadow);
+}
+
+.vx-wizard .vx-btn.vx-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--vx-cyan-1), var(--vx-cyan-0));
+}
+
+.vx-wizard .vx-btn.vx-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--vx-txt-1);
+}
+
+.vx-wizard .vx-btn.vx-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--vx-txt-0);
+}
+
+.vx-wizard .vx-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Metric bar (speed / accuracy / size readouts) */
+.vx-wizard .vx-meter {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--vx-bg-4);
+  overflow: hidden;
+}
+
+.vx-wizard .vx-meter > div {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.6s var(--vx-ease), background 0.4s;
+}
+
+/* Keycap */
+.vx-wizard .vx-keycap {
+  min-width: 56px;
+  height: 56px;
+  padding: 0 16px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-family: var(--vx-mono);
+  font-size: 16px;
+  font-weight: 500;
+  background: linear-gradient(180deg, var(--vx-bg-3), var(--vx-bg-2));
+  color: var(--vx-txt-0);
+  border: 1px solid var(--vx-line-2);
+  box-shadow: 0 4px 0 var(--vx-bg-0), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition: all 0.25s;
+}
+
+.vx-wizard .vx-keycap.vx-hot {
+  background: linear-gradient(180deg, rgba(34, 212, 239, 0.25), rgba(34, 212, 239, 0.08));
+  color: var(--vx-cyan-1);
+  border-color: var(--vx-cyan-b);
+  box-shadow: 0 4px 0 rgba(13, 142, 163, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.vx-wizard .vx-plus {
+  font-family: var(--vx-mono);
+  color: var(--vx-txt-3);
+  font-size: 18px;
+}
+
+/* Status pill used by download / registration panels */
+.vx-wizard .vx-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border-radius: 999px;
+  border: 1px solid var(--vx-line);
+  background: rgba(255, 255, 255, 0.02);
+  font-family: var(--vx-mono);
+  font-size: 11.5px;
+  color: var(--vx-txt-2);
+}
+
+.vx-wizard .vx-pill.vx-ok {
+  border-color: rgba(106, 212, 138, 0.4);
+  color: var(--vx-good);
+}
+
+.vx-wizard .vx-pill.vx-busy {
+  border-color: var(--vx-cyan-b);
+  color: var(--vx-cyan-1);
+}
+
+.vx-wizard .vx-pill.vx-err {
+  border-color: rgba(244, 99, 110, 0.45);
+  color: var(--vx-bad);
+}
+
+/* ── Animations ────────────────────────────────────────── */
+
+@keyframes vxPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@keyframes vxPop {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes vxRing {
+  from { opacity: 0; transform: scale(0.7); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes vxScan {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+@keyframes vxBar {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+@keyframes vxSpin {
+  to { transform: rotate(360deg); }
+}
+
+.vx-wizard .vx-spinner {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid rgba(34, 212, 239, 0.25);
+  border-top-color: var(--vx-cyan-0);
+  animation: vxSpin 0.7s linear infinite;
+  flex: none;
+}

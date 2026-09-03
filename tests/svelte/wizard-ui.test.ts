@@ -1,0 +1,615 @@
+import { describe, test, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/svelte";
+
+// Hoisted: the config and status stores call invoke() at import time, which
+// happens before a plain `const` in this file would be initialised.
+const { invoke, listeners } = vi.hoisted(() => ({
+  // Always thenable: the stores call invoke() during module import, before any
+  // test has had a chance to install its own implementation.
+  invoke: vi.fn(async () => undefined),
+  listeners: new Map<string, (event: { payload: unknown }) => void>(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (cmd: string, args?: unknown) => invoke(cmd, args),
+}));
+
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (name: string, cb: (event: { payload: unknown }) => void) => {
+    listeners.set(name, cb);
+    return () => listeners.delete(name);
+  }),
+}));
+
+import { config } from "../../src/stores/config";
+import { status } from "../../src/stores/status";
+import { wizard } from "../../src/lib/Wizard/wizard-state.svelte";
+import SetupWizard from "../../src/lib/Wizard/SetupWizard.svelte";
+import EngineStep from "../../src/lib/Wizard/steps/EngineStep.svelte";
+import HotkeyStep from "../../src/lib/Wizard/steps/HotkeyStep.svelte";
+import OverlayStep from "../../src/lib/Wizard/steps/OverlayStep.svelte";
+import VoiceStep from "../../src/lib/Wizard/steps/VoiceStep.svelte";
+import DoneStep from "../../src/lib/Wizard/steps/DoneStep.svelte";
+import TestStep from "../../src/lib/Wizard/steps/TestStep.svelte";
+
+/** Minimal but complete-enough config for the wizard's reads. */
+function baseConfig(): any {
+  return {
+    engine: {
+      backend: "whisper-cpp",
+      inference_mode: "Balanced",
+      whisper_cpp: { model_dir: "", model_size: "small", device: "auto", threads: 0 },
+      moonshine: { model_size: "base", language: "en" },
+    },
+    audio: {},
+    ui: {
+      show_overlay: true,
+      overlay_style: "mono_bars",
+      overlay_position: "center",
+      overlay_monitor: "primary",
+      setup_completed: false,
+    },
+    features: {},
+    openai: {},
+    tts: {
+      enabled: false,
+      engine: "piper",
+      voice: "en-us-lessac-medium",
+      voice_dir: "",
+      pocket_tts: { voice: "alba", voice_dir: "", hf_token: null },
+      inflect_micro: { model_dir: "" },
+      breeze_tts_2: { model_dir: "", hf_token: null },
+    },
+    mcp: {},
+    atspi: {},
+  };
+}
+
+function hotkeyStatus(over: Record<string, unknown> = {}) {
+  return {
+    is_active: true,
+    backend: "evdev",
+    is_private: false,
+    portal_error: null,
+    portal_refused: false,
+    shortcuts: [],
+    supported_gestures: ["hold", "toggle", "double_tap", "double_tap_hold"],
+    ...over,
+  };
+}
+
+const noopGate = () => {};
+const noopBlocker = () => {};
+
+beforeEach(() => {
+  invoke.mockReset();
+  invoke.mockImplementation(async () => undefined);
+  listeners.clear();
+  wizard.reset();
+  config.set(baseConfig());
+});
+
+describe("SetupWizard shell", () => {
+  beforeEach(() => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_config") return baseConfig();
+      return undefined;
+    });
+  });
+
+  test("opens on the welcome screen and counts the steps", async () => {
+    render(SetupWizard);
+    expect(await screen.findByText(/Speak to/)).toBeTruthy();
+    expect(screen.getByText(/step 1 \/ 7/)).toBeTruthy();
+  });
+
+  test("offers a way out that still leaves a configured app behind", async () => {
+    render(SetupWizard);
+    const skip = await screen.findByText("Skip setup");
+    await fireEvent.click(skip);
+    await waitFor(() =>
+      expect(invoke.mock.calls.some(([c]) => c === "finish_setup_wizard")).toBe(true),
+    );
+  });
+
+  test("finishing marks setup complete so the wizard does not reappear", async () => {
+    wizard.step = 6;
+    wizard.visited = 6;
+    render(SetupWizard);
+    const finish = await screen.findByText("Finish");
+    await fireEvent.click(finish);
+    await waitFor(() => {
+      const call = invoke.mock.calls.find(([c]) => c === "finish_setup_wizard");
+      expect(call).toBeTruthy();
+      expect((call as any)[1]).toEqual({ openSettings: false });
+    });
+  });
+
+  test("says 'Finish anyway' when problems were logged along the way", async () => {
+    wizard.step = 6;
+    wizard.visited = 6;
+    wizard.recordIssue({ id: "x", step: 1, title: "broken", detail: "detail" });
+    render(SetupWizard);
+    expect(await screen.findByText("Finish anyway")).toBeTruthy();
+  });
+});
+
+describe("EngineStep", () => {
+  test("says the chosen model will download before the next step", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_model_downloaded") return false;
+      if (cmd === "check_moonshine_downloaded") return false;
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return undefined;
+    });
+    render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+    expect(await screen.findByText(/small will download when you continue/)).toBeTruthy();
+  });
+
+  test("confirms a model that is already on disk instead of re-fetching it", async () => {
+    invoke.mockImplementation(async (cmd: string, args: any) => {
+      if (cmd === "check_model_downloaded") return args.modelSize === "small";
+      if (cmd === "check_moonshine_downloaded") return false;
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return undefined;
+    });
+    render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+    expect(await screen.findByText(/small is on disk and ready/)).toBeTruthy();
+  });
+
+  test("picking a model size writes it straight into the config", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+
+    const medium = await screen.findByText("medium");
+    await fireEvent.click(medium);
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.engine.whisper_cpp.model_size).toBe("medium");
+    expect(current.engine.backend).toBe("whisper-cpp");
+  });
+
+  test("warns when Moonshine was not compiled into this build", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return false;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+    expect(await screen.findByText(/compiled without the Moonshine backend/)).toBeTruthy();
+  });
+
+  test("the download gate fetches the model and records the failure if it fails", async () => {
+    let gate: (() => Promise<boolean>) | null = null;
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      if (cmd === "download_model") throw new Error("network unreachable");
+      return false;
+    });
+    render(EngineStep, {
+      registerGate: (_step: number, g: any) => (gate = g ?? gate),
+      setBlocker: noopBlocker,
+    });
+
+    await waitFor(() => expect(gate).toBeTruthy());
+    const ok = await gate!();
+
+    expect(ok).toBe(false);
+    expect(wizard.issues.map((i) => i.id)).toEqual(["model-download"]);
+    expect(wizard.issues[0].detail).toContain("network unreachable");
+  });
+});
+
+describe("HotkeyStep", () => {
+  test("hides gestures this desktop's shortcut backend cannot deliver", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_hotkey_status") return hotkeyStatus({ supported_gestures: ["toggle"] });
+      if (cmd === "get_bindings") return [];
+      return undefined;
+    });
+    render(HotkeyStep, { registerGate: noopGate, setBlocker: noopBlocker });
+
+    expect(await screen.findByText("Tap to talk")).toBeTruthy();
+    expect(screen.queryByText("Hold to talk")).toBeNull();
+    expect(screen.queryByText("Double-tap & hold")).toBeNull();
+    expect(screen.getByText(/3 gestures hidden/)).toBeTruthy();
+  });
+
+  test("falls back to a supported gesture when the default is unavailable", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_hotkey_status") return hotkeyStatus({ supported_gestures: ["toggle"] });
+      if (cmd === "get_bindings") return [];
+      return undefined;
+    });
+    render(HotkeyStep, { registerGate: noopGate, setBlocker: noopBlocker });
+    await waitFor(() => expect(wizard.gesture).toBe("toggle"));
+  });
+
+  test("blocks the way forward until a combination is recorded", async () => {
+    const blockers: (string | null)[] = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_hotkey_status") return hotkeyStatus();
+      if (cmd === "get_bindings") return [];
+      return undefined;
+    });
+    render(HotkeyStep, {
+      registerGate: noopGate,
+      setBlocker: (_s: number, reason: string | null) => blockers.push(reason),
+    });
+    await waitFor(() => expect(blockers.length).toBeGreaterThan(0));
+    expect(blockers.at(-1)).toMatch(/Record a key combination/);
+  });
+
+  test("blocks the way forward while the desktop has not accepted the shortcut", async () => {
+    const blockers: (string | null)[] = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_hotkey_status") {
+        return hotkeyStatus({ is_active: false, backend: "portal", portal_refused: true });
+      }
+      if (cmd === "get_bindings") {
+        return [{ id: "default_hold", keys: ["KEY_LEFTMETA", "KEY_SPACE"], gesture: "hold" }];
+      }
+      return undefined;
+    });
+    render(HotkeyStep, {
+      registerGate: noopGate,
+      setBlocker: (_s: number, reason: string | null) => blockers.push(reason),
+    });
+
+    await waitFor(() => expect(blockers.at(-1)).toMatch(/Register the shortcut/));
+  });
+
+  test("lets the user through once the shortcut is live", async () => {
+    const blockers: (string | null)[] = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_hotkey_status") return hotkeyStatus({ is_active: true });
+      if (cmd === "get_bindings") {
+        return [{ id: "default_hold", keys: ["KEY_LEFTMETA", "KEY_SPACE"], gesture: "hold" }];
+      }
+      return undefined;
+    });
+    render(HotkeyStep, {
+      registerGate: noopGate,
+      setBlocker: (_s: number, reason: string | null) => blockers.push(reason),
+    });
+
+    await waitFor(() => expect(blockers.at(-1)).toBeNull());
+    expect(await screen.findByText(/Shortcuts are live/)).toBeTruthy();
+  });
+
+  test("recording a valid combination saves a binding pointed at the Command target", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_hotkey_status") return hotkeyStatus();
+      if (cmd === "get_bindings") return [];
+      if (cmd === "get_targets") {
+        return [{ id: "default", label: "Focused Window", delivery: "inject" }];
+      }
+      if (cmd === "check_hotkey_keys") return { accepted: true, enforced: true, accelerator: null, problem: null, message: null };
+      return undefined;
+    });
+    render(HotkeyStep, { registerGate: noopGate, setBlocker: noopBlocker });
+
+    const recorder = await screen.findByText("click to record");
+    await fireEvent.click(recorder);
+
+    await fireEvent.keyDown(window, { key: "Alt", code: "AltLeft" });
+    await fireEvent.keyDown(window, { key: "v", code: "KeyV" });
+    await fireEvent.keyUp(window, { key: "v", code: "KeyV" });
+
+    await waitFor(() => {
+      const call = invoke.mock.calls.find(([c]) => c === "save_bindings");
+      expect(call).toBeTruthy();
+      const bindings = (call as any)[1].bindings;
+      expect(bindings[0].keys).toEqual(["KEY_LEFTALT", "KEY_V"]);
+      expect(bindings[0].target_id).toBe("command");
+    });
+  });
+
+  test("a combination the backend refuses is explained, not silently accepted", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_hotkey_status") return hotkeyStatus();
+      if (cmd === "get_bindings") return [];
+      if (cmd === "check_hotkey_keys") {
+        return {
+          accepted: false,
+          enforced: true,
+          accelerator: null,
+          problem: "modifiers_only",
+          message: "Modifiers alone cannot be a shortcut.",
+        };
+      }
+      return undefined;
+    });
+    render(HotkeyStep, { registerGate: noopGate, setBlocker: noopBlocker });
+
+    await fireEvent.click(await screen.findByText("click to record"));
+    await fireEvent.keyDown(window, { key: "Control", code: "ControlLeft" });
+    await fireEvent.keyUp(window, { key: "Control", code: "ControlLeft" });
+
+    expect(await screen.findByText("Modifiers alone cannot be a shortcut.")).toBeTruthy();
+    expect(wizard.combo).toBeNull();
+    expect(invoke.mock.calls.some(([c]) => c === "save_bindings")).toBe(false);
+  });
+});
+
+describe("OverlayStep", () => {
+  beforeEach(() => {
+    invoke.mockImplementation(async () => undefined);
+  });
+
+  test("picking a style writes the id Settings → Visual uses", async () => {
+    render(OverlayStep);
+    await fireEvent.click(await screen.findByText("Retro Terminal"));
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.ui.overlay_style).toBe("terminal");
+    expect(current.ui.show_overlay).toBe(true);
+  });
+
+  test("picking a position writes it to the config", async () => {
+    render(OverlayStep);
+    await fireEvent.click(await screen.findByText("Bottom"));
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.ui.overlay_position).toBe("bottom");
+  });
+
+  test("turning the overlay off is saved as well", async () => {
+    render(OverlayStep);
+    await fireEvent.click(await screen.findByText("No overlay"));
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.ui.show_overlay).toBe(false);
+  });
+});
+
+describe("VoiceStep", () => {
+  test("a voice that is not downloaded cannot be auditioned", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      return false;
+    });
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    const play = await screen.findAllByTitle("Download this voice first");
+    expect(play.length).toBeGreaterThan(0);
+    expect((play[0] as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  test("downloading a voice enables its play button", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "download_voice") return undefined;
+      return false;
+    });
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    const button = await screen.findByText(/Download 60 MB/);
+    await fireEvent.click(button);
+
+    await waitFor(() => expect(screen.getAllByTitle("Play a sample").length).toBeGreaterThan(0));
+  });
+
+  test("playing a sample saves the engine choice and speaks through the app", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "check_voice_downloaded") return true;
+      return false;
+    });
+    const { container } = render(VoiceStep, { setBlocker: noopBlocker });
+
+    // Several engines are playable at once (eSpeak needs no download), so the
+    // sample has to be started from the Piper card specifically.
+    expect(container).toBeTruthy();
+    const piperCard = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
+    expect(piperCard).toBeTruthy();
+    // The readiness probe is async, so the card starts out un-playable.
+    const play = await waitFor(() => within(piperCard).getByTitle("Play a sample"));
+    await fireEvent.click(play);
+
+    await waitFor(() => {
+      const speak = invoke.mock.calls.find(([c]) => c === "speak_text");
+      expect(speak).toBeTruthy();
+      expect((speak as any)[1].text).toContain("Piper TTS");
+      expect((speak as any)[1].voice).toBe("en-us-lessac-medium");
+    });
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.tts.enabled).toBe(true);
+    expect(current.tts.engine).toBe("piper");
+  });
+
+  test("a failed voice download is logged for the final screen", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "download_voice") throw new Error("404 from huggingface");
+      return false;
+    });
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    await fireEvent.click(await screen.findByText(/Download 60 MB/));
+
+    await waitFor(() => {
+      expect(wizard.issues.map((i) => i.id)).toContain("tts-download-piper");
+      expect(wizard.issues[0].detail).toContain("404 from huggingface");
+    });
+  });
+
+  test("speech output left off never blocks the way forward", async () => {
+    const blockers: (string | null)[] = [];
+    invoke.mockImplementation(async () => false);
+    render(VoiceStep, { setBlocker: (_s: number, r: string | null) => blockers.push(r) });
+    await waitFor(() => expect(blockers.length).toBeGreaterThan(0));
+    expect(blockers.at(-1)).toBeNull();
+  });
+});
+
+describe("TestStep", () => {
+  function setStatus(over: Record<string, unknown>) {
+    status.set({
+      recording: false,
+      processing: false,
+      speaking: false,
+      mcp_recording: false,
+      audio_ready: true,
+      word_count: 0,
+      ...over,
+    } as any);
+  }
+
+  beforeEach(() => {
+    setStatus({});
+    wizard.combo = ["KEY_LEFTALT", "KEY_V"];
+    wizard.gesture = "hold";
+  });
+
+  test("tells the user how to trigger the gesture they actually chose", async () => {
+    wizard.gesture = "double_tap";
+    render(TestStep);
+    expect(await screen.findByText("double-tap")).toBeTruthy();
+    expect(screen.getByText("Alt")).toBeTruthy();
+    expect(screen.getByText("V")).toBeTruthy();
+  });
+
+  test("follows the real pipeline state rather than a timed animation", async () => {
+    render(TestStep);
+    expect(await screen.findByText("waiting for hotkey")).toBeTruthy();
+
+    setStatus({ recording: true });
+    expect(await screen.findByText("recording")).toBeTruthy();
+
+    setStatus({ recording: false, processing: true });
+    expect(await screen.findByText("transcribing")).toBeTruthy();
+  });
+
+  test("counts the transcription landing in the box as success", async () => {
+    const { container } = render(TestStep);
+    const box = container.querySelector("textarea") as HTMLTextAreaElement;
+
+    setStatus({ recording: true });
+    await screen.findByText("recording");
+    await fireEvent.input(box, { target: { value: "hello from voxctrl" } });
+
+    expect(await screen.findByText("It works.")).toBeTruthy();
+  });
+
+  test("typing by hand before ever pressing the hotkey is not a passing test", async () => {
+    const { container } = render(TestStep);
+    const box = container.querySelector("textarea") as HTMLTextAreaElement;
+
+    await fireEvent.input(box, { target: { value: "typed by hand" } });
+
+    expect(screen.queryByText("It works.")).toBeNull();
+    expect(screen.getByText("waiting for hotkey")).toBeTruthy();
+  });
+});
+
+describe("DoneStep", () => {
+  function setupStatus(over: Record<string, unknown> = {}) {
+    return {
+      hotkeys: { backend: "evdev", portal_error: null, portal_refused: false },
+      hotkeys_active: true,
+      model_ready: true,
+      model_size: "small",
+      model_auto_downloads: false,
+      missing_injection_tool: null,
+      manual_package_commands: "",
+      pkexec_available: true,
+      is_complete: true,
+      ...over,
+    };
+  }
+
+  test("a clean run says the app is ready", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_setup_status") return setupStatus();
+      return undefined;
+    });
+    render(DoneStep);
+    await waitFor(() => expect(screen.getByText("ready")).toBeTruthy());
+    expect(screen.queryByText("Copy diagnostics")).toBeNull();
+  });
+
+  test("a failure during the wizard is explained with its technical detail", async () => {
+    wizard.recordIssue({
+      id: "model-download",
+      step: 1,
+      title: "Speech model could not be downloaded.",
+      detail: "engine=whisper-cpp model=small\nError: connection reset",
+    });
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_setup_status") return setupStatus();
+      return undefined;
+    });
+    render(DoneStep);
+
+    expect(await screen.findByText("Speech model could not be downloaded.")).toBeTruthy();
+    expect(screen.getByText(/connection reset/)).toBeTruthy();
+    expect(screen.getByText("incomplete")).toBeTruthy();
+    expect(screen.getByText("Copy diagnostics")).toBeTruthy();
+  });
+
+  test("problems the wizard never saw are found by re-checking the install", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_setup_status") {
+        return setupStatus({
+          hotkeys_active: false,
+          missing_injection_tool: "wtype",
+          manual_package_commands: "sudo apt install wtype",
+          hotkeys: { backend: "portal", portal_error: "portal timed out", portal_refused: true },
+          is_complete: false,
+        });
+      }
+      return undefined;
+    });
+    render(DoneStep);
+
+    expect(await screen.findByText(/No global shortcut is active/)).toBeTruthy();
+    expect(screen.getByText(/cannot type text into other windows/)).toBeTruthy();
+    // The raw portal error is what makes a bug report actionable.
+    expect(screen.getByText(/portal timed out/)).toBeTruthy();
+    expect(screen.getByText(/sudo apt install wtype/)).toBeTruthy();
+  });
+
+  test("a model that downloads itself in the background is not reported as broken", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_setup_status") {
+        return setupStatus({ model_ready: false, model_auto_downloads: true });
+      }
+      return undefined;
+    });
+    render(DoneStep);
+    await waitFor(() => expect(screen.getByText("ready")).toBeTruthy());
+  });
+
+  test("the summary reflects what the user actually chose", async () => {
+    wizard.combo = ["KEY_LEFTALT", "KEY_V"];
+    wizard.gesture = "toggle";
+    config.set({
+      ...baseConfig(),
+      ui: { ...baseConfig().ui, overlay_style: "terminal", overlay_position: "top" },
+      tts: { ...baseConfig().tts, enabled: true, engine: "piper" },
+    } as any);
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "get_setup_status") return setupStatus();
+      return undefined;
+    });
+    render(DoneStep);
+
+    expect(await screen.findByText("Alt + V · Tap to talk")).toBeTruthy();
+    expect(screen.getByText("Retro Terminal · top")).toBeTruthy();
+    expect(screen.getByText("Piper TTS")).toBeTruthy();
+  });
+});

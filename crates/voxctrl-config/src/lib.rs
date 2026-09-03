@@ -137,6 +137,10 @@ fn default_auto_show_settings() -> bool {
     true
 }
 
+fn default_setup_completed() -> bool {
+    true
+}
+
 fn default_show_notification() -> bool {
     false
 }
@@ -175,6 +179,15 @@ pub struct UiConfig {
     pub show_command_overlay: bool,
     #[serde(default = "default_command_overlay_duration_secs")]
     pub command_overlay_duration_secs: u32,
+    /// Whether the first-run setup wizard has been finished.
+    ///
+    /// The serde default is `true` on purpose: a config file written by an
+    /// earlier VoxCtrl has no such field, and its owner has plainly already
+    /// set the app up by hand. Only `UiConfig::default()` — reached when no
+    /// config file exists at all — starts this at `false`, so the wizard runs
+    /// exactly once, on a genuinely new machine.
+    #[serde(default = "default_setup_completed")]
+    pub setup_completed: bool,
 }
 
 impl Default for UiConfig {
@@ -189,6 +202,7 @@ impl Default for UiConfig {
             history_enabled: false,
             show_command_overlay: true,
             command_overlay_duration_secs: 3,
+            setup_completed: false,
         }
     }
 }
@@ -875,6 +889,52 @@ mod tests {
     "auto_format_lists": true,
     "quiet_mode": false,
     "show_notification": true"#));
+    }
+
+    #[test]
+    fn test_fresh_install_starts_with_the_wizard_pending() {
+        // No config file on disk means a machine that has never run VoxCtrl,
+        // so the first-run wizard has to be pending.
+        let cfg = AppConfig::default();
+        assert!(!cfg.ui.setup_completed);
+    }
+
+    #[test]
+    fn test_existing_config_file_never_reopens_the_wizard() {
+        // A config written by an earlier VoxCtrl has no `setup_completed` key.
+        // Its owner has plainly already set the app up, so deserializing must
+        // treat the missing field as "done" rather than ambushing them with a
+        // setup wizard on an upgrade.
+        let legacy_json = r#"{
+            "show_overlay": true,
+            "overlay_style": "waveform",
+            "auto_show_settings": true,
+            "show_notification": false,
+            "history_enabled": false
+        }"#;
+
+        let parsed: UiConfig = serde_json::from_str(legacy_json).unwrap();
+        assert!(parsed.setup_completed);
+    }
+
+    #[test]
+    fn test_setup_completed_round_trips() {
+        let mut cfg = AppConfig::default();
+        assert!(!cfg.ui.setup_completed);
+
+        cfg.ui.setup_completed = true;
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.ui.setup_completed);
+
+        cfg.ui.setup_completed = false;
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(
+            !back.ui.setup_completed,
+            "an explicit false must survive a save/load cycle, or a user who \
+             quits the wizard would never see it again"
+        );
     }
 
     #[test]

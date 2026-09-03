@@ -1546,6 +1546,39 @@ pub async fn download_configured_model(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Mark the first-run wizard finished and get out of the way.
+///
+/// The flag is written here rather than through `save_config` so that closing
+/// the wizard is one atomic step: the config the wizard has been editing all
+/// along is already persisted, and this only flips the bit that decides
+/// whether the wizard opens again on the next launch.
+#[tauri::command]
+pub async fn finish_setup_wizard(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+    open_settings: bool,
+) -> Result<(), String> {
+    let updated = {
+        let mut guard = state.config.lock().await;
+        guard.data.ui.setup_completed = true;
+        guard.save().map_err(|e| e.to_string())?;
+        guard.data.clone()
+    };
+    let _ = app.emit("config-changed", updated);
+    info!("First-run setup wizard completed");
+
+    if let Some(window) = app.get_webview_window(crate::window::WIZARD_WINDOW) {
+        let _ = window.hide();
+        let _ = window.close();
+    }
+    if open_settings {
+        if let Some(window) = app.get_webview_window("settings") {
+            crate::window::show_and_focus_window(&window);
+        }
+    }
+    Ok(())
+}
+
 /// Open the settings window on a specific tab. Used by the setup window so
 /// "choose a different model" lands the user on the right screen instead of
 /// making them find it.
