@@ -11,6 +11,9 @@
 //! udev rule to install, and nothing for VoxCtrl to change about the machine.
 //! That is what makes this backend usable where the evdev one is not.
 //!
+//! The version this declares to the server is load-bearing: see
+//! `MIN_XI_MINOR`.
+//!
 //! It carries the same privacy cost as evdev, though: raw events are every key
 //! the user presses, not just VoxCtrl's own shortcuts, so it ranks below the
 //! portal and the app says which one it is running on.
@@ -49,6 +52,33 @@ const XI_ALL_DEVICES: xinput::DeviceId = 0;
 
 /// X11 keycodes are evdev codes offset by 8, fixed by the X11 protocol.
 const X11_KEYCODE_OFFSET: u8 = 8;
+
+/// XInput 2.1 is the floor, and not for a feature — for two behaviours that
+/// this backend is unusable without.
+///
+/// Under XI 2.0 a raw event goes to the root window *or* to the grabbing
+/// client, never both. Grabs are everywhere on a desktop: a compositor's own
+/// key handling, and a passive grab every time a menu or dropdown opens. On
+/// Cinnamon that means a hotkey pressed with any menu on screen is simply lost.
+/// XI 2.1 delivers raw events to the root window at all times, whatever holds a
+/// grab.
+///
+/// XI 2.1 is also where `sourceid` starts being set on raw events. Without it
+/// every event claims to come from device 0, the XTEST filter below matches
+/// nothing, and VoxCtrl reads back the transcription it just typed — retriggering
+/// the hotkey inside its own output.
+///
+/// The server applies whichever semantics the client announces, so asking for
+/// 2.0 would opt into both problems on a server that supports neither. A server
+/// too old to offer 2.1 (pre-X.Org 1.11, 2011) is left to the evdev fallback
+/// rather than silently given a backend that mis-handles its own keystrokes.
+const MIN_XI_MINOR: u16 = 1;
+const MIN_XI_MAJOR: u16 = 2;
+
+/// Does a negotiated XInput version deliver raw events this backend can trust?
+fn supports_reliable_raw_events(major: u16, minor: u16) -> bool {
+    (major, minor) >= (MIN_XI_MAJOR, MIN_XI_MINOR)
+}
 
 /// Why the X11 backend could not be used. Never fatal: the caller falls through
 /// to evdev.
@@ -99,17 +129,17 @@ pub fn start(
     let (conn, _screen) = RustConnection::connect(None)
         .map_err(|e| X11Error::Connect(format!("{e}")))?;
 
-    // 2.0 is where raw events were introduced; asking for exactly what is used
-    // keeps this working on the older servers that are the whole point of the
-    // backend.
+    // The announced version decides the server's raw-event semantics, so this
+    // asks for the lowest one whose semantics are correct — see `MIN_XI_MINOR`.
     let version = conn
-        .xinput_xi_query_version(2, 0)
+        .xinput_xi_query_version(MIN_XI_MAJOR, MIN_XI_MINOR)
         .map_err(|e| X11Error::NoXInput(format!("{e}")))?
         .reply()
         .map_err(|e| X11Error::NoXInput(format!("{e}")))?;
-    if version.major_version < 2 {
+    if !supports_reliable_raw_events(version.major_version, version.minor_version) {
         return Err(X11Error::NoXInput(format!(
-            "the server offers XInput {}.{}, and raw key events need 2.0",
+            "the server offers XInput {}.{}, and reliable raw key events need \
+             {MIN_XI_MAJOR}.{MIN_XI_MINOR}",
             version.major_version, version.minor_version
         )));
     }
@@ -276,6 +306,21 @@ mod tests {
         // evdev's Debug renders these as "unknown key: N", which must never
         // reach a binding as if it were a key name.
         assert_eq!(key_name(60000), None);
+    }
+
+    #[test]
+    fn xinput_2_0_is_refused_because_its_raw_events_cannot_be_trusted() {
+        // Under 2.0 a raw event reaches the root window or the grabbing client,
+        // never both — so every hotkey pressed with a menu open is lost — and
+        // `sourceid` is unset, so the XTEST filter matches nothing and VoxCtrl
+        // reads back its own injected text. Accepting 2.0 would look like it
+        // worked right up until either bit us.
+        assert!(!supports_reliable_raw_events(2, 0));
+        assert!(!supports_reliable_raw_events(1, 9));
+
+        assert!(supports_reliable_raw_events(2, 1));
+        assert!(supports_reliable_raw_events(2, 4));
+        assert!(supports_reliable_raw_events(3, 0));
     }
 
     #[test]

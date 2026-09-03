@@ -173,6 +173,26 @@ backend keeps working under the other. Synthetic devices (`XTEST`, `uinput`,
 anything named "virtual") are filtered by `sourceid`, so VoxCtrl never reads
 back the transcription it types out.
 
+**The XInput version VoxCtrl announces is load-bearing, and 2.1 is the floor.**
+The server applies whichever semantics the client asks for, and XI 2.0 has two
+that make this backend unusable:
+
+- A raw event under 2.0 goes to the root window *or* to the grabbing client,
+  never both. Grabs are everywhere on a desktop — a compositor's own key
+  handling, and a **passive grab every time a menu or dropdown opens**. On
+  Cinnamon that means a hotkey pressed with any menu on screen is silently
+  dropped. XI 2.1 delivers raw events to the root window at all times,
+  whatever holds a grab.
+- `sourceid` is only set on raw events from 2.1. Without it every event claims
+  to come from device 0, the XTEST filter matches nothing, and VoxCtrl reads
+  back the text it just injected — retriggering the hotkey inside its own
+  output.
+
+A server too old to offer 2.1 (pre-X.Org 1.11, 2011) falls through to evdev
+rather than being handed a backend that mishandles its own keystrokes.
+`supports_reliable_raw_events` is the single check, with a test pinning 2.0 as
+refused.
+
 To disable this path for testing, set `VOXCTRL_DISABLE_X11_HOTKEYS=1`.
 
 ### Linux Mint (Cinnamon / MATE) — Native D-Bus Shortcut Integration
