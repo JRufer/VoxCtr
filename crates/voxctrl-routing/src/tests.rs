@@ -326,7 +326,13 @@ async fn test_clipboard_target_success() {
     let target = build_target(config);
     let res = target.deliver("Test Clipboard").await;
     if res.success {
-        assert_eq!(res.delivered_text.as_deref(), Some("Test Clipboard"));
+        // Clipboard delivery ends its text with one space, exactly like inject:
+        // dictation arrives an utterance at a time, and without it the next one
+        // starts flush against this one's last word. This assertion only runs
+        // where a clipboard tool exists, which is why it outlived the change
+        // that introduced the trailing space — a headless machine takes the
+        // `else` branch and never checks the text at all.
+        assert_eq!(res.delivered_text.as_deref(), Some("Test Clipboard "));
         let test_res = target.test().await;
         assert!(test_res.reachable);
     } else {
