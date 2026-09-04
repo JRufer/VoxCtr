@@ -611,12 +611,8 @@
       chat_max_history: 20,
       chat_timeout_secs: 120,
       chat_reply_mode: "speak",
-      send_on_release: false,
-      append_newline: true,
       strip_newlines: false,
-      processing: {
-        apply_snippets: true,
-      }
+      processing: {},
     };
   }
 

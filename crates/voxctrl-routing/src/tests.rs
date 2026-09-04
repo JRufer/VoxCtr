@@ -39,10 +39,7 @@ fn test_mcp_config_roundtrip() {
         chat_timeout_secs: 120,
         chat_reply_mode: "speak".into(),
         chat_reset_phrase: None,
-        send_on_release: true,
-        append_newline: false,
         strip_newlines: false,
-        initial_prompt: None,
         processing: Default::default(),
         response_pipe: None,
     };
@@ -154,10 +151,7 @@ async fn test_mcp_delivery_handshake() {
         chat_timeout_secs: 120,
         chat_reply_mode: "speak".into(),
         chat_reset_phrase: None,
-        send_on_release: true,
-        append_newline: false,
         strip_newlines: false,
-        initial_prompt: None,
         processing: Default::default(),
         response_pipe: None,
     };
@@ -299,7 +293,8 @@ async fn test_inject_target_success_and_failure() {
 
     // In a test environment, if PATH was prepended successfully, it should succeed
     if res.success {
-        assert_eq!(res.delivered_text.as_deref(), Some("Test Input"));
+        // Delivered text carries the trailing space the inject path appends.
+        assert_eq!(res.delivered_text.as_deref(), Some("Test Input "));
     } else {
         println!("Inject success path skipped or failed gracefully: {:?}", res.error);
     }
@@ -368,10 +363,10 @@ async fn test_clipboard_target_linux_cli() {
     drop(path_guard);
 
     assert!(res.success, "Clipboard delivery failed: {:?}", res.error);
-    assert_eq!(res.delivered_text.as_deref(), Some("Test Clipboard Content"));
+    assert_eq!(res.delivered_text.as_deref(), Some("Test Clipboard Content "));
 
     let content = std::fs::read_to_string(&test_output_file).unwrap();
-    assert_eq!(content, "Test Clipboard Content");
+    assert_eq!(content, "Test Clipboard Content ");
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
@@ -1137,10 +1132,7 @@ async fn test_mcp_delivery_failure_server_error() {
         chat_timeout_secs: 120,
         chat_reply_mode: "speak".into(),
         chat_reset_phrase: None,
-        send_on_release: true,
-        append_newline: false,
         strip_newlines: false,
-        initial_prompt: None,
         processing: Default::default(),
         response_pipe: None,
     };
@@ -1192,10 +1184,7 @@ fn test_strip_newlines_config_roundtrip() {
         chat_timeout_secs: 120,
         chat_reply_mode: "speak".into(),
         chat_reset_phrase: None,
-        send_on_release: true,
-        append_newline: false,
         strip_newlines: true,
-        initial_prompt: None,
         processing: Default::default(),
         response_pipe: None,
     };
@@ -1578,8 +1567,6 @@ fn test_parse_voice_command_no_keyword() {
             file_prefix: "".into(),
             file_timestamp: false,
             file_mode: "append".into(),
-            send_on_release: true,
-            append_newline: true,
             strip_newlines: false,
             http_method: "POST".into(),
             chat_max_history: 20,
@@ -1606,7 +1593,6 @@ fn test_parse_voice_command_no_keyword() {
             chat_api_key: None,
             chat_system_prompt: None,
             chat_reset_phrase: None,
-            initial_prompt: None,
             response_pipe: None,
         },
     ];
@@ -1627,8 +1613,6 @@ fn test_parse_voice_command_matched_target() {
             file_prefix: "".into(),
             file_timestamp: false,
             file_mode: "append".into(),
-            send_on_release: true,
-            append_newline: true,
             strip_newlines: false,
             http_method: "POST".into(),
             chat_max_history: 20,
@@ -1655,7 +1639,6 @@ fn test_parse_voice_command_matched_target() {
             chat_api_key: None,
             chat_system_prompt: None,
             chat_reset_phrase: None,
-            initial_prompt: None,
             response_pipe: None,
         },
     ];
@@ -1715,8 +1698,6 @@ fn test_parse_voice_command_disambiguates_longest_target_name() {
             file_prefix: "".into(),
             file_timestamp: false,
             file_mode: "append".into(),
-            send_on_release: true,
-            append_newline: true,
             strip_newlines: false,
             http_method: "POST".into(),
             chat_max_history: 20,
@@ -1743,7 +1724,6 @@ fn test_parse_voice_command_disambiguates_longest_target_name() {
             chat_api_key: None,
             chat_system_prompt: None,
             chat_reset_phrase: None,
-            initial_prompt: None,
             response_pipe: None,
         },
         OutputTarget {
@@ -1754,8 +1734,6 @@ fn test_parse_voice_command_disambiguates_longest_target_name() {
             file_prefix: "".into(),
             file_timestamp: false,
             file_mode: "append".into(),
-            send_on_release: true,
-            append_newline: true,
             strip_newlines: false,
             http_method: "POST".into(),
             chat_max_history: 20,
@@ -1782,7 +1760,6 @@ fn test_parse_voice_command_disambiguates_longest_target_name() {
             chat_api_key: None,
             chat_system_prompt: None,
             chat_reset_phrase: None,
-            initial_prompt: None,
             response_pipe: None,
         },
     ];
@@ -1809,8 +1786,6 @@ async fn test_voice_command_router_integration() {
             file_prefix: "".into(),
             file_timestamp: false,
             file_mode: "append".into(),
-            send_on_release: true,
-            append_newline: true,
             strip_newlines: false,
             http_method: "POST".into(),
             chat_max_history: 20,
@@ -1838,7 +1813,6 @@ async fn test_voice_command_router_integration() {
             chat_api_key: None,
             chat_system_prompt: None,
             chat_reset_phrase: None,
-            initial_prompt: None,
             response_pipe: None,
         },
         OutputTarget {
@@ -1849,8 +1823,6 @@ async fn test_voice_command_router_integration() {
             file_prefix: "".into(),
             file_timestamp: false,
             file_mode: "append".into(),
-            send_on_release: true,
-            append_newline: false,
             strip_newlines: false,
             http_method: "POST".into(),
             chat_max_history: 20,
@@ -1877,7 +1849,6 @@ async fn test_voice_command_router_integration() {
             chat_api_key: None,
             chat_system_prompt: None,
             chat_reset_phrase: None,
-            initial_prompt: None,
             response_pipe: None,
         },
     ];
@@ -1939,10 +1910,7 @@ async fn test_command_trigger_callback_notification() {
             chat_timeout_secs: 120,
             chat_reply_mode: "speak".into(),
             chat_reset_phrase: None,
-            send_on_release: true,
-            append_newline: false,
             strip_newlines: false,
-            initial_prompt: None,
             processing: Default::default(),
             response_pipe: None,
         },
@@ -1954,8 +1922,6 @@ async fn test_command_trigger_callback_notification() {
             file_prefix: String::new(),
             file_timestamp: false,
             file_mode: "append".into(),
-            send_on_release: true,
-            append_newline: false,
             strip_newlines: false,
             http_method: "POST".into(),
             chat_max_history: 20,
@@ -1982,7 +1948,6 @@ async fn test_command_trigger_callback_notification() {
             chat_api_key: None,
             chat_system_prompt: None,
             chat_reset_phrase: None,
-            initial_prompt: None,
             response_pipe: None,
         },
     ];
@@ -1992,4 +1957,87 @@ async fn test_command_trigger_callback_notification() {
     assert!(res.success);
     assert!(CALLED.load(Ordering::SeqCst));
     let _ = std::fs::remove_file(temp_path);
+}
+
+// ── Trailing space and single-line mode ──────────────────────────────────────
+
+/// Runs a delivery through a mocked `wtype` and returns the text the target
+/// says it delivered — i.e. the payload after strip/spacing.
+#[cfg(target_os = "linux")]
+async fn delivered_via_inject(mut config: OutputTarget, text: &str) -> Option<String> {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "voxctrl_payload_test_{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let mock_wtype = temp_dir.join("wtype");
+    std::fs::write(&mock_wtype, "#!/bin/sh\nexit 0\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&mock_wtype, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _wayland = EnvVarGuard::set("WAYLAND_DISPLAY", "mock-display");
+    let path_guard = prepend_to_path(&temp_dir);
+
+    config.delivery = if config.delivery == DeliveryType::Command {
+        DeliveryType::Command
+    } else {
+        DeliveryType::Inject
+    };
+    let res = build_target(config).deliver(text).await;
+
+    drop(path_guard);
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    res.delivered_text
+}
+
+/// Dictation arrives one utterance at a time, so each delivery ends with a
+/// space — never the newline the old `append_newline` field used to add.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn inject_appends_a_trailing_space_not_a_newline() {
+    let _env = env_lock().lock().await;
+    let delivered = delivered_via_inject(OutputTarget::default_inject(), "hello world").await;
+
+    let text = delivered.expect("inject delivery produced no text");
+    assert_eq!(text, "hello world ");
+    assert!(!text.contains('\n'), "delivery added a newline: {text:?}");
+}
+
+/// Text that already ends in whitespace must not collect a second space.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn trailing_space_is_not_doubled() {
+    let _env = env_lock().lock().await;
+    let delivered = delivered_via_inject(OutputTarget::default_inject(), "hello ").await;
+
+    let text = delivered.expect("delivery produced no text");
+    assert_eq!(text, "hello ");
+}
+
+/// Single-line mode is honored by `command` targets too, which deliver through
+/// the same path as `inject`.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn command_targets_honor_strip_newlines() {
+    let _env = env_lock().lock().await;
+
+    let mut config = OutputTarget::default_inject();
+    config.delivery = DeliveryType::Command;
+    config.strip_newlines = true;
+    let delivered = delivered_via_inject(config, "first line\nsecond line").await;
+
+    let text = delivered.expect("delivery produced no text");
+    assert_eq!(text, "first line second line ");
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn command_targets_keep_newlines_when_not_stripping() {
+    let _env = env_lock().lock().await;
+
+    let mut config = OutputTarget::default_inject();
+    config.delivery = DeliveryType::Command;
+    let delivered = delivered_via_inject(config, "first line\nsecond line").await;
+
+    let text = delivered.expect("delivery produced no text");
+    assert_eq!(text, "first line\nsecond line ");
 }

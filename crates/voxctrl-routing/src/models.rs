@@ -113,7 +113,6 @@ pub struct TargetProcessingConfig {
     pub remove_fillers: Option<bool>,
     pub spoken_punctuation: Option<bool>,
     pub auto_format_lists: Option<bool>,
-    pub apply_snippets: Option<bool>,
     pub code_mode: Option<bool>,
 }
 
@@ -122,7 +121,6 @@ impl TargetProcessingConfig {
         self.remove_fillers.is_some()
             || self.spoken_punctuation.is_some()
             || self.auto_format_lists.is_some()
-            || self.apply_snippets.is_some()
             || self.code_mode.is_some()
     }
 }
@@ -195,13 +193,10 @@ pub struct OutputTarget {
     /// being sent to the model. Case- and punctuation-insensitive.
     pub chat_reset_phrase: Option<String>,
 
-    #[serde(default = "bool_true")]
-    pub send_on_release: bool,
-    #[serde(default = "bool_true")]
-    pub append_newline: bool,
+    /// Flatten the transcript onto one line before delivering it. Honored by
+    /// the `inject` and `command` targets.
     #[serde(default)]
     pub strip_newlines: bool,
-    pub initial_prompt: Option<String>,
 
     #[serde(default)]
     pub processing: TargetProcessingConfig,
@@ -266,10 +261,7 @@ impl OutputTarget {
             chat_timeout_secs: default_chat_timeout_secs(),
             chat_reply_mode: default_chat_reply_mode(),
             chat_reset_phrase: None,
-            send_on_release: true,
-            append_newline: false,
             strip_newlines: false,
-            initial_prompt: None,
             processing: TargetProcessingConfig::default(),
             response_pipe: None,
         }

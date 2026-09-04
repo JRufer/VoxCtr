@@ -380,7 +380,6 @@ label = "My Agent"
 delivery = "pipe"
 pipe_path = "/tmp/my-agent.in"
 response_pipe = "/tmp/my-agent.out"   # ← agent writes responses here
-append_newline = true
 ```
 
 ---

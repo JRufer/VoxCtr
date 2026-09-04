@@ -71,9 +71,8 @@ The worker runs:
    └─ rms(audio) < rms_threshold → return ""
 
 3. Build Whisper initial prompt
-   a. Target's initial_prompt (if set)
-   b. Custom vocabulary words from features.custom_vocabulary
-   → Merged into a single prompt string for Whisper
+   └─ Custom vocabulary words from features.custom_vocabulary, appended to the
+      standing VoxCtrl preamble
 
 4. whisper-rs transcription
    └─ Reuses pre-allocated WhisperState (KV cache + attention buffers loaded once at startup)
@@ -196,9 +195,9 @@ This threshold (0.003 RMS) is intentionally below any genuine speech energy, so 
 
 ## Context Prompting
 
-The Whisper initial prompt is built from:
-1. The target's `initial_prompt` field (if set)
-2. The `features.custom_vocabulary` list, formatted as: `"Vocabulary: word1, word2, ..."`
+The Whisper initial prompt is a fixed VoxCtrl preamble plus the
+`features.custom_vocabulary` list, formatted as
+`"Vocabulary: word1, word2, ..."`. There is no per-target prompt override.
 
 ---
 

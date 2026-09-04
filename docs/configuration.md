@@ -303,17 +303,13 @@ label = "My Target"
 delivery = "inject"
 
 # Text formatting
-append_newline = true         # Default: true
-strip_newlines = false        # Default: false. Replaces newlines with spaces and strips \r (Inject only)
-send_on_release = true        # Default: true
-initial_prompt = ""           # Whisper context prompt override for this target
+strip_newlines = false        # Default: false. Replaces newlines with spaces and strips \r (inject and command targets)
 
 # Per-target post-processing overrides (all optional; null = inherit global)
 [my_target.processing]
 remove_fillers = true
 spoken_punctuation = true
 auto_format_lists = true
-apply_snippets = true
 code_mode = false
 ```
 

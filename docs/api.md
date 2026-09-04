@@ -603,10 +603,7 @@ interface OutputTarget {
   chat_reply_mode: string;    // "speak" | "inject" | "clipboard" | "none"
   chat_reset_phrase?: string;
 
-  send_on_release: boolean;   // default: true
-  append_newline: boolean;    // default: true
-  strip_newlines: boolean;    // default: false
-  initial_prompt?: string;
+  strip_newlines: boolean;    // default: false; inject and command targets
 
   processing: TargetProcessingConfig;
 
@@ -617,7 +614,6 @@ interface TargetProcessingConfig {
   remove_fillers?: boolean;
   spoken_punctuation?: boolean;
   auto_format_lists?: boolean;
-  apply_snippets?: boolean;
   code_mode?: boolean;
 }
 

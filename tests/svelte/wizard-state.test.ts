@@ -33,8 +33,6 @@ function injectTarget(): OutputTargetLike {
     chat_max_history: 10,
     chat_timeout_secs: 30,
     chat_reply_mode: "inject",
-    send_on_release: true,
-    append_newline: false,
     strip_newlines: false,
   };
 }

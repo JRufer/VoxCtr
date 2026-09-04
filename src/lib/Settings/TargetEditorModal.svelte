@@ -21,7 +21,6 @@
   } = $props();
 
   // Flat edit states to ensure absolute Svelte 5 reactivity for target processing overrides
-  let editApplySnippets = $state(true);
   let editMcpArgsString = $state("");
   let editHttpTemplateString = $state("");
   let editWebhookTemplateString = $state("");
@@ -174,7 +173,6 @@
       editingTarget.chat_max_history ??= 20;
       editingTarget.chat_timeout_secs ??= 120;
       editingTarget.chat_reply_mode ||= "speak";
-      editApplySnippets = editingTarget.processing.apply_snippets !== false;
       editMcpArgsString = editingTarget.mcp_args ? JSON.stringify(editingTarget.mcp_args, null, 2) : '{\n  "text": "{text}"\n}';
       editHttpTemplateString = editingTarget.http_json_template ? JSON.stringify(editingTarget.http_json_template, null, 2) : '{\n  "text": "{text}"\n}';
       editWebhookTemplateString = editingTarget.webhook_json_template ? JSON.stringify(editingTarget.webhook_json_template, null, 2) : '{\n  "text": "{text}"\n}';
@@ -244,10 +242,6 @@
       editingTarget.chat_max_history = Number(editingTarget.chat_max_history) || 0;
       editingTarget.chat_timeout_secs = Number(editingTarget.chat_timeout_secs) || 120;
     }
-
-    editingTarget.processing = {
-      apply_snippets: editApplySnippets,
-    };
 
     onSave();
   }
@@ -718,40 +712,15 @@
           </div>
         {/if}
 
-        <!-- General Processing Toggles -->
-        <div class="processing-toggles">
-          <h5>Post-Processing & Output Tuning</h5>
-          <label class="checkbox-field">
-            <input type="checkbox" bind:checked={editingTarget.append_newline} />
-            <span>Automatically append newline after transcribing</span>
-          </label>
-          <label class="checkbox-field">
-            <input type="checkbox" bind:checked={editingTarget.send_on_release} />
-            <span>Execute only on physical key release (Hold modes)</span>
-          </label>
-          {#if editingTarget.delivery === "inject"}
+        {#if editingTarget.delivery === "inject" || editingTarget.delivery === "command"}
+          <div class="processing-toggles">
+            <h5>Output</h5>
             <label class="checkbox-field">
               <input type="checkbox" bind:checked={editingTarget.strip_newlines} />
               <span>Strip newlines and carriage returns (Single-line mode)</span>
             </label>
-          {/if}
-
-          {#if editingTarget.processing}
-            <label class="checkbox-field">
-              <input type="checkbox" bind:checked={editApplySnippets} />
-              <span>Apply snippets to transcription text</span>
-            </label>
-          {/if}
-
-          <label class="field mt-2">
-            <span>Whisper Context Hint (Optional)</span>
-            <input
-              type="text"
-              bind:value={editingTarget.initial_prompt}
-              placeholder="e.g. domain terms or names to bias transcription"
-            />
-          </label>
-        </div>
+          </div>
+        {/if}
       </div>
       <div class="modal-footer">
         <button class="btn-action secondary" onclick={onCancel}>Cancel</button>

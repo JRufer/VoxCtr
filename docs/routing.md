@@ -24,10 +24,7 @@ Defined in `~/.config/voxctrl/targets.toml`. Each `[[target]]` block describes o
 | `id` | string | required | Unique identifier, referenced by bindings |
 | `label` | string | required | Display name in the UI |
 | `delivery` | string | required | Delivery type (see below) |
-| `append_newline` | bool | `true` | Append `\n` after injected text |
-| `strip_newlines` | bool | `false` | Replace newlines (`\n`) with spaces and strip carriage returns (`\r`) (Inject only) |
-| `send_on_release` | bool | `true` | Wait for hotkey release before delivering |
-| `initial_prompt` | string | null | Whisper context prompt override for this target |
+| `strip_newlines` | bool | `false` | Replace newlines (`\n`) with spaces and strip carriage returns (`\r`). Honored by the `inject` and `command` targets |
 | `processing` | object | (inherit) | Per-target post-processing overrides |
 | `response_pipe` | string | null | FIFO path for TTS response output |
 
@@ -47,6 +44,11 @@ id = "default"
 label = "Focused Window"
 delivery = "inject"
 ```
+
+Delivered text always ends with a single space, so consecutive dictations do
+not run their last and first words together; text that already ends in
+whitespace is left alone. The clipboard target does the same. Nothing appends a
+newline.
 
 Linux injection priority:
 1. `wtype` (Wayland)
@@ -285,8 +287,8 @@ by the *Reset conversation* button in the target editor, or by restarting VoxCtr
 never written to disk.
 
 **Reply handling.** `speak` requires TTS to be enabled under Settings → TTS. `inject`
-types the reply into the focused window and honours the target's `strip_newlines` and
-`append_newline` settings. `none` runs the conversation without surfacing replies.
+types the reply into the focused window and honours the target's `strip_newlines`
+setting. `none` runs the conversation without surfacing replies.
 
 **Failure behaviour.** If the request fails, times out, or returns an empty completion,
 the unanswered turn is rolled back so it is not resent on the next dictation.
@@ -300,7 +302,7 @@ the unanswered turn is rolled back so it is not resent on the next dictation.
 
 ### Per-Target Processing
 
-Each target can override global post-processing settings. All fields are optional (`null` = inherit global config):
+Each target can override global post-processing settings. All fields are optional (`null` = inherit global config). Snippet expansion is not among them — snippets always apply, and are switched off only by defining none.
 
 ```toml
 [[target]]
@@ -313,7 +315,6 @@ code_mode = true
 remove_fillers = false
 spoken_punctuation = true
 auto_format_lists = false
-apply_snippets = true
 ```
 
 > [!NOTE]
@@ -422,7 +423,7 @@ Shadowing is resolved when a key goes *down*. Releasing `CTRL` part-way through 
 
 1. Look up target by `target_id` from the in-memory cache
 2. Apply per-target `processing` overrides (inheriting globals for null fields)
-3. Build delivery payload (append newline, prefix, timestamp)
+3. Build delivery payload (single-line flattening, trailing space, prefix, timestamp)
 4. Dispatch to the appropriate delivery handler
 5. On error (socket unavailable, file unwritable, etc.), log the failure and continue — never crashes or drops the UI
 

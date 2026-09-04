@@ -84,13 +84,8 @@ struct RawTarget {
     #[serde(default = "default_chat_reply_mode")]
     chat_reply_mode: String,
     chat_reset_phrase: Option<String>,
-    #[serde(default = "bool_true")]
-    send_on_release: bool,
-    #[serde(default = "bool_true")]
-    append_newline: bool,
     #[serde(default)]
     strip_newlines: bool,
-    initial_prompt: Option<String>,
     #[serde(default)]
     pub processing: RawProcessing,
     response_pipe: Option<String>,
@@ -103,7 +98,6 @@ struct RawProcessing {
     remove_fillers: Option<bool>,
     spoken_punctuation: Option<bool>,
     auto_format_lists: Option<bool>,
-    apply_snippets: Option<bool>,
     code_mode: Option<bool>,
 }
 
@@ -176,7 +170,6 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
     let has_any_override = r.processing.remove_fillers.is_some()
         || r.processing.spoken_punctuation.is_some()
         || r.processing.auto_format_lists.is_some()
-        || r.processing.apply_snippets.is_some()
         || r.processing.code_mode.is_some();
 
     // Migrate legacy post_processing string to processing overrides
@@ -187,7 +180,6 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
             remove_fillers: r.processing.remove_fillers,
             spoken_punctuation: r.processing.spoken_punctuation,
             auto_format_lists: r.processing.auto_format_lists,
-            apply_snippets: r.processing.apply_snippets,
             code_mode: r.processing.code_mode,
         }
     };
@@ -235,10 +227,7 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         chat_timeout_secs: r.chat_timeout_secs,
         chat_reply_mode: r.chat_reply_mode,
         chat_reset_phrase: r.chat_reset_phrase,
-        send_on_release: r.send_on_release,
-        append_newline: r.append_newline,
         strip_newlines: r.strip_newlines,
-        initial_prompt: r.initial_prompt,
         processing,
         response_pipe: r.response_pipe,
     }
@@ -250,28 +239,24 @@ fn migrate_legacy_pp(pp: &str) -> TargetProcessingConfig {
             remove_fillers: Some(false),
             spoken_punctuation: Some(false),
             auto_format_lists: Some(false),
-            apply_snippets: Some(false),
             ..Default::default()
         },
         "strip_fillers" => TargetProcessingConfig {
             remove_fillers: Some(true),
             spoken_punctuation: Some(false),
             auto_format_lists: Some(false),
-            apply_snippets: Some(false),
             ..Default::default()
         },
         "snippets_only" => TargetProcessingConfig {
             remove_fillers: Some(false),
             spoken_punctuation: Some(false),
             auto_format_lists: Some(false),
-            apply_snippets: Some(true),
             ..Default::default()
         },
         "openai_only" | "ollama_only" => TargetProcessingConfig {
             remove_fillers: Some(false),
             spoken_punctuation: Some(false),
             auto_format_lists: Some(false),
-            apply_snippets: Some(false),
             ..Default::default()
         },
         _ => TargetProcessingConfig::default(),
@@ -321,15 +306,11 @@ fn target_to_raw(t: &OutputTarget) -> RawTarget {
         chat_timeout_secs: t.chat_timeout_secs,
         chat_reply_mode: t.chat_reply_mode.clone(),
         chat_reset_phrase: t.chat_reset_phrase.clone(),
-        send_on_release: t.send_on_release,
-        append_newline: t.append_newline,
         strip_newlines: t.strip_newlines,
-        initial_prompt: t.initial_prompt.clone(),
         processing: RawProcessing {
             remove_fillers: p.remove_fillers,
             spoken_punctuation: p.spoken_punctuation,
             auto_format_lists: p.auto_format_lists,
-            apply_snippets: p.apply_snippets,
             code_mode: p.code_mode,
         },
         response_pipe: t.response_pipe.clone(),

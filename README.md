@@ -299,7 +299,6 @@ format_version = "1.1"
 id = "default"
 label = "Focused Window"
 delivery = "inject"
-append_newline = false
 
 [[target]]
 id = "notes"

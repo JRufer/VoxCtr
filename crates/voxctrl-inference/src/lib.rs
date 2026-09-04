@@ -126,21 +126,10 @@ impl InferenceEngine {
 
         let dir = voxctrl_routing::config_dir();
         let targets = voxctrl_routing::load_targets(&dir).unwrap_or_default();
-        let target_ids: Vec<&str> = req.target_id.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-        let first_target_id = target_ids.first().copied().unwrap_or("default");
-        let target = targets.iter().find(|t| t.id == first_target_id);
 
         let mut merged_prompt = String::from("VoxCtrl is a voice control assistant application. VoxCtrl commands start with VoxCtrl. ");
 
-        // 1. Target's initial prompt if defined
-        if let Some(target_prompt) = target.and_then(|t| t.initial_prompt.as_ref()) {
-            if !target_prompt.trim().is_empty() {
-                merged_prompt.push_str(target_prompt.trim());
-                merged_prompt.push_str(". ");
-            }
-        }
-
-        // 2. Custom vocabulary words from features config
+        // Custom vocabulary words from features config
         if !app_config.features.custom_vocabulary.is_empty() {
             // Append as: "Vocabulary: word1, word2, word3..."
             merged_prompt.push_str("Vocabulary: ");
@@ -281,10 +270,6 @@ impl InferenceEngine {
             .and_then(|t| t.processing.auto_format_lists)
             .unwrap_or(app_config.features.auto_format_lists);
 
-        let apply_snippets = target
-            .and_then(|t| t.processing.apply_snippets)
-            .unwrap_or(true); // default to true
-
         let code_mode = target
             .and_then(|t| t.processing.code_mode)
             .unwrap_or(false);
@@ -293,7 +278,9 @@ impl InferenceEngine {
             remove_fillers,
             spoken_punctuation,
             auto_format_lists,
-            apply_snippets: apply_snippets && !app_config.features.snippets.is_empty(),
+            // Snippets always expand; the only thing that turns them off is
+            // having none defined.
+            apply_snippets: !app_config.features.snippets.is_empty(),
             snippets: app_config.features.snippets.clone(),
             code_mode,
             custom_vocabulary: app_config.features.custom_vocabulary.clone(),

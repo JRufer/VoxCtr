@@ -68,6 +68,17 @@ pub fn build_target(config: OutputTarget) -> Box<dyn DeliveryTarget> {
     }
 }
 
+/// End delivered text with exactly one space.
+///
+/// Dictation arrives one utterance at a time, so without this the next one
+/// starts flush against the last word. Text that already ends in whitespace is
+/// left as it is rather than accumulating spaces across repeated deliveries.
+fn append_trailing_space(payload: &mut String) {
+    if !payload.ends_with(char::is_whitespace) {
+        payload.push(' ');
+    }
+}
+
 // ── InjectTarget ──────────────────────────────────────────────────────────────
 
 pub struct InjectTarget(pub OutputTarget);
@@ -94,9 +105,9 @@ impl DeliveryTarget for InjectTarget {
         } else {
             text.to_string()
         };
-        if self.0.append_newline {
-            payload.push('\n');
-        }
+        // A trailing space so back-to-back dictations do not run their last
+        // and first words together.
+        append_trailing_space(&mut payload);
 
         #[cfg(target_os = "linux")]
         {
@@ -186,15 +197,16 @@ impl DeliveryTarget for InjectTarget {
 
 // ── ClipboardTarget ───────────────────────────────────────────────────────────
 
-pub struct ClipboardTarget(OutputTarget);
+/// The clipboard delivery target. It keeps its `OutputTarget` so the chat
+/// reply path and the router construct it the same way as every other target,
+/// though the copy itself needs nothing from it.
+pub struct ClipboardTarget(#[allow(dead_code)] OutputTarget);
 
 #[async_trait::async_trait]
 impl DeliveryTarget for ClipboardTarget {
     async fn deliver(&self, text: &str) -> DeliveryResult {
         let mut payload = text.to_string();
-        if self.0.append_newline {
-            payload.push('\n');
-        }
+        append_trailing_space(&mut payload);
 
         #[cfg(target_os = "linux")]
         {
