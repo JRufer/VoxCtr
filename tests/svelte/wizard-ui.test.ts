@@ -802,6 +802,144 @@ describe("VoiceStep", () => {
     });
   });
 
+  test("a gated voice already on disk needs no token to pick or continue", async () => {
+    // The weights are there — from an earlier run, from Settings, or from a
+    // shell that had HF_TOKEN exported. The token only fetches them.
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "check_breeze_tts_2_ready") return true;
+      return false;
+    });
+    const blocked: (string | null)[] = [];
+    render(VoiceStep, { setBlocker: (_step: number, reason: string | null) => blocked.push(reason) });
+    await fireEvent.click(await screen.findByText("Enable speech output"));
+
+    const breeze = await waitFor(async () => {
+      const card = (await screen.findByText("Breeze-TTS-2")).closest(".card") as HTMLElement;
+      expect(card.classList.contains("locked")).toBe(false);
+      return card;
+    });
+    expect(breeze.textContent).not.toContain("Needs a HuggingFace access token");
+    expect(breeze.textContent).toContain("Already downloaded");
+
+    await fireEvent.click(breeze);
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.tts.engine).toBe("breeze_tts_2");
+
+    // And Continue is not held back for a token that would fetch nothing.
+    await waitFor(() => expect(blocked.at(-1)).toBeNull());
+  });
+
+  test("a gated voice that is not on disk still needs a token", async () => {
+    // The mirror of the case above: readiness is what unlocks it, not the mere
+    // fact that it is gated.
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      return false;
+    });
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    const breeze = (await screen.findByText("Breeze-TTS-2")).closest(".card") as HTMLElement;
+    await waitFor(() => expect(breeze.classList.contains("locked")).toBe(true));
+  });
+
+  test("a token HuggingFace refuses is reported as refused, not as a raw error", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "download_breeze_tts_2") {
+        // What the backend actually hands back for a 401 on a gated repo.
+        throw "hf-token-rejected: HuggingFace did not accept the access token for " +
+          "BreezeBlue/Breeze-TTS-2. Check the token is valid and that its account has " +
+          "accepted the model's licence.";
+      }
+      return false;
+    });
+    const { container } = render(VoiceStep, { setBlocker: noopBlocker });
+    await fireEvent.click(await screen.findByText("Enable speech output"));
+
+    const field = container.querySelector(".hf-input") as HTMLInputElement;
+    await fireEvent.input(field, { target: { value: "hf_wrong" } });
+
+    const breeze = (await screen.findByText("Breeze-TTS-2")).closest(".card") as HTMLElement;
+    const dl = await waitFor(() => {
+      const b = within(breeze).getByText(/Download/).closest("button") as HTMLButtonElement;
+      expect(b.disabled).toBe(false);
+      return b;
+    });
+    await fireEvent.click(dl);
+
+    // The card says what went wrong and where to fix it, and the field's own
+    // state line stops claiming the token is good.
+    await waitFor(() => {
+      expect(breeze.textContent).toContain("did not accept that access token");
+      expect(breeze.textContent).toContain("huggingface.co/BreezeBlue/Breeze-TTS-2");
+    });
+    expect(container.querySelector(".hf-state")?.textContent).toContain("did not accept this token");
+    // Not the tag the backend uses to mark it — that is machinery, not a message.
+    expect(breeze.textContent).not.toContain("hf-token-rejected");
+
+    // Editing the token retracts the verdict rather than leaving it standing
+    // over a value that has not been tried.
+    await fireEvent.input(field, { target: { value: "hf_another" } });
+    await waitFor(() =>
+      expect(container.querySelector(".hf-state")?.textContent).not.toContain(
+        "did not accept this token",
+      ),
+    );
+  });
+
+  test("a download that fails for other reasons still shows the real error", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "download_breeze_tts_2") throw "error sending request: connection refused";
+      return false;
+    });
+    const { container } = render(VoiceStep, { setBlocker: noopBlocker });
+    await fireEvent.click(await screen.findByText("Enable speech output"));
+
+    const field = container.querySelector(".hf-input") as HTMLInputElement;
+    await fireEvent.input(field, { target: { value: "hf_good" } });
+
+    const breeze = (await screen.findByText("Breeze-TTS-2")).closest(".card") as HTMLElement;
+    const dl = await waitFor(() => {
+      const b = within(breeze).getByText(/Download/).closest("button") as HTMLButtonElement;
+      expect(b.disabled).toBe(false);
+      return b;
+    });
+    await fireEvent.click(dl);
+
+    await waitFor(() => expect(breeze.textContent).toContain("connection refused"));
+    // A dead network is not the token's fault, and must not be blamed on it.
+    expect(container.querySelector(".hf-state")?.textContent).not.toContain(
+      "did not accept this token",
+    );
+  });
+
+  test("a saved token fills the field, masked, and unlocks the gated voices", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      return false;
+    });
+    const cfg = baseConfig();
+    cfg.tts.hf_token = "hf_saved_earlier";
+    config.set(cfg);
+
+    const { container } = render(VoiceStep, { setBlocker: noopBlocker });
+    await fireEvent.click(await screen.findByText("Enable speech output"));
+
+    const field = container.querySelector(".hf-input") as HTMLInputElement;
+    expect(field.value).toBe("hf_saved_earlier");
+    // Masked: the wizard is the sort of screen someone screen-shares.
+    expect(field.type).toBe("password");
+    expect(field.readOnly).toBe(false);
+
+    await waitFor(async () => {
+      const card = (await screen.findByText("Pocket TTS")).closest(".card") as HTMLElement;
+      expect(card.classList.contains("locked")).toBe(false);
+    });
+  });
+
   test("the play button returns to idle when the end event arrives", async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "inflect_micro_available") return true;

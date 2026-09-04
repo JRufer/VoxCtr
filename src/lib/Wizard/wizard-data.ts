@@ -241,6 +241,22 @@ export function formatSize(mb: number): string {
   return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 }
 
+/**
+ * How full a model-size bar should be, as a percentage of the largest model on
+ * offer.
+ *
+ * Straight proportion, deliberately. This started life on a log scale, which
+ * made 60 MB and 1.2 GB look like neighbours — Piper read as half the download
+ * of Breeze-TTS-2 when it is one twentieth of it, which is exactly the
+ * comparison the row exists to make. A near-empty bar next to a full one is
+ * the honest picture, and the size is printed beside it either way.
+ */
+export function modelSizeShare(mb: number, engines: { mb: number }[] = TTS_ENGINES): number {
+  const largest = Math.max(0, ...engines.map((e) => e.mb));
+  if (largest <= 0 || mb <= 0) return 0;
+  return Math.min(100, (mb / largest) * 100);
+}
+
 export function formatPercent(v: number): string {
   return `${Math.round(v * 100)}%`;
 }

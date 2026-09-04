@@ -57,19 +57,46 @@ pub async fn download_breeze_tts_2_assets(model_dir: &str, hf_token: Option<Stri
         .build()
         .context("build reqwest client")?;
 
+    // The repo is gated, so the token has to ride along on the request itself:
+    // `apply_hf_token` puts it where `hf-hub` looks, but these are plain
+    // `reqwest` calls that read nothing from the environment on their own.
+    let token = crate::hf::effective_hf_token(hf_token.as_deref());
+
     for file in files_to_fetch {
         let target_path = dir.join(file);
         if target_path.exists() {
             continue;
         }
         let url = format!("https://huggingface.co/{BREEZE_TTS_2_REPO}/resolve/main/{file}");
-        if let Ok(resp) = client.get(&url).send().await {
-            if resp.status().is_success() {
-                if let Ok(bytes) = resp.bytes().await {
-                    let _ = tokio::fs::write(&target_path, &bytes).await;
-                }
-            }
+
+        let mut request = client.get(&url);
+        if let Some(token) = token.as_deref() {
+            request = request.bearer_auth(token);
         }
+
+        // Every failure here used to be swallowed, so a rejected token looked
+        // exactly like a completed download — right up until the engine was
+        // asked to speak and found nothing on disk. Report them instead.
+        let resp = request
+            .send()
+            .await
+            .with_context(|| format!("fetch {file} from {BREEZE_TTS_2_REPO}"))?;
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(crate::hf::token_rejected(BREEZE_TTS_2_REPO));
+        }
+        if !status.is_success() {
+            anyhow::bail!("fetch {file} from {BREEZE_TTS_2_REPO}: HTTP {status}");
+        }
+
+        let bytes = resp
+            .bytes()
+            .await
+            .with_context(|| format!("read {file} from {BREEZE_TTS_2_REPO}"))?;
+        tokio::fs::write(&target_path, &bytes)
+            .await
+            .with_context(|| format!("write {}", target_path.display()))?;
     }
 
     info!("Breeze-TTS-2 assets ready in {}", dir.display());

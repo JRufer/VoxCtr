@@ -27,7 +27,10 @@ pub use engine::{
     TtsEngineWorker, Utterance,
 };
 pub use fifo::run_fifo_responder;
-pub use hf::{apply_hf_token, effective_hf_token, hf_token_from_env, HF_TOKEN_ENV};
+pub use hf::{
+    apply_hf_token, classify_download_error, effective_hf_token, hf_token_from_env,
+    looks_like_auth_failure, token_rejected, HF_TOKEN_ENV, HF_TOKEN_REJECTED_TAG,
+};
 pub use inflect::{
     download_inflect_micro_assets, inflect_micro_model_dir, is_inflect_micro_downloaded,
     INFLECT_MICRO_COMPILED,

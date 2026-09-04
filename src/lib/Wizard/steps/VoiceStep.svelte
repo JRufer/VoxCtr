@@ -10,6 +10,7 @@
     TTS_ENGINES,
     formatPercent,
     formatSize,
+    modelSizeShare,
     ttsSpeedLabel,
     waveBars,
     type TtsEngineId,
@@ -54,14 +55,39 @@
     // The environment's token is displayed, never stored: saving it would put a
     // copy in the config that the app ignores anyway.
     if (fromEnv) return;
+    // A new token deserves a fresh verdict; leaving the old one up would read
+    // as this one having been refused too, before it has been tried.
+    tokenRejected = false;
     patchConfig((cfg) => {
       cfg.tts.hf_token = value.trim() ? value.trim() : null;
     });
   }
 
-  /** Gated engines stay out of reach until the token is in. */
+  /**
+   * Whether a gated engine is still out of reach.
+   *
+   * The token is only needed to *fetch* the weights. Someone who downloaded
+   * Breeze-TTS-2 or Pocket TTS on an earlier run — or in Settings, or with an
+   * `HF_TOKEN` exported into a shell they are no longer in — already has them
+   * on disk, and locking them out of a voice their machine can speak with
+   * would be asking for a token to unlock something that needs no unlocking.
+   */
   function locked(id: TtsEngineId) {
-    return !!TTS_ENGINES.find((e) => e.id === id)?.needsHfToken && !hasHfToken;
+    const engine = TTS_ENGINES.find((e) => e.id === id);
+    return !!engine?.needsHfToken && !hasHfToken && !ready[id];
+  }
+
+  /**
+   * Set when HuggingFace turns our credentials away, cleared the moment the
+   * token changes. The backend tags those failures so this does not depend on
+   * the wording of an error from somewhere down in the HTTP stack.
+   */
+  let tokenRejected = $state(false);
+
+  const HF_TOKEN_REJECTED_TAG = "hf-token-rejected";
+
+  function isTokenRejection(error: unknown): boolean {
+    return `${error}`.toLowerCase().includes(HF_TOKEN_REJECTED_TAG);
   }
 
   let playing = $state<string | null>(null);
@@ -226,16 +252,34 @@
         case "espeak":
           break;
       }
+      // A download that reached the end proves the token was good, whatever an
+      // earlier attempt said.
+      tokenRejected = false;
       ready = { ...ready, [id]: true };
       wizard.clearIssue(`tts-download-${id}`);
     } catch (e) {
+      const engine = TTS_ENGINES.find((t) => t.id === id);
+      const rejected = isTokenRejection(e);
+      if (rejected) tokenRejected = true;
+
       // Reported on the card rather than in a dialog: the backend lists every
-      // URL it tried, and a modal would leave no way to read or copy it.
-      setErr(id, `${e}`);
+      // URL it tried, and a modal would leave no way to read or copy it. A
+      // refused token is the one failure with a single obvious cause, so it
+      // gets a sentence the user can act on instead of the raw chain.
+      setErr(
+        id,
+        rejected
+          ? `HuggingFace did not accept that access token, so ${engine?.name ?? id} could not be ` +
+            `downloaded. Check the token is a valid read token, and that the same account has ` +
+            `accepted the licence at ${engine?.licenceUrl ?? "huggingface.co"}.`
+          : `${e}`,
+      );
       wizard.recordIssue({
         id: `tts-download-${id}`,
         step: STEP,
-        title: `${TTS_ENGINES.find((t) => t.id === id)?.name ?? id} could not be downloaded — speech output will stay silent.`,
+        title: rejected
+          ? `${engine?.name ?? id} could not be downloaded — HuggingFace did not accept the access token.`
+          : `${engine?.name ?? id} could not be downloaded — speech output will stay silent.`,
         detail: `engine=${id}\n${e}`,
       });
     } finally {
@@ -390,7 +434,11 @@
     </div>
   </div>
 
-  <div class="hf" class:needed={enabled && !hasHfToken} class:muted={!enabled}>
+  <div
+    class="hf"
+    class:needed={enabled && (tokenRejected || gatedEngines.some((e) => locked(e.id)))}
+    class:muted={!enabled}
+  >
     <div class="hf-copy">
       <span class="hf-title">HuggingFace access token</span>
       <span class="hf-desc">
@@ -414,8 +462,10 @@
       value={hfToken}
       oninput={(e) => setHfToken((e.currentTarget as HTMLInputElement).value)}
     />
-    <span class="hf-state" class:ok={hasHfToken}>
-      {#if fromEnv}
+    <span class="hf-state" class:ok={hasHfToken && !tokenRejected} class:bad={tokenRejected}>
+      {#if tokenRejected}
+        ✗ HuggingFace did not accept this token
+      {:else if fromEnv}
         ✓ using the HF_TOKEN environment variable — not saved to your config
       {:else if hasHfToken}
         ✓ token saved
@@ -431,7 +481,7 @@
       {@const isReady = !!ready[engine.id]}
       {@const busy = downloading === engine.id}
       {@const unavailable = engine.id === "inflect_micro" && !inflectAvailable}
-      {@const needsToken = !!engine.needsHfToken && !hasHfToken}
+      {@const needsToken = locked(engine.id)}
       <div
         class="vx-card card"
         class:vx-on={on}
@@ -503,7 +553,7 @@
         </div>
 
         <div class="metrics">
-          {#each [{ label: "quality", pct: Math.round(engine.quality * 100), value: formatPercent(engine.quality), color: "var(--vx-cyan-0)" }, { label: "speed", pct: Math.round(engine.speed * 100), value: ttsSpeedLabel(engine.speed), color: "var(--vx-cyan-2)" }, { label: "model size", pct: Math.max(2, Math.round((Math.log10(engine.mb + 1) / Math.log10(1300)) * 100)), value: formatSize(engine.mb), color: "var(--vx-gold-1)" }] as m}
+          {#each [{ label: "quality", pct: Math.round(engine.quality * 100), value: formatPercent(engine.quality), color: "var(--vx-cyan-0)" }, { label: "speed", pct: Math.round(engine.speed * 100), value: ttsSpeedLabel(engine.speed), color: "var(--vx-cyan-2)" }, { label: "model size", pct: modelSizeShare(engine.mb), value: formatSize(engine.mb), color: "var(--vx-gold-1)" }] as m}
             <div class="metric">
               <div class="metric-head"><span>{m.label}</span><span>{m.value}</span></div>
               <div class="vx-meter"><div style:width="{m.pct}%" style:background={m.color}></div></div>
@@ -516,13 +566,18 @@
             <span class="bad">
               Needs a HuggingFace access token — enter one above to unlock this voice.
             </span>
+          {:else if errors[engine.id]}
+            <span class="bad">{errors[engine.id]}</span>
+          {:else if engine.needsHfToken && !hasHfToken && isReady}
+            <span class="ok">
+              Already downloaded — the token is only needed to fetch the weights, so this voice
+              works without one.
+            </span>
           {:else if unavailable}
             <span class="bad">
               This build was compiled without the `inflect-micro` feature, so this engine cannot
               synthesize.
             </span>
-          {:else if errors[engine.id]}
-            <span class="bad">{errors[engine.id]}</span>
           {:else}
             {engine.note}
           {/if}
@@ -706,6 +761,10 @@
     color: var(--vx-good);
   }
 
+  .hf-state.bad {
+    color: var(--vx-bad);
+  }
+
   @media (max-width: 720px) {
     .hf {
       grid-template-columns: 1fr;
@@ -868,6 +927,10 @@
   .bad {
     color: var(--vx-bad);
     word-break: break-word;
+  }
+
+  .note .ok {
+    color: var(--vx-good);
   }
 
   .play-error {

@@ -14,6 +14,7 @@ import {
   isModifiersOnly,
   keycapLabel,
   mapBrowserKeyToEvdev,
+  modelSizeShare,
   speedLabel,
   ttsSpeedLabel,
   waveBars,
@@ -34,6 +35,34 @@ describe("wizard formatting helpers", () => {
   test("formatPercent rounds to whole percentages", () => {
     expect(formatPercent(0.58)).toBe("58%");
     expect(formatPercent(0.975)).toBe("98%");
+  });
+
+  test("model size bars are proportional to the largest model on offer", () => {
+    const engines = [{ mb: 1200 }, { mb: 500 }, { mb: 60 }, { mb: 30 }, { mb: 0 }];
+
+    expect(modelSizeShare(1200, engines)).toBe(100);
+    // 500 MB is well under half of 1.2 GB, and has to look it: the log scale
+    // this replaced drew it at over three quarters.
+    expect(modelSizeShare(500, engines)).toBeCloseTo(41.7, 1);
+    expect(modelSizeShare(60, engines)).toBeCloseTo(5, 1);
+    expect(modelSizeShare(30, engines)).toBeCloseTo(2.5, 1);
+    // Nothing to download draws nothing.
+    expect(modelSizeShare(0, engines)).toBe(0);
+  });
+
+  test("model size bars keep their ordering and stay in range", () => {
+    const shares = TTS_ENGINES.map((e) => modelSizeShare(e.mb));
+    for (const share of shares) {
+      expect(share).toBeGreaterThanOrEqual(0);
+      expect(share).toBeLessThanOrEqual(100);
+    }
+    // The largest engine fills the bar, and a bigger model never draws smaller
+    // than a smaller one.
+    expect(Math.max(...shares)).toBe(100);
+    const bySize = [...TTS_ENGINES].sort((a, b) => a.mb - b.mb);
+    for (let i = 1; i < bySize.length; i++) {
+      expect(modelSizeShare(bySize[i].mb)).toBeGreaterThanOrEqual(modelSizeShare(bySize[i - 1].mb));
+    }
   });
 
   test("speed scores map onto phrases the user can act on", () => {

@@ -366,7 +366,11 @@ pub async fn download_pocket_tts_assets(voice: &str, voice_dir: &str, hf_token: 
         Ok(())
     })
     .await
-    .context("download_pocket_tts_assets task join")??;
+    .context("download_pocket_tts_assets task join")?
+    // `hf-hub` reports a 401 from a gated repo as an ordinary transport error,
+    // so a rejected token is only distinguishable from a dead network by what
+    // the chain says. The UI needs that distinction to know what to ask for.
+    .map_err(|e| crate::hf::classify_download_error(e, POCKET_TTS_WEIGHTS_REPO))?;
 
     info!("pocket-tts assets ready for voice '{voice}'");
     Ok(())
