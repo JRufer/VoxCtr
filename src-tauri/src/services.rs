@@ -4,7 +4,6 @@ use voxctrl_config::AppConfig;
 use voxctrl_mcp::McpCallbacks;
 
 use crate::state::AppState;
-use crate::window::show_and_focus_window;
 
 impl McpCallbacks for AppState {
     fn transcribe_voice(
@@ -264,8 +263,10 @@ pub fn auto_download_speech_model_if_needed(
     // making them here first would download the wrong model and bury the
     // wizard behind a window the user did not ask for.
     if !cfg_data.ui.setup_completed {
-        if let Some(window) = app.get_webview_window(crate::window::WIZARD_WINDOW) {
-            show_and_focus_window(&window);
+        if app.get_webview_window(crate::window::WIZARD_WINDOW).is_some() {
+            if let Err(e) = crate::window::open_wizard_window(&app.handle().clone()) {
+                tracing::error!("Could not open the setup wizard: {e}");
+            }
             return;
         }
         // No wizard window in this build: fall through to the old behaviour

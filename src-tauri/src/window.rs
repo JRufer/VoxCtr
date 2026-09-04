@@ -25,6 +25,45 @@ pub const WIZARD_HEIGHT: f64 = 900.0;
 pub const WIZARD_MIN_WIDTH: f64 = 1280.0;
 pub const WIZARD_MIN_HEIGHT: f64 = 720.0;
 
+/// Fraction of the display the window may occupy, leaving room for the title
+/// bar and a desktop panel. Height is the tighter of the two: panels are
+/// usually horizontal, and the title bar eats from the same axis.
+const WIZARD_FIT_W: f64 = 0.94;
+const WIZARD_FIT_H: f64 = 0.90;
+
+/// The largest 16:9 window that fits the space available, capped at the design
+/// size and floored at the size the layout stops fitting in.
+///
+/// A fixed 1600x900 is only safe at 100% scaling: the same window on a 1080p
+/// display at 125% is 2000x1125 physical, wider and taller than the screen, so
+/// the footer with the Continue button ends up past the bottom edge. Sizes are
+/// logical pixels, which is what the compositor scales.
+pub fn wizard_size_for(available_width: f64, available_height: f64) -> (f64, f64) {
+    const ASPECT: f64 = 16.0 / 9.0;
+
+    let w = available_width.min(WIZARD_WIDTH);
+    let h = available_height.min(WIZARD_HEIGHT);
+
+    // Shrink whichever axis is over-long, so the window keeps its aspect ratio
+    // rather than letterboxing the layout it was designed around.
+    let (w, h) = if w / h > ASPECT { (h * ASPECT, h) } else { (w, w / ASPECT) };
+
+    // Below this the layout wraps, so a smaller window would be worse than one
+    // the user has to move. Verified against every step at 1280x720.
+    (w.max(WIZARD_MIN_WIDTH), h.max(WIZARD_MIN_HEIGHT))
+}
+
+/// Resize a window to fit the display it is on, and re-centre it.
+fn fit_to_display(window: &tauri::WebviewWindow) {
+    let Ok(Some(monitor)) = window.current_monitor() else {
+        return;
+    };
+    let logical = monitor.size().to_logical::<f64>(monitor.scale_factor());
+    let (w, h) = wizard_size_for(logical.width * WIZARD_FIT_W, logical.height * WIZARD_FIT_H);
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+    let _ = window.center();
+}
+
 /// Minimum gap between "finish the setup" notifications, so holding a
 /// push-to-talk key does not produce a wall of toasts.
 pub const SETUP_NOTICE_INTERVAL: Duration = Duration::from_secs(60);
@@ -81,6 +120,7 @@ pub fn open_settings_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWind
 /// is what the first launch of a fresh install uses.
 pub fn open_wizard_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(WIZARD_WINDOW) {
+        fit_to_display(&existing);
         show_and_focus_window(&existing);
         return Ok(());
     }
@@ -98,6 +138,11 @@ pub fn open_wizard_window(app: &tauri::AppHandle) -> Result<(), String> {
     .decorations(true)
     .build()
     .map_err(|e| format!("Could not open the setup wizard: {e}"))?;
+
+    // Only measurable once the window exists and knows which display it is on.
+    if let Some(window) = app.get_webview_window(WIZARD_WINDOW) {
+        fit_to_display(&window);
+    }
 
     Ok(())
 }
@@ -209,5 +254,53 @@ pub fn raise_window(window: &tauri::WebviewWindow, keep_on_top: bool) {
             tokio::time::sleep(Duration::from_millis(250)).await;
             let _ = w.set_always_on_top(false);
         });
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 1080p at 100% scaling has room for the full design size.
+    #[test]
+    fn a_1080p_display_gets_the_design_size() {
+        let (w, h) = wizard_size_for(1920.0 * WIZARD_FIT_W, 1080.0 * WIZARD_FIT_H);
+        assert_eq!((w, h), (WIZARD_WIDTH, WIZARD_HEIGHT));
+    }
+
+    /// The case that sent the footer off-screen: 1080p at 125%, where the
+    /// desktop is only 1536x864 logical pixels.
+    #[test]
+    fn a_scaled_1080p_display_gets_a_window_that_fits_it() {
+        let (avail_w, avail_h) = (1536.0 * WIZARD_FIT_W, 864.0 * WIZARD_FIT_H);
+        let (w, h) = wizard_size_for(avail_w, avail_h);
+        assert!(w <= avail_w, "{w} wider than the {avail_w} available");
+        assert!(h <= avail_h, "{h} taller than the {avail_h} available");
+        assert!(w >= WIZARD_MIN_WIDTH && h >= WIZARD_MIN_HEIGHT);
+    }
+
+    #[test]
+    fn the_window_keeps_its_aspect_ratio_when_it_shrinks() {
+        let (w, h) = wizard_size_for(1400.0, 2000.0);
+        assert!(
+            ((w / h) - 16.0 / 9.0).abs() < 0.01,
+            "expected 16:9, got {w}x{h}"
+        );
+    }
+
+    /// A display too small for the layout gets the minimum rather than a
+    /// window whose contents wrap: the user can move a window, but cannot
+    /// unwrap a layout.
+    #[test]
+    fn a_small_display_never_goes_below_the_layout_minimum() {
+        let (w, h) = wizard_size_for(900.0, 500.0);
+        assert_eq!((w, h), (WIZARD_MIN_WIDTH, WIZARD_MIN_HEIGHT));
+    }
+
+    #[test]
+    fn a_large_display_is_capped_at_the_design_size() {
+        let (w, h) = wizard_size_for(3840.0, 2160.0);
+        assert_eq!((w, h), (WIZARD_WIDTH, WIZARD_HEIGHT));
     }
 }
