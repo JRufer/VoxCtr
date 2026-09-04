@@ -388,7 +388,7 @@
       await invoke("download_pocket_tts", {
         voice: cfg.tts.pocket_tts.voice,
         voiceDir: cfg.tts.pocket_tts.voice_dir,
-        hfToken: cfg.tts.pocket_tts.hf_token,
+        hfToken: cfg.tts.hf_token,
       });
       pocketTtsReady = true;
     } catch (e) {
@@ -403,8 +403,6 @@
     pocketTtsReady = false;
     checkPocketTtsReady();
   }
-
-  function onPocketTtsTokenChanged() { markDirty(); }
 
   // ── Breeze-TTS-2 ───────────────────────────────────────────────────────────
 
@@ -430,7 +428,7 @@
     if (breezeDownloading) return;
     breezeDownloading = true;
     try {
-      const token = cfg.tts.breeze_tts_2.hf_token || cfg.tts.pocket_tts.hf_token;
+      const token = cfg.tts.hf_token;
       await invoke("download_breeze_tts_2", {
         modelDir: cfg.tts.breeze_tts_2.model_dir,
         hfToken: token,
@@ -443,11 +441,11 @@
     }
   }
 
+  /// One token serves every gated model, so both engine panels edit the same
+  /// field rather than keeping a copy each.
   function onHfTokenChanged(e: Event) {
     const val = (e.target as HTMLInputElement).value;
-    const tokenVal = val.trim() ? val.trim() : null;
-    cfg.tts.pocket_tts.hf_token = tokenVal;
-    cfg.tts.breeze_tts_2.hf_token = tokenVal;
+    cfg.tts.hf_token = val.trim() ? val.trim() : null;
     markDirty();
   }
 
@@ -865,7 +863,7 @@
       <span>HuggingFace access token</span>
       <input
         type="password"
-        value={cfg.tts.breeze_tts_2.hf_token || cfg.tts.pocket_tts.hf_token || ""}
+        value={cfg.tts.hf_token || ""}
         oninput={onHfTokenChanged}
       />
     </div>
@@ -933,14 +931,15 @@
       <span>HuggingFace access token</span>
       <input
         type="password"
-        bind:value={cfg.tts.pocket_tts.hf_token}
-        onchange={onPocketTtsTokenChanged}
+        value={cfg.tts.hf_token || ""}
+        oninput={onHfTokenChanged}
       />
     </div>
     <p class="hint">
       Pocket-TTS model weights are hosted on a gated HuggingFace repo. Create a token at
       <code>huggingface.co/settings/tokens</code> and accept the license at
-      <code>huggingface.co/kyutai/pocket-tts</code> before downloading.
+      <code>huggingface.co/kyutai/pocket-tts</code> before downloading. This is the same token
+      Breeze-TTS-2 uses — the app stores one.
     </p>
 
     <div class="field">

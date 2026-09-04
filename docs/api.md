@@ -513,7 +513,6 @@ interface OpenAiConfig {
 interface PocketTtsConfig {
   voice: string;
   prewarm: boolean;
-  hf_token: string | null;
   voice_dir: string;       // custom .wav voice clips; empty = default directory
 }
 
@@ -530,7 +529,6 @@ interface BreezeTts2Config {
   voice_dir: string;        // shared with pocket_tts; empty = default directory
   speaker_prompt: string;   // Voice Design description
   model_dir: string;        // empty = default directory
-  hf_token: string | null;  // shared with pocket_tts
   prewarm: boolean;
   gpu: boolean;             // needs a breeze-cuda / breeze-metal build
 }
@@ -544,6 +542,7 @@ interface TtsConfig {
   response_overlay: boolean;
   speed: number;            // not used by pocket_tts
   gpu: boolean;             // only applies to piper; Breeze has its own flag
+  hf_token: string | null;  // one token for every gated model download
   pocket_tts: PocketTtsConfig;
   inflect_micro: InflectMicroConfig;  // fixed-voice, so no voice field
   breeze_tts_2: BreezeTts2Config;

@@ -330,9 +330,11 @@ pub struct PocketTtsConfig {
     /// Pre-warm model on startup so the first synthesis is instant
     #[serde(default)]
     pub prewarm: bool,
-    /// HuggingFace access token (required to download the gated `kyutai/pocket-tts` weights)
-    #[serde(default)]
-    pub hf_token: Option<String>,
+    /// Where this engine's token used to live, kept only so a config written
+    /// before `tts.hf_token` existed can be migrated. Cleared once lifted, and
+    /// never written back.
+    #[serde(default, rename = "hf_token", skip_serializing_if = "Option::is_none")]
+    pub legacy_hf_token: Option<String>,
     /// Directory scanned for custom voice clips (`<id>.wav`). Empty = platform default
     /// (`~/.local/share/voxctrl/pocket-tts-voices/`).
     #[serde(default)]
@@ -344,7 +346,7 @@ impl Default for PocketTtsConfig {
         Self {
             voice: default_pocket_tts_voice(),
             prewarm: false,
-            hf_token: None,
+            legacy_hf_token: None,
             voice_dir: String::new(),
         }
     }
@@ -371,9 +373,10 @@ pub struct BreezeTts2Config {
     /// (`~/.local/share/voxctrl/models/breeze-tts-2/`).
     #[serde(default)]
     pub model_dir: String,
-    /// HuggingFace access token (shared with Pocket-TTS)
-    #[serde(default)]
-    pub hf_token: Option<String>,
+    /// Where this engine's token used to live; see
+    /// [`PocketTtsConfig::legacy_hf_token`].
+    #[serde(default, rename = "hf_token", skip_serializing_if = "Option::is_none")]
+    pub legacy_hf_token: Option<String>,
     /// Pre-warm model on startup so the first synthesis is instant
     #[serde(default)]
     pub prewarm: bool,
@@ -394,7 +397,7 @@ impl Default for BreezeTts2Config {
             voice_dir: String::new(),
             speaker_prompt: default_breeze_tts_2_speaker_prompt(),
             model_dir: String::new(),
-            hf_token: None,
+            legacy_hf_token: None,
             prewarm: false,
             gpu: false,
         }
@@ -462,6 +465,11 @@ pub struct TtsConfig {
     /// Enable GPU acceleration for Piper
     #[serde(default)]
     pub gpu: bool,
+    /// The single HuggingFace access token for every gated model VoxCtrl
+    /// downloads (Pocket-TTS and Breeze-TTS-2 today). One token, one place —
+    /// entering it in Settings or in the setup wizard writes here.
+    #[serde(default)]
+    pub hf_token: Option<String>,
     #[serde(default)]
     pub pocket_tts: PocketTtsConfig,
     #[serde(default)]
@@ -487,6 +495,7 @@ impl Default for TtsConfig {
             response_overlay: true,
             speed: 1.0,
             gpu: false,
+            hf_token: None,
             pocket_tts: PocketTtsConfig::default(),
             inflect_micro: InflectMicroConfig::default(),
             breeze_tts_2: BreezeTts2Config::default(),
@@ -538,6 +547,28 @@ pub struct AppConfig {
     pub openai: OpenAiConfig,
     pub tts: TtsConfig,
     pub mcp: McpConfig,
+}
+
+/// Lift a HuggingFace token stored per engine onto the single `tts.hf_token`,
+/// clearing the old copies. Returns whether anything moved, so the caller
+/// knows to rewrite the file.
+///
+/// Pocket-TTS and Breeze-TTS-2 each used to hold their own copy, synchronized
+/// on load; they now share one key, and the same token downloads both.
+fn migrate_hf_token(data: &mut AppConfig) -> bool {
+    let legacy = data
+        .tts
+        .pocket_tts
+        .legacy_hf_token
+        .take()
+        .or_else(|| data.tts.breeze_tts_2.legacy_hf_token.take());
+    data.tts.breeze_tts_2.legacy_hf_token = None;
+
+    let Some(token) = legacy else { return false };
+    if data.tts.hf_token.is_none() {
+        data.tts.hf_token = Some(token);
+    }
+    true
 }
 
 // ── Config manager ────────────────────────────────────────────────────────────
@@ -621,11 +652,13 @@ impl Config {
             }
         }
 
-        // Synchronize HuggingFace token between Pocket-TTS and Breeze-TTS-2
-        if data.tts.pocket_tts.hf_token.is_some() && data.tts.breeze_tts_2.hf_token.is_none() {
-            data.tts.breeze_tts_2.hf_token = data.tts.pocket_tts.hf_token.clone();
-        } else if data.tts.breeze_tts_2.hf_token.is_some() && data.tts.pocket_tts.hf_token.is_none() {
-            data.tts.pocket_tts.hf_token = data.tts.breeze_tts_2.hf_token.clone();
+        // One token now serves every gated model; older configs carry a copy
+        // per engine. Rewrite the file so the duplicates go away for good.
+        if migrate_hf_token(&mut data) {
+            let migrated = Self { data: data.clone(), path: path.clone() };
+            if let Err(e) = migrated.save() {
+                tracing::error!("Failed to save migrated HuggingFace token: {e}");
+            }
         }
 
         Self { data, path }
@@ -723,6 +756,89 @@ pub fn validate(cfg: &AppConfig) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn tts_json(body: &str) -> TtsConfig {
+        serde_json::from_str(body).expect("tts config should parse")
+    }
+
+    /// A config written when each engine carried its own copy of the token
+    /// must come back with one token on `tts`, and the file it writes next
+    /// must hold that token exactly once.
+    #[test]
+    fn migrates_per_engine_hf_tokens_onto_one_key() {
+        let mut data = AppConfig::default();
+        data.tts = tts_json(
+            r#"{"enabled": true, "engine": "pocket_tts", "voice": "v",
+                "stop_key": ["KEY_ESC"], "response_overlay": true,
+                "pocket_tts": {"voice": "alba", "hf_token": "hf_from_pocket"},
+                "breeze_tts_2": {"hf_token": "hf_from_pocket"}}"#,
+        );
+        assert_eq!(
+            data.tts.pocket_tts.legacy_hf_token.as_deref(),
+            Some("hf_from_pocket"),
+            "the old location must still parse"
+        );
+
+        assert!(migrate_hf_token(&mut data));
+
+        assert_eq!(data.tts.hf_token.as_deref(), Some("hf_from_pocket"));
+        assert!(data.tts.pocket_tts.legacy_hf_token.is_none());
+        assert!(data.tts.breeze_tts_2.legacy_hf_token.is_none());
+
+        let written = serde_json::to_string(&data.tts).unwrap();
+        assert_eq!(
+            written.matches("hf_token").count(),
+            1,
+            "the token must be stored once, not per engine: {written}"
+        );
+    }
+
+    /// A token set only on Breeze is lifted too — either copy will do.
+    #[test]
+    fn migrates_a_breeze_only_token() {
+        let mut data = AppConfig::default();
+        data.tts = tts_json(
+            r#"{"enabled": false, "engine": "espeak", "voice": "v", "stop_key": [],
+                "response_overlay": true, "breeze_tts_2": {"hf_token": "hf_from_breeze"}}"#,
+        );
+
+        assert!(migrate_hf_token(&mut data));
+        assert_eq!(data.tts.hf_token.as_deref(), Some("hf_from_breeze"));
+    }
+
+    /// A config that already has the single key keeps it, and needs no rewrite.
+    #[test]
+    fn a_config_with_one_token_is_left_alone() {
+        let mut data = AppConfig::default();
+        data.tts = tts_json(
+            r#"{"enabled": false, "engine": "espeak", "voice": "v", "stop_key": [],
+                "response_overlay": true, "hf_token": "hf_single"}"#,
+        );
+
+        assert!(!migrate_hf_token(&mut data), "nothing to migrate");
+        assert_eq!(data.tts.hf_token.as_deref(), Some("hf_single"));
+        assert_eq!(
+            serde_json::to_string(&data.tts).unwrap().matches("hf_token").count(),
+            1
+        );
+    }
+
+    /// The single key wins over a stale per-engine copy rather than being
+    /// overwritten by it.
+    #[test]
+    fn the_single_token_wins_over_a_legacy_copy() {
+        let mut data = AppConfig::default();
+        data.tts = tts_json(
+            r#"{"enabled": false, "engine": "espeak", "voice": "v", "stop_key": [],
+                "response_overlay": true, "hf_token": "hf_current",
+                "pocket_tts": {"hf_token": "hf_stale"}}"#,
+        );
+
+        assert!(migrate_hf_token(&mut data));
+        assert_eq!(data.tts.hf_token.as_deref(), Some("hf_current"));
+        assert!(data.tts.pocket_tts.legacy_hf_token.is_none());
+    }
+
 
     /// Configs written before the Backend dropdown lost its "Auto-detect"
     /// entry still say `"auto"`. They must keep loading, on whisper.cpp —

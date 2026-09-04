@@ -151,7 +151,7 @@ pub fn run() {
     tracing::info!("TTS GPU: {}", config.data.tts.gpu);
     tracing::info!("Pocket-TTS voice: {}", config.data.tts.pocket_tts.voice);
     tracing::info!("Pocket-TTS prewarm: {}", config.data.tts.pocket_tts.prewarm);
-    tracing::info!("Pocket-TTS HF token set: {}", config.data.tts.pocket_tts.hf_token.is_some());
+    tracing::info!("HuggingFace token set: {}", config.data.tts.hf_token.is_some());
     tracing::info!("MCP enabled: {}", config.data.mcp.server_enabled);
     tracing::info!("MCP record timeout: {}", config.data.mcp.record_timeout);
     tracing::info!("=============================");

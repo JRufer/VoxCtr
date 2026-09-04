@@ -56,9 +56,10 @@ function baseConfig(): any {
       engine: "piper",
       voice: "en-us-lessac-medium",
       voice_dir: "",
-      pocket_tts: { voice: "alba", voice_dir: "", hf_token: null },
+      hf_token: null,
+      pocket_tts: { voice: "alba", voice_dir: "" },
       inflect_micro: { model_dir: "" },
-      breeze_tts_2: { model_dir: "", hf_token: null },
+      breeze_tts_2: { model_dir: "" },
     },
     mcp: {},
   };
@@ -671,6 +672,86 @@ describe("VoiceStep", () => {
     config.subscribe((c) => (current = c))();
     expect(current.tts.enabled).toBe(true);
     expect(current.tts.engine).toBe("piper");
+  });
+
+  test("gated voices are locked, and say why, until a token is entered", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      return false;
+    });
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    for (const name of ["Breeze-TTS-2", "Pocket TTS"]) {
+      const card = (await screen.findByText(name)).closest(".card") as HTMLElement;
+      expect(card.classList.contains("locked")).toBe(true);
+      expect(card.textContent).toContain("Needs a HuggingFace access token");
+      const dl = within(card).getByText(/Download/).closest("button") as HTMLButtonElement;
+      expect(dl.disabled).toBe(true);
+    }
+
+    // A locked card must not become the chosen engine.
+    const breeze = (await screen.findByText("Breeze-TTS-2")).closest(".card") as HTMLElement;
+    await fireEvent.click(breeze);
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.tts.engine).toBe("piper");
+  });
+
+  test("entering a token unlocks the gated voices and saves it once", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      return false;
+    });
+    const { container } = render(VoiceStep, { setBlocker: noopBlocker });
+    await fireEvent.click(await screen.findByText("Enable speech output"));
+
+    const field = container.querySelector(".hf-input") as HTMLInputElement;
+    expect(field, "the wizard should ask for a HuggingFace token").toBeTruthy();
+    await fireEvent.input(field, { target: { value: "  hf_abc123  " } });
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    // Trimmed, stored once, and in the same place Settings writes it.
+    expect(current.tts.hf_token).toBe("hf_abc123");
+    expect(current.tts.pocket_tts.hf_token).toBeUndefined();
+    expect(current.tts.breeze_tts_2.hf_token).toBeUndefined();
+
+    await waitFor(async () => {
+      const card = (await screen.findByText("Breeze-TTS-2")).closest(".card") as HTMLElement;
+      expect(card.classList.contains("locked")).toBe(false);
+    });
+
+    const card = (await screen.findByText("Pocket TTS")).closest(".card") as HTMLElement;
+    await fireEvent.click(card);
+    config.subscribe((c) => (current = c))();
+    expect(current.tts.engine).toBe("pocket_tts");
+  });
+
+  test("a gated download sends the one saved token", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "download_breeze_tts_2") return undefined;
+      return false;
+    });
+    const { container } = render(VoiceStep, { setBlocker: noopBlocker });
+    await fireEvent.click(await screen.findByText("Enable speech output"));
+
+    const field = container.querySelector(".hf-input") as HTMLInputElement;
+    await fireEvent.input(field, { target: { value: "hf_abc123" } });
+
+    const breeze = (await screen.findByText("Breeze-TTS-2")).closest(".card") as HTMLElement;
+    const dl = await waitFor(() => {
+      const b = within(breeze).getByText(/Download/).closest("button") as HTMLButtonElement;
+      expect(b.disabled).toBe(false);
+      return b;
+    });
+    await fireEvent.click(dl);
+
+    await waitFor(() => {
+      const call = invoke.mock.calls.find(([c]) => c === "download_breeze_tts_2");
+      expect(call).toBeTruthy();
+      expect((call as any)[1].hfToken).toBe("hf_abc123");
+    });
   });
 
   test("the play button returns to idle when the end event arrives", async () => {

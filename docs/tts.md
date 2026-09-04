@@ -20,7 +20,7 @@ Key capabilities include **Voice Design**, which generates voices from natural-l
 
 **Features & Optimization:**
 - **Voice Design Prompts:** Set `speaker_prompt` in Settings to describe the desired voice characteristics.
-- **HuggingFace Access Token:** The gated model weights require a HuggingFace access token (`hf_token`). The token is shared between Pocket-TTS and Breeze-TTS-2.
+- **HuggingFace Access Token:** The gated model weights require a HuggingFace access token, stored once as `tts.hf_token` and shared by Pocket-TTS and Breeze-TTS-2. The setup wizard asks for it on the voice step, and Settings → TTS edits the same value.
 - **Prewarming:** Enables startup prewarming to load weights into VRAM so the first synthesis is instant.
 - **GPU Acceleration:** CUDA (NVIDIA) or Metal (macOS) offload can be enabled for near real-time response speeds, in a build that includes the matching feature. See [GPU Acceleration](#gpu-acceleration).
 
@@ -35,7 +35,7 @@ VoxCtrl invokes the `piper` binary directly (looks first in `~/.local/share/voxc
 Instead of fixed precomputed voice embeddings, Pocket-TTS clones a voice from a short reference audio clip at runtime (`TTSModel::get_voice_state()`). VoxCtrl ships a small built-in catalogue of reference clips so users get a normal voice-picker UX without needing to record anything themselves.
 
 **Prerequisites:**
-- A HuggingFace account that has accepted the license for the gated [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) model repo, and a personal access token (`hf_token`) with read access. Set it in Settings → TTS → Pocket-TTS, or via the `HF_TOKEN` environment variable.
+- A HuggingFace account that has accepted the license for the gated [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) model repo, and a personal access token with read access. Set it as `tts.hf_token` — in the setup wizard's voice step, or in Settings → TTS — or via the `HF_TOKEN` environment variable.
 
 Model weights and the per-voice reference clips are downloaded on demand via `pocket_tts::weights::download_if_necessary`, which resolves `hf://owner/repo/filename[@revision]` URIs through the standard HuggingFace cache (`~/.cache/huggingface/hub/`). Subsequent loads are read straight from the local cache — no network access required once downloaded.
 
@@ -307,16 +307,15 @@ Under `tts` in `config.json`:
 | `stop_key` | string[] | `["KEY_ESCAPE"]` | Keys that interrupt playback |
 | `response_overlay` | bool | `true` | Show overlay indicator while TTS is speaking |
 | `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Piper. Breeze-TTS-2 has its own `breeze_tts_2.gpu` |
+| `hf_token` | string or null | `null` | The single HuggingFace access token used to download every gated model (Pocket-TTS and Breeze-TTS-2). A config written when each engine held its own copy is migrated to this key on load |
 | `pocket_tts.voice` | string | `"alba"` | Default Pocket-TTS voice ID: `"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"` |
 | `pocket_tts.prewarm` | bool | `false` | Pre-warm model on startup for faster first synthesis |
-| `pocket_tts.hf_token` | string or null | `null` | HuggingFace token used to download the gated model weights |
 | `pocket_tts.voice_dir` | string | `""` | Directory scanned for custom `.wav` voice clips; empty = `~/.local/share/voxctrl/pocket-tts-voices/` |
 | `breeze_tts_2.voice_mode` | string | `"prompt"` | `"prompt"` for Voice Design, `"clone"` to use a reference clip |
 | `breeze_tts_2.speaker_prompt` | string | *(a calm, clear female voice)* | Natural-language description of the speaker, used in `"prompt"` mode |
 | `breeze_tts_2.cloned_voice` | string | `""` | Voice id from the shared clip folder, used in `"clone"` mode |
 | `breeze_tts_2.voice_dir` | string | `""` | Shared with Pocket-TTS; empty = `~/.local/share/voxctrl/pocket-tts-voices/` |
 | `breeze_tts_2.model_dir` | string | `""` | Model weights & tokenizer; empty = `~/.local/share/voxctrl/models/breeze-tts-2/` |
-| `breeze_tts_2.hf_token` | string or null | `null` | HuggingFace token for the gated weights (shared with Pocket-TTS) |
 | `breeze_tts_2.prewarm` | bool | `false` | Pre-warm the model on startup for faster first synthesis |
 | `breeze_tts_2.gpu` | bool | `false` | Run synthesis on the GPU; needs a `breeze-cuda` / `breeze-metal` build, CPU otherwise |
 | `snippets` | object | *(VoxCtrl pronunciations)* | Word → spoken expansion map, applied to speech only |
@@ -332,10 +331,10 @@ Under `tts` in `config.json`:
   "stop_key": ["KEY_ESCAPE"],
   "response_overlay": true,
   "gpu": false,
+  "hf_token": "hf_...",
   "pocket_tts": {
     "voice": "alba",
     "prewarm": true,
-    "hf_token": "hf_...",
     "voice_dir": ""
   }
 }

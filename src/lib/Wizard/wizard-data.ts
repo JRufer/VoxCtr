@@ -161,6 +161,14 @@ export interface TtsEngineInfo {
   /** Approximate download in MB; 0 means nothing to fetch. */
   mb: number;
   note: string;
+  /**
+   * Whether the weights sit behind a gated HuggingFace repo, so nothing can be
+   * downloaded — and the engine cannot be picked — until an access token is
+   * entered.
+   */
+  needsHfToken?: boolean;
+  /** Where the user accepts this model's licence, shown alongside the token field. */
+  licenceUrl?: string;
 }
 
 export const TTS_ENGINES: TtsEngineInfo[] = [
@@ -172,6 +180,8 @@ export const TTS_ENGINES: TtsEngineInfo[] = [
     speed: 0.32,
     mb: 1200,
     note: "Most natural prosody. Best on a GPU or fast CPU.",
+    needsHfToken: true,
+    licenceUrl: "huggingface.co/BreezeBlue/Breeze-TTS-2",
   },
   {
     id: "pocket_tts",
@@ -181,6 +191,8 @@ export const TTS_ENGINES: TtsEngineInfo[] = [
     speed: 0.55,
     mb: 500,
     note: "Rust-native. Cloned voices, downloaded in-app.",
+    needsHfToken: true,
+    licenceUrl: "huggingface.co/kyutai/pocket-tts",
   },
   {
     id: "piper",

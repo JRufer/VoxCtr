@@ -76,10 +76,10 @@ Full schema with defaults:
     "response_overlay": true,
     "speed": 1.0,
     "gpu": false,
+    "hf_token": null,
     "pocket_tts": {
       "voice": "alba",
       "prewarm": false,
-      "hf_token": null,
       "voice_dir": ""
     },
     "inflect_micro": {
@@ -234,13 +234,12 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 
 **`breeze_tts_2` sub-object:**
 
-[Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is a bilingual speech generation model with natural-language voice design speaker prompts. The model weights are gated on HuggingFace under the **BreezeBlue Research and Non-Commercial License** — supply your access token via `hf_token` (shared with Pocket-TTS).
+[Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is a bilingual speech generation model with natural-language voice design speaker prompts. The model weights are gated on HuggingFace under the **BreezeBlue Research and Non-Commercial License** — supply your access token via `tts.hf_token`, the single token shared by every gated model.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `speaker_prompt` | string | `"A calm and clear female voice speaking at a natural pace"` | Natural-language prompt describing the desired speaker voice for Voice Design |
 | `model_dir` | string | `""` | Directory holding model weights & tokenizer; empty = `~/.local/share/voxctrl/models/breeze-tts-2/` |
-| `hf_token` | string or null | `null` | HuggingFace access token used to download gated model weights (shared with Pocket-TTS) |
 | `prewarm` | bool | `false` | Pre-warm model weights and tensors on startup so first speech is instantaneous |
 | `gpu` | bool | `false` | Run synthesis on the GPU. Needs a build with the `breeze-cuda` or `breeze-metal` feature; falls back to the CPU otherwise, or when no GPU can be opened. Changing it reloads the model |
 
@@ -249,13 +248,12 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 Pocket-TTS is a voice-cloning neural TTS engine: each voice is a short reference audio clip
 that conditions synthesis, rather than a fixed precomputed voice embedding. The model weights
 are hosted in a **gated** HuggingFace repository (`kyutai/pocket-tts`) — you must accept the
-license on HuggingFace and supply a personal access token via `hf_token`.
+license on HuggingFace and supply a personal access token via `tts.hf_token`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `voice` | string | `"alba"` | Bundled reference voice ID (`"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"`), or the filename stem of a custom clip in `voice_dir` |
 | `prewarm` | bool | `false` | Pre-warm model on startup so first speech is instantaneous |
-| `hf_token` | string or null | `null` | HuggingFace access token used to download the gated model weights |
 | `voice_dir` | string | `""` | Directory scanned for custom `.wav` voice clips; empty = `~/.local/share/voxctrl/pocket-tts-voices/`. Drop a `<id>.wav` file in to add it to the voice list — naming it after a built-in voice (e.g. `alba.wav`) overrides that voice's clip. Supports `~` expansion. |
 
 **`inflect_micro` sub-object:**

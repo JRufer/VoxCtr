@@ -73,7 +73,6 @@ export interface OpenAiConfig {
 export interface PocketTtsConfig {
   voice: string;
   prewarm: boolean;
-  hf_token: string | null;
   voice_dir: string;
 }
 
@@ -87,7 +86,6 @@ export interface InflectMicroConfig {
 export interface BreezeTts2Config {
   speaker_prompt: string;
   model_dir: string;
-  hf_token: string | null;
   prewarm: boolean;
   gpu: boolean;
 }
@@ -101,6 +99,8 @@ export interface TtsConfig {
   response_overlay: boolean;
   speed: number;
   gpu: boolean;
+  /** One HuggingFace token for every gated model the app downloads. */
+  hf_token: string | null;
   pocket_tts: PocketTtsConfig;
   inflect_micro: InflectMicroConfig;
   breeze_tts_2: BreezeTts2Config;
@@ -169,10 +169,10 @@ const defaultConfig: AppConfig = {
     response_overlay: true,
     speed: 1.0,
     gpu: false,
+    hf_token: null,
     pocket_tts: {
       voice: "alba",
       prewarm: false,
-      hf_token: null,
       voice_dir: "",
     },
     inflect_micro: {
@@ -184,7 +184,6 @@ const defaultConfig: AppConfig = {
     breeze_tts_2: {
       speaker_prompt: "A calm and clear female voice speaking at a natural pace",
       model_dir: "",
-      hf_token: null,
       prewarm: false,
       gpu: false,
     },

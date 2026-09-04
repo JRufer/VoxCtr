@@ -35,6 +35,26 @@
   /** Whether this build compiled the Inflect Micro engine at all. */
   let inflectAvailable = $state(true);
 
+  /**
+   * The single HuggingFace access token, shared by every gated model. Without
+   * it those engines cannot be downloaded at all, which is why the wizard asks
+   * for it here rather than leaving the user to discover the failure.
+   */
+  const hfToken = $derived(($config.tts.hf_token ?? "").trim());
+  const hasHfToken = $derived(hfToken.length > 0);
+  const gatedEngines = TTS_ENGINES.filter((e) => e.needsHfToken);
+
+  function setHfToken(value: string) {
+    patchConfig((cfg) => {
+      cfg.tts.hf_token = value.trim() ? value.trim() : null;
+    });
+  }
+
+  /** Gated engines stay out of reach until the token is in. */
+  function locked(id: TtsEngineId) {
+    return !!TTS_ENGINES.find((e) => e.id === id)?.needsHfToken && !hasHfToken;
+  }
+
   let playing = $state<string | null>(null);
   let playError = $state<string | null>(null);
   const bars = waveBars(14);
@@ -180,7 +200,7 @@
           await invoke("download_pocket_tts", {
             voice: cfg.tts.pocket_tts.voice,
             voiceDir: cfg.tts.pocket_tts.voice_dir,
-            hfToken: cfg.tts.pocket_tts.hf_token,
+            hfToken: cfg.tts.hf_token,
           });
           break;
         case "inflect_micro":
@@ -191,7 +211,7 @@
         case "breeze_tts_2":
           await invoke("download_breeze_tts_2", {
             modelDir: cfg.tts.breeze_tts_2.model_dir,
-            hfToken: cfg.tts.breeze_tts_2.hf_token ?? cfg.tts.pocket_tts.hf_token,
+            hfToken: cfg.tts.hf_token,
           });
           break;
         case "espeak":
@@ -215,6 +235,7 @@
   }
 
   function pick(id: TtsEngineId) {
+    if (locked(id)) return;
     patchConfig((cfg) => {
       cfg.tts.enabled = true;
       cfg.tts.engine = id;
@@ -281,6 +302,10 @@
     }
     if (downloading) {
       setBlocker(STEP, `Downloading ${TTS_ENGINES.find((e) => e.id === downloading)?.name}…`);
+      return;
+    }
+    if (locked(selected)) {
+      setBlocker(STEP, "Enter a HuggingFace access token, or pick a voice that does not need one.");
       return;
     }
     if (selected === "inflect_micro" && !inflectAvailable) {
@@ -353,15 +378,44 @@
     </div>
   </div>
 
+  <div class="hf" class:needed={enabled && !hasHfToken} class:muted={!enabled}>
+    <div class="hf-copy">
+      <span class="hf-title">HuggingFace access token</span>
+      <span class="hf-desc">
+        {gatedEngines.map((e) => e.name).join(" and ")} are gated downloads: HuggingFace only
+        serves their weights to an account that has accepted the licence. Create a token at
+        <code>huggingface.co/settings/tokens</code>, accept the licence at
+        {#each gatedEngines as engine, i}<code>{engine.licenceUrl}</code>{#if i < gatedEngines.length - 1}{" and "}{/if}{/each}, then paste the
+        token here. One token covers both, and it is saved with your settings — the same place
+        Settings → TTS keeps it.
+      </span>
+    </div>
+    <input
+      class="hf-input"
+      type="password"
+      autocomplete="off"
+      spellcheck="false"
+      placeholder="hf_…"
+      value={hfToken}
+      oninput={(e) => setHfToken((e.currentTarget as HTMLInputElement).value)}
+    />
+    <span class="hf-state" class:ok={hasHfToken}>
+      {hasHfToken ? "✓ token saved" : "no token — gated voices are locked"}
+    </span>
+  </div>
+
   <div class="grid" class:muted={!enabled}>
     {#each TTS_ENGINES as engine}
       {@const on = enabled && selected === engine.id}
       {@const isReady = !!ready[engine.id]}
       {@const busy = downloading === engine.id}
       {@const unavailable = engine.id === "inflect_micro" && !inflectAvailable}
+      {@const needsToken = !!engine.needsHfToken && !hasHfToken}
       <div
         class="vx-card card"
         class:vx-on={on}
+        class:locked={needsToken}
+        aria-disabled={needsToken}
         role="radio"
         aria-checked={on}
         tabindex="0"
@@ -391,7 +445,7 @@
           {:else}
             <button
               class="vx-btn dl"
-              disabled={!!downloading || unavailable}
+              disabled={!!downloading || unavailable || needsToken}
               onclick={(e) => {
                 e.stopPropagation();
                 void download(engine.id);
@@ -404,7 +458,7 @@
           <button
             class="play"
             class:playing={playing === engine.id}
-            disabled={!isReady || unavailable || (!!playing && playing !== engine.id)}
+            disabled={!isReady || unavailable || needsToken || (!!playing && playing !== engine.id)}
             title={playing === engine.id
               ? "Stop"
               : isReady
@@ -437,7 +491,11 @@
         </div>
 
         <div class="note">
-          {#if unavailable}
+          {#if needsToken}
+            <span class="bad">
+              Needs a HuggingFace access token — enter one above to unlock this voice.
+            </span>
+          {:else if unavailable}
             <span class="bad">
               This build was compiled without the `inflect-micro` feature, so this engine cannot
               synthesize.
@@ -537,6 +595,104 @@
     opacity: 0.18;
     filter: grayscale(1) blur(1px);
     pointer-events: none;
+  }
+
+  /* The HuggingFace token, above the engine grid: gated voices stay locked
+     until it is filled in, so it has to read as a prerequisite, not a detail. */
+  .hf {
+    display: grid;
+    grid-template-columns: 1fr minmax(220px, 320px);
+    grid-template-areas: "copy input" "copy state";
+    gap: 4px 18px;
+    align-items: start;
+    padding: 12px 14px;
+    border: 1px solid var(--vx-line);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .hf.muted {
+    opacity: 0.18;
+    filter: grayscale(1) blur(1px);
+    pointer-events: none;
+  }
+
+  .hf.needed {
+    border-color: color-mix(in srgb, var(--vx-gold-1) 45%, transparent);
+    background: color-mix(in srgb, var(--vx-gold-1) 6%, transparent);
+  }
+
+  .hf-copy {
+    grid-area: copy;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .hf-title {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  .hf-desc {
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--vx-txt-2);
+  }
+
+  .hf-desc code {
+    font-size: 10px;
+    padding: 1px 4px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.35);
+    color: var(--vx-cyan-0);
+    word-break: break-all;
+  }
+
+  .hf-input {
+    grid-area: input;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    color: inherit;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--vx-line);
+    border-radius: 8px;
+    outline: none;
+  }
+
+  .hf-input:focus {
+    border-color: var(--vx-cyan-0);
+  }
+
+  .hf-state {
+    grid-area: state;
+    font-size: 10px;
+    letter-spacing: 0.02em;
+    color: var(--vx-gold-1);
+  }
+
+  .hf-state.ok {
+    color: var(--vx-good);
+  }
+
+  @media (max-width: 720px) {
+    .hf {
+      grid-template-columns: 1fr;
+      grid-template-areas: "copy" "input" "state";
+    }
+  }
+
+  .card.locked {
+    opacity: 0.55;
+  }
+
+  .card.locked .name {
+    color: var(--vx-txt-2);
   }
 
   .card {
