@@ -71,7 +71,11 @@
       <div class="style-grid">
         {#each OVERLAY_STYLES as o, i}
           <button class="vx-card style-card" class:vx-on={o.id === style} onclick={() => pickStyle(o.id)}>
-            <div class="thumb"><OverlayPreview seed={i + 1} styleId={o.id} /></div>
+            <div class="thumb">
+              <!-- Only the chosen style gets the real recording here; see
+                   OverlayPreview for why nine at once is not an option. -->
+              <OverlayPreview seed={i + 1} styleId={o.id} showClip={o.id === style} />
+            </div>
             <div class="style-meta">
               <div>
                 <div class="style-name">{o.name}</div>
@@ -90,7 +94,7 @@
         <div class="grid-lines"></div>
         <div class="taskbar"></div>
         <div class="floating" style:top="{previewTop}%">
-          <OverlayPreview seed={OVERLAY_STYLES.indexOf(selected) + 1} styleId={selected.id} />
+          <OverlayPreview seed={OVERLAY_STYLES.indexOf(selected) + 1} styleId={selected.id} showClip />
         </div>
       </div>
       <div class="pos-buttons">

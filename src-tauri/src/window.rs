@@ -17,16 +17,26 @@ pub const WIZARD_WINDOW: &str = "wizard";
 /// Label of the "a new version is available" window.
 pub const UPDATE_WINDOW: &str = "update";
 
-/// The wizard's screens are laid out on a 16:9 stage — two engine cards side by
-/// side, eight overlay thumbnails in a row, five voice cards in a row. Below
-/// roughly 1280 logical pixels those rows wrap and the layout stops reading as
-/// designed, so the window opens at 16:9 and refuses to be resized under a 16:9
-/// floor. These must stay in step with the `wizard` entry in tauri.conf.json,
-/// which is what a fresh install's first launch uses.
+/// The wizard's screens are laid out on a wide stage — two engine cards side by
+/// side, eight overlay thumbnails in a row, five voice cards in a row. The
+/// widest breakpoint in the step stylesheets is 1200px, and the tallest step
+/// (the overlay grid over the position preview) needs a shade under 1000px of
+/// height before its footer is pushed off the bottom. So the floor is the size
+/// at which every step is known to render at its intended breakpoint, and the
+/// window opens comfortably above it. These must stay in step with the `wizard`
+/// entry in tauri.conf.json, which is what a fresh install's first launch uses.
 pub const WIZARD_WIDTH: f64 = 1600.0;
-pub const WIZARD_HEIGHT: f64 = 900.0;
-pub const WIZARD_MIN_WIDTH: f64 = 1280.0;
-pub const WIZARD_MIN_HEIGHT: f64 = 720.0;
+pub const WIZARD_HEIGHT: f64 = 1000.0;
+pub const WIZARD_MIN_WIDTH: f64 = 1374.0;
+pub const WIZARD_MIN_HEIGHT: f64 = 1000.0;
+
+/// Default and minimum geometry for the Settings window. Its sidebar plus the
+/// widest tab body need the width, and the longest tab needs the height before
+/// it starts scrolling on first open.
+pub const SETTINGS_WIDTH: f64 = 880.0;
+pub const SETTINGS_HEIGHT: f64 = 1000.0;
+pub const SETTINGS_MIN_WIDTH: f64 = 720.0;
+pub const SETTINGS_MIN_HEIGHT: f64 = 640.0;
 
 /// Fraction of the display the window may occupy, leaving room for the title
 /// bar and a desktop panel. Height is the tighter of the two: panels are
@@ -34,25 +44,29 @@ pub const WIZARD_MIN_HEIGHT: f64 = 720.0;
 const WIZARD_FIT_W: f64 = 0.94;
 const WIZARD_FIT_H: f64 = 0.90;
 
-/// The largest 16:9 window that fits the space available, capped at the design
-/// size and floored at the size the layout stops fitting in.
+/// The largest window in the wizard's design proportions that fits the space
+/// available, capped at the design size and floored at the size below which the
+/// layout stops fitting.
 ///
-/// A fixed 1600x900 is only safe at 100% scaling: the same window on a 1080p
-/// display at 125% is 2000x1125 physical, wider and taller than the screen, so
-/// the footer with the Continue button ends up past the bottom edge. Sizes are
-/// logical pixels, which is what the compositor scales.
+/// A fixed design size is only safe at 100% scaling: the same window on a 1080p
+/// display at 125% is scaled up in physical pixels, wider and taller than the
+/// screen, so the footer with the Continue button ends up past the bottom edge.
+/// Sizes are logical pixels, which is what the compositor scales.
+///
+/// The floor wins over fitting on purpose. A user can move or scroll a window
+/// that is slightly too big for their desktop; they cannot unwrap a layout that
+/// has dropped to a narrower breakpoint, which is what a smaller window gives
+/// them.
 pub fn wizard_size_for(available_width: f64, available_height: f64) -> (f64, f64) {
-    const ASPECT: f64 = 16.0 / 9.0;
+    let aspect = WIZARD_WIDTH / WIZARD_HEIGHT;
 
     let w = available_width.min(WIZARD_WIDTH);
     let h = available_height.min(WIZARD_HEIGHT);
 
-    // Shrink whichever axis is over-long, so the window keeps its aspect ratio
+    // Shrink whichever axis is over-long, so the window keeps its proportions
     // rather than letterboxing the layout it was designed around.
-    let (w, h) = if w / h > ASPECT { (h * ASPECT, h) } else { (w, w / ASPECT) };
+    let (w, h) = if w / h > aspect { (h * aspect, h) } else { (w, w / aspect) };
 
-    // Below this the layout wraps, so a smaller window would be worse than one
-    // the user has to move. Verified against every step at 1280x720.
     (w.max(WIZARD_MIN_WIDTH), h.max(WIZARD_MIN_HEIGHT))
 }
 
@@ -103,8 +117,8 @@ pub fn open_settings_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWind
 
     tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("/settings".into()))
         .title("VoxCtrl Settings")
-        .inner_size(720.0, 640.0)
-        .min_inner_size(600.0, 450.0)
+        .inner_size(SETTINGS_WIDTH, SETTINGS_HEIGHT)
+        .min_inner_size(SETTINGS_MIN_WIDTH, SETTINGS_MIN_HEIGHT)
         .center()
         .resizable(true)
         .decorations(true)
@@ -296,30 +310,35 @@ pub fn raise_window(window: &tauri::WebviewWindow, keep_on_top: bool) {
 mod tests {
     use super::*;
 
-    /// 1080p at 100% scaling has room for the full design size.
+    /// 1080p at 100% scaling is the common case: wide enough for a comfortable
+    /// stage, and short enough that the height lands exactly on the floor.
     #[test]
-    fn a_1080p_display_gets_the_design_size() {
+    fn a_1080p_display_gets_a_usable_stage() {
         let (w, h) = wizard_size_for(1920.0 * WIZARD_FIT_W, 1080.0 * WIZARD_FIT_H);
-        assert_eq!((w, h), (WIZARD_WIDTH, WIZARD_HEIGHT));
+        assert!((WIZARD_MIN_WIDTH..=WIZARD_WIDTH).contains(&w), "width {w}");
+        assert_eq!(h, WIZARD_MIN_HEIGHT);
+        assert!(h <= 1080.0, "a {h}px window does not fit a 1080p display");
     }
 
-    /// The case that sent the footer off-screen: 1080p at 125%, where the
-    /// desktop is only 1536x864 logical pixels.
+    /// 1080p at 125% — the desktop is only 1536x864 logical pixels, which is
+    /// under the layout's floor. The floor wins: a window the user has to move
+    /// beats a layout that has wrapped.
     #[test]
-    fn a_scaled_1080p_display_gets_a_window_that_fits_it() {
+    fn a_scaled_1080p_display_gets_at_least_the_layout_minimum() {
         let (avail_w, avail_h) = (1536.0 * WIZARD_FIT_W, 864.0 * WIZARD_FIT_H);
         let (w, h) = wizard_size_for(avail_w, avail_h);
-        assert!(w <= avail_w, "{w} wider than the {avail_w} available");
-        assert!(h <= avail_h, "{h} taller than the {avail_h} available");
         assert!(w >= WIZARD_MIN_WIDTH && h >= WIZARD_MIN_HEIGHT);
     }
 
     #[test]
-    fn the_window_keeps_its_aspect_ratio_when_it_shrinks() {
-        let (w, h) = wizard_size_for(1400.0, 2000.0);
+    fn the_window_keeps_its_proportions_when_it_shrinks() {
+        // Wide enough to be capped by the design width, tall enough that the
+        // height floor does not kick in.
+        let (w, h) = wizard_size_for(2000.0, 3000.0);
+        let aspect = WIZARD_WIDTH / WIZARD_HEIGHT;
         assert!(
-            ((w / h) - 16.0 / 9.0).abs() < 0.01,
-            "expected 16:9, got {w}x{h}"
+            ((w / h) - aspect).abs() < 0.01,
+            "expected {aspect}:1, got {w}x{h}"
         );
     }
 
@@ -330,6 +349,24 @@ mod tests {
     fn a_small_display_never_goes_below_the_layout_minimum() {
         let (w, h) = wizard_size_for(900.0, 500.0);
         assert_eq!((w, h), (WIZARD_MIN_WIDTH, WIZARD_MIN_HEIGHT));
+    }
+
+    /// The breakpoint the CSS actually cares about: every wizard step is
+    /// designed for a stage wider than its widest `max-width` media query, and
+    /// tall enough not to push the footer past the bottom edge.
+    #[test]
+    fn every_display_clears_the_widest_css_breakpoint() {
+        for (avail_w, avail_h) in [
+            (1920.0, 1080.0),
+            (1536.0, 864.0),
+            (1280.0, 720.0),
+            (3840.0, 2160.0),
+            (900.0, 500.0),
+        ] {
+            let (w, h) = wizard_size_for(avail_w * WIZARD_FIT_W, avail_h * WIZARD_FIT_H);
+            assert!(w >= 1374.0, "{avail_w}x{avail_h} gave a {w}px-wide window");
+            assert!(h >= 1000.0, "{avail_w}x{avail_h} gave a {h}px-tall window");
+        }
     }
 
     #[test]

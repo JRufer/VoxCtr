@@ -6,14 +6,25 @@
    * `src/assets/overlays/{style id}.webm`, and falls back to a CSS animation
    * in its shape and colour when it is not. The fallback is not only for a
    * missing file: it is what stays on screen while the clip buffers, and what
-   * the user sees if the webview cannot decode VP8/VP9 at all.
+   * the user sees if the webview cannot decode the clip at all.
    *
    * The clips are bundled rather than fetched from the web on purpose. VoxCtrl
    * runs entirely on-device and its CSP is `default-src 'self'`, so a remote
-   * remote video element would be blocked outright — and a setup wizard that needs the
+   * video element would be blocked outright — and a setup wizard that needs the
    * internet to show you a menu would be a poor first impression.
+   *
+   * `showClip` exists because a `<video>` here is not cheap. WebKitGTK builds a
+   * whole GStreamer pipeline per element, and the bundled clips are AV1, which
+   * it decodes in software; the overlay step used to mount nine of them at
+   * once, which pinned the CPU and took the web process down with it — the
+   * step hung and then went white. Callers now say which previews get a real
+   * clip, and every other one renders the CSS fallback, which costs nothing.
    */
-  let { styleId, seed = 1 }: { styleId: string; seed?: number } = $props();
+  let {
+    styleId,
+    seed = 1,
+    showClip = true,
+  }: { styleId: string; seed?: number; showClip?: boolean } = $props();
 
   // Resolved at build time, so a style with no clip simply has no entry and
   // renders its fallback — adding one is dropping a file in the folder.
@@ -23,7 +34,25 @@
     import: "default",
   }) as Record<string, string>;
 
+  /**
+   * Whether this webview can decode the bundled clips at all.
+   *
+   * Asked once, before any element is built: a webview that answers "" for
+   * these codecs would spend a pipeline per preview only to fail, so it is
+   * better off going straight to the CSS fallback. `canPlayType` answers
+   * "probably"/"maybe"/"" and only the empty string is a definite no.
+   */
+  const CAN_DECODE = (() => {
+    if (typeof document === "undefined") return true;
+    const probe = document.createElement("video");
+    return (
+      probe.canPlayType('video/webm; codecs="av01.0.05M.08"') !== "" ||
+      probe.canPlayType("video/webm") !== ""
+    );
+  })();
+
   const clip = $derived.by(() => {
+    if (!showClip || !CAN_DECODE) return null;
     const match = Object.entries(CLIPS).find(([path]) =>
       path.endsWith(`/${styleId}.webm`),
     );
