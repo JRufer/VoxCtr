@@ -4,7 +4,6 @@ use voxctrl_config::AppConfig;
 use voxctrl_mcp::McpCallbacks;
 
 use crate::state::AppState;
-use crate::window::show_and_focus_window;
 
 impl McpCallbacks for AppState {
     fn transcribe_voice(
@@ -79,6 +78,20 @@ impl McpCallbacks for AppState {
 
     fn get_status(&self) -> impl std::future::Future<Output = (bool, bool)> + Send {
         async move { (self.is_recording(), self.is_speaking()) }
+    }
+
+    fn default_record_timeout(&self) -> impl std::future::Future<Output = f64> + Send {
+        async move {
+            let configured = self.config.lock().await.data.mcp.record_timeout;
+            // A zero or negative timeout would stop the recording before the
+            // user could say anything, so fall back to the config default
+            // rather than trusting a hand-edited config.json.
+            if configured.is_finite() && configured > 0.0 {
+                configured
+            } else {
+                voxctrl_config::McpConfig::default().record_timeout
+            }
+        }
     }
 }
 
@@ -258,6 +271,22 @@ pub fn auto_download_speech_model_if_needed(
     app: &tauri::App,
     cfg_data: &Arc<AppConfig>,
 ) {
+    // A machine that has never run the wizard gets the wizard and nothing else.
+    // Every decision this function would make for the user — which model to
+    // fetch, whether to open Settings — is a step the wizard asks about, so
+    // making them here first would download the wrong model and bury the
+    // wizard behind a window the user did not ask for.
+    if !cfg_data.ui.setup_completed {
+        if app.get_webview_window(crate::window::WIZARD_WINDOW).is_some() {
+            if let Err(e) = crate::window::open_wizard_window(&app.handle().clone()) {
+                tracing::error!("Could not open the setup wizard: {e}");
+            }
+            return;
+        }
+        // No wizard window in this build: fall through to the old behaviour
+        // rather than leaving a new install with no visible setup at all.
+    }
+
     let mut show_settings = cfg_data.ui.auto_show_settings;
     // Only the whisper-cpp path needs a GGUF model on disk. A Moonshine
     // selection uses whisper-cpp (and thus its model) unless the
@@ -306,8 +335,8 @@ pub fn auto_download_speech_model_if_needed(
     }
 
     if show_settings {
-        if let Some(window) = app.get_webview_window("settings") {
-            show_and_focus_window(&window);
+        if let Err(e) = crate::window::open_settings_window(&app.handle().clone()) {
+            tracing::error!("Could not open Settings at startup: {e}");
         }
     }
 }

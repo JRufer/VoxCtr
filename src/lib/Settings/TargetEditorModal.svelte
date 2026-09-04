@@ -21,7 +21,6 @@
   } = $props();
 
   // Flat edit states to ensure absolute Svelte 5 reactivity for target processing overrides
-  let editApplySnippets = $state(true);
   let editMcpArgsString = $state("");
   let editHttpTemplateString = $state("");
   let editWebhookTemplateString = $state("");
@@ -36,6 +35,39 @@
   let chatTesting = $state(false);
   let chatStatus = $state("");
   let chatStatusOk = $state(false);
+
+  // Timestamp format preview for the file target. chrono decides what a
+  // strftime pattern means, so the backend renders it and we show the result —
+  // a preview when the pattern works, the reason when it does not.
+  const DEFAULT_TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ";
+  let timestampPreview = $state("");
+  let timestampError = $state<string | null>(null);
+
+  $effect(() => {
+    const fmt = editingTarget?.file_timestamp_format ?? "";
+    if (!editingTarget || editingTarget.delivery !== "file" || !editingTarget.file_timestamp) {
+      timestampError = null;
+      timestampPreview = "";
+      return;
+    }
+
+    let cancelled = false;
+    invoke<string>("preview_timestamp_format", { format: fmt })
+      .then(preview => {
+        if (cancelled) return;
+        timestampPreview = preview;
+        timestampError = null;
+      })
+      .catch(e => {
+        if (cancelled) return;
+        timestampPreview = "";
+        timestampError = `${e}`;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  });
 
   // Derived validation for Terminal Command
   let commandError = $derived.by(() => {
@@ -170,11 +202,14 @@
       if (!editingTarget.file_mode) {
         editingTarget.file_mode = "append";
       }
+      // Targets saved before the timestamp format was configurable carry none.
+      if (!editingTarget.file_timestamp_format) {
+        editingTarget.file_timestamp_format = DEFAULT_TIMESTAMP_FORMAT;
+      }
       // Targets saved before the Chat delivery type existed have no chat fields.
       editingTarget.chat_max_history ??= 20;
       editingTarget.chat_timeout_secs ??= 120;
       editingTarget.chat_reply_mode ||= "speak";
-      editApplySnippets = editingTarget.processing.apply_snippets !== false;
       editMcpArgsString = editingTarget.mcp_args ? JSON.stringify(editingTarget.mcp_args, null, 2) : '{\n  "text": "{text}"\n}';
       editHttpTemplateString = editingTarget.http_json_template ? JSON.stringify(editingTarget.http_json_template, null, 2) : '{\n  "text": "{text}"\n}';
       editWebhookTemplateString = editingTarget.webhook_json_template ? JSON.stringify(editingTarget.webhook_json_template, null, 2) : '{\n  "text": "{text}"\n}';
@@ -185,6 +220,11 @@
     if (!editingTarget) return;
     if (editingTarget.id.trim() === "") {
       alert("Target ID cannot be empty.");
+      return;
+    }
+
+    if (editingTarget.delivery === "file" && editingTarget.file_timestamp && timestampError) {
+      alert("Validation Error: " + timestampError);
       return;
     }
 
@@ -245,10 +285,6 @@
       editingTarget.chat_timeout_secs = Number(editingTarget.chat_timeout_secs) || 120;
     }
 
-    editingTarget.processing = {
-      apply_snippets: editApplySnippets,
-    };
-
     onSave();
   }
 </script>
@@ -274,20 +310,27 @@
         {/if}
 
         <label class="field">
-          <span>Display Label</span>
+          <span>Command Name</span>
           <input
             type="text"
             class="longer-display-label"
             bind:value={editingTarget.label}
-            placeholder="e.g. Type directly into Obsidian"
+            placeholder="e.g. Obsidian Notes"
           />
         </label>
+        <p class="hint">
+          Names this target in the app, and is what you say to send dictation here through a
+          Voice Command Router target: &ldquo;VoxCtrl, <em>{editingTarget.label || "Obsidian Notes"}</em>,
+          buy milk tomorrow&rdquo;. The Target ID works as a spoken name too, so pick something
+          easy to say and easy for speech recognition to catch.
+        </p>
 
         <label class="field col">
           <span class="field-title">Delivery System</span>
           <CustomSelect
             bind:value={editingTarget.delivery}
             options={[
+              { value: "command", label: "Voice Command Router (VoxCtrl keyword)" },
               { value: "inject", label: "Inject Text Directly (Simulate keyboard)" },
               { value: "clipboard", label: "Save to Clipboard" },
               { value: "exec", label: "Execute Command" },
@@ -299,8 +342,7 @@
               { value: "webhook", label: "Send Webhook Event" },
               { value: "mcp", label: "Call MCP Server Tool" },
               { value: "speak", label: "Speak Text Aloud (TTS)" },
-              { value: "chat", label: "Chat with a Local LLM (Hermes / OpenAI-compatible)" },
-              { value: "command", label: "Voice Command Router (VoxCtrl keyword)" }
+              { value: "chat", label: "Chat with a Local LLM (Hermes / OpenAI-compatible)" }
             ]}
           />
         </label>
@@ -371,6 +413,32 @@
               <input type="checkbox" bind:checked={editingTarget.file_timestamp} />
               <span>Prepend date & time timestamp</span>
             </label>
+            {#if editingTarget.file_timestamp}
+              <label class="field">
+                <span>Timestamp Format</span>
+                <input
+                  type="text"
+                  bind:value={editingTarget.file_timestamp_format}
+                  placeholder={DEFAULT_TIMESTAMP_FORMAT}
+                  class={timestampError ? 'border-red-500! ring-2! ring-red-500/20! focus:border-red-500! focus:ring-red-500/20!' : ''}
+                />
+              </label>
+              <p class="hint">
+                A <code>strftime</code> pattern, written in UTC. Common pieces:
+                <code>%Y</code> year (2026), <code>%m</code> month (09),
+                <code>%d</code> day (04), <code>%H</code> hour (17),
+                <code>%M</code> minute, <code>%S</code> second,
+                <code>%b</code> month name (Sep), <code>%a</code> weekday (Fri),
+                <code>%p</code> AM/PM, <code>%Z</code> zone (UTC),
+                <code>%%</code> a literal percent. Anything else is written as typed.
+                Default: <code>{DEFAULT_TIMESTAMP_FORMAT}</code>
+              </p>
+              {#if timestampError}
+                <span class="validation-error-msg">⚠️ {timestampError}</span>
+              {:else if timestampPreview}
+                <p class="hint">Each line starts with: <code>[{timestampPreview}]</code></p>
+              {/if}
+            {/if}
           </div>
         {/if}
 
@@ -718,40 +786,15 @@
           </div>
         {/if}
 
-        <!-- General Processing Toggles -->
-        <div class="processing-toggles">
-          <h5>Post-Processing & Output Tuning</h5>
-          <label class="checkbox-field">
-            <input type="checkbox" bind:checked={editingTarget.append_newline} />
-            <span>Automatically append newline after transcribing</span>
-          </label>
-          <label class="checkbox-field">
-            <input type="checkbox" bind:checked={editingTarget.send_on_release} />
-            <span>Execute only on physical key release (Hold modes)</span>
-          </label>
-          {#if editingTarget.delivery === "inject"}
+        {#if editingTarget.delivery === "inject" || editingTarget.delivery === "command"}
+          <div class="processing-toggles">
+            <h5>Output</h5>
             <label class="checkbox-field">
               <input type="checkbox" bind:checked={editingTarget.strip_newlines} />
               <span>Strip newlines and carriage returns (Single-line mode)</span>
             </label>
-          {/if}
-
-          {#if editingTarget.processing}
-            <label class="checkbox-field">
-              <input type="checkbox" bind:checked={editApplySnippets} />
-              <span>Apply snippets to transcription text</span>
-            </label>
-          {/if}
-
-          <label class="field mt-2">
-            <span>Whisper Context Hint (Optional)</span>
-            <input
-              type="text"
-              bind:value={editingTarget.initial_prompt}
-              placeholder="e.g. domain terms or names to bias transcription"
-            />
-          </label>
-        </div>
+          </div>
+        {/if}
       </div>
       <div class="modal-footer">
         <button class="btn-action secondary" onclick={onCancel}>Cancel</button>

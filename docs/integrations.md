@@ -50,7 +50,7 @@ Records audio and returns the transcription. Blocks until recording ends or time
 }
 ```
 
-`timeout_seconds` defaults to `mcp.record_timeout` (15.0 seconds). Returns `"(no speech detected)"` if no audio was captured.
+`timeout_seconds` is optional; omitted, it defaults to `mcp.record_timeout` (Settings → General → Record timeout, `15.0` out of the box). The value is read per call, so changing it in Settings applies to the next `transcribe_voice` without restarting the server, and it is advertised as the default in the `tools/list` schema. Returns `"(no speech detected)"` if no audio was captured.
 
 Response:
 ```json
@@ -288,14 +288,3 @@ Same POST (to `webhook_url`) but with HMAC-SHA256 signature:
 X-VoxCtrl-Signature: sha256=abc123...
 ```
 
----
-
-## AT-SPI2 Context Integration (Linux)
-
-When `atspi.context_prompt = true`, VoxCtrl uses the Linux Accessibility API (AT-SPI2) to read the surrounding text from the focused text field. This text is included in the Whisper initial prompt to improve transcription continuity and vocabulary consistency.
-
-When `atspi.auto_code_mode = true`, VoxCtrl detects when the focused application is a code editor or terminal and automatically enables code-mode post-processing.
-
-When `atspi.injection = true`, AT-SPI2 is used as the primary text injection method (before falling back to wtype/xdotool).
-
-Requires the `at-spi2-core` package and the `org.a11y.Bus` DBus service to be running.

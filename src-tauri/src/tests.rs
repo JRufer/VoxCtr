@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use tokio::sync::Mutex;
 use voxctrl_config::Config;
 use voxctrl_routing::OutputTargetRouter;
-use crate::state::{AppState, HistoryEntry};
+use crate::state::AppState;
 use crate::window::setup_blocker;
 
 #[test]
@@ -70,6 +70,7 @@ fn make_test_state() -> AppState {
         hotkeys_inhibited: Arc::new(AtomicBool::new(false)),
         audio_ready: Arc::new(AtomicBool::new(false)),
         dynamic_stream: Arc::new(AtomicBool::new(false)),
+        noise_suppression: Arc::new(AtomicBool::new(false)),
         monitoring: Arc::new(AtomicBool::new(false)),
         input_device_index: Arc::new(AtomicU32::new(u32::MAX)),
         gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
@@ -80,7 +81,6 @@ fn make_test_state() -> AppState {
         active_binding_label: Arc::new(Mutex::new("Focused Window".to_string())),
         active_binding_id: Arc::new(Mutex::new(String::new())),
         targets: Arc::new(Mutex::new(Vec::new())),
-        history: Arc::new(Mutex::new(Vec::new())),
         audio_tx,
         overlay_tx,
         tts_handle: Arc::new(Mutex::new(None)),
@@ -88,6 +88,8 @@ fn make_test_state() -> AppState {
         hotkey_reloader: Arc::new(Mutex::new(None)),
         hotkey_gesture_tx: Arc::new(Mutex::new(None)),
         hotkey_health: Arc::new(voxctrl_hotkeys::ListenerHealth::default()),
+        pending_update: Arc::new(Mutex::new(None)),
+        updating: Arc::new(AtomicBool::new(false)),
     }
 }
 
@@ -100,6 +102,23 @@ async fn test_app_state_initial_values() {
     assert_eq!(*state.active_target.lock().await, "default");
 }
 
+/// Two "Update and restart" clicks must not start two downloads over the same
+/// file. The guard is a compare-and-swap, so the second caller is turned away
+/// rather than joining in.
+#[tokio::test]
+async fn only_one_update_can_run_at_a_time() {
+    let state = make_test_state();
+    assert!(!state.is_updating());
+
+    assert!(state.begin_update(), "the first caller takes the update");
+    assert!(state.is_updating());
+    assert!(!state.begin_update(), "a second caller must be refused");
+
+    state.end_update();
+    assert!(!state.is_updating());
+    assert!(state.begin_update(), "a finished update frees the guard");
+}
+
 #[tokio::test]
 async fn test_app_state_words_increment() {
     let state = make_test_state();
@@ -109,24 +128,6 @@ async fn test_app_state_words_increment() {
     assert_eq!(state.total_words(), 25);
 }
 
-#[tokio::test]
-async fn test_history_entries() {
-    let state = make_test_state();
-    {
-        let mut hist = state.history.lock().await;
-        hist.push(HistoryEntry {
-            text: "hello world".to_string(),
-            target_id: "default".to_string(),
-            timestamp: "2026-05-20T22:00:00Z".to_string(),
-            inference_ms: 120,
-        });
-    }
-    let hist = state.history.lock().await;
-    assert_eq!(hist.len(), 1);
-    assert_eq!(hist[0].text, "hello world");
-    assert_eq!(hist[0].target_id, "default");
-    assert_eq!(hist[0].inference_ms, 120);
-}
 
 #[tokio::test]
 async fn test_sequential_multi_target_delivery() {
@@ -150,6 +151,7 @@ async fn test_sequential_multi_target_delivery() {
         socket_unix: None,
         file_path: Some(path_a.clone()),
         file_prefix: "".into(),
+        file_timestamp_format: voxctrl_routing::default_file_timestamp_format(),
         file_timestamp: false,
         file_mode: "append".into(),
         dbus_signal: None,
@@ -171,9 +173,6 @@ async fn test_sequential_multi_target_delivery() {
         chat_timeout_secs: 120,
         chat_reply_mode: "speak".into(),
         chat_reset_phrase: None,
-        send_on_release: true,
-        append_newline: false,
-        initial_prompt: None,
         processing: Default::default(),
         response_pipe: None,
         strip_newlines: false,
@@ -190,6 +189,7 @@ async fn test_sequential_multi_target_delivery() {
         socket_unix: None,
         file_path: Some(path_b.clone()),
         file_prefix: "".into(),
+        file_timestamp_format: voxctrl_routing::default_file_timestamp_format(),
         file_timestamp: false,
         file_mode: "append".into(),
         dbus_signal: None,
@@ -211,9 +211,6 @@ async fn test_sequential_multi_target_delivery() {
         chat_timeout_secs: 120,
         chat_reply_mode: "speak".into(),
         chat_reset_phrase: None,
-        send_on_release: true,
-        append_newline: false,
-        initial_prompt: None,
         processing: Default::default(),
         response_pipe: None,
         strip_newlines: false,
@@ -631,5 +628,56 @@ async fn test_speak_target_delivery() {
     let spoken_text = spoken.lock().unwrap();
     if !spoken_text.is_empty() {
         assert_eq!(*spoken_text, "Test Speak Target from Tauri");
+    }
+}
+
+// ── Setup wizard re-entry ────────────────────────────────────────────────────
+
+#[test]
+fn test_setup_flag_recognised_in_its_common_spellings() {
+    // The flag exists so someone whose app is already configured can see the
+    // wizard again. Making them guess the exact word would defeat that, so
+    // every spelling anyone would reasonably reach for is accepted.
+    for flag in ["--setup", "--wizard", "--setup-wizard", "--first-run"] {
+        let args = vec!["voxctrl".to_string(), flag.to_string()];
+        assert!(
+            crate::wants_setup_wizard(&args),
+            "expected {flag} to open the setup wizard"
+        );
+    }
+}
+
+#[test]
+fn test_setup_flag_found_after_other_arguments() {
+    let args = vec![
+        "voxctrl".to_string(),
+        "--some-other-flag".to_string(),
+        "--setup".to_string(),
+    ];
+    assert!(crate::wants_setup_wizard(&args));
+}
+
+#[test]
+fn test_normal_launch_does_not_open_the_wizard() {
+    // A plain launch, and the installer path, must both leave the wizard alone
+    // — otherwise every start would reopen setup on a configured machine.
+    assert!(!crate::wants_setup_wizard(&["voxctrl".to_string()]));
+    assert!(!crate::wants_setup_wizard(&[
+        "voxctrl".to_string(),
+        "--install".to_string()
+    ]));
+    assert!(!crate::wants_setup_wizard(&[]));
+}
+
+#[test]
+fn test_setup_flag_is_not_matched_by_lookalike_arguments() {
+    // Substring matching here would turn unrelated flags into a surprise
+    // wizard on startup.
+    for flag in ["--setup-something", "setup", "--no-setup", "--wizardry"] {
+        let args = vec!["voxctrl".to_string(), flag.to_string()];
+        assert!(
+            !crate::wants_setup_wizard(&args),
+            "{flag} must not be mistaken for the setup flag"
+        );
     }
 }

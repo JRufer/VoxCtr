@@ -36,7 +36,7 @@
     }
   }
 
-  // --- CRUD Output Targets ---
+  // --- CRUD Output Commands ---
   function addNewTarget() {
     isEditingTargetNew = true;
     editingTarget = {
@@ -45,6 +45,7 @@
       delivery: "inject",
       file_prefix: "- ",
       file_timestamp: true,
+      file_timestamp_format: "%Y-%m-%dT%H:%M:%SZ",
       file_mode: "append",
       http_method: "POST",
       http_json_template: { text: "{text}" },
@@ -54,12 +55,8 @@
       chat_max_history: 20,
       chat_timeout_secs: 120,
       chat_reply_mode: "speak",
-      send_on_release: false,
-      append_newline: true,
       strip_newlines: false,
-      processing: {
-        apply_snippets: true,
-      }
+      processing: {},
     };
   }
 
@@ -135,13 +132,23 @@
 <section class="targets-section">
   <div class="section-header">
     <div>
-      <h2>Output Targets</h2>
+      <h2>Output Commands</h2>
       <p class="description">Define routing destinations where transcribed text is typed, copied, piped, or sent over network sockets.</p>
     </div>
   </div>
 
+  <p class="usage-note">
+    <strong>Saying a command by name.</strong> Start dictation and say
+    <em>“VoxCtrl”</em>, then the command's name, then what you want to send — for
+    example <em>“VoxCtrl notes, remember to call the plumber”</em> routes
+    <em>remember to call the plumber</em> to the command named <strong>notes</strong>.
+    Everything after the name is the text. Natural phrasing works too
+    (<em>“VoxCtrl, add this to my notes: …”</em>). Say nothing of the sort and
+    dictation goes wherever your hotkey already points.
+  </p>
+
   <button class="btn-add-wide" onclick={addNewTarget}>
-    ＋ Add New Output Target
+    ＋ Add New Output Command
   </button>
 
   <div class="bindings-list">
@@ -223,6 +230,16 @@
 
   .description {
     @apply text-xs text-[var(--text-muted)] mt-1;
+  }
+
+  .usage-note {
+    @apply text-xs leading-relaxed text-[var(--text-muted)] rounded-[var(--radius)] bg-white/[0.03] border border-[var(--border)] p-3;
+  }
+  .usage-note strong {
+    @apply text-[var(--text)] font-semibold;
+  }
+  .usage-note em {
+    @apply not-italic font-mono text-[var(--color-accent-blue)];
   }
 
   .bindings-list {

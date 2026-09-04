@@ -8,6 +8,7 @@
 - Stream raw PCM from the microphone via CPAL
 - Resample from the hardware rate to 16 kHz (Whisper's required input rate)
 - Compute RMS levels for the VU meter and VAD noise gate
+- Suppress background noise with RNNoise when `audio.noise_suppression` is on
 - Support two streaming modes: dynamic (on-demand) and always-on
 
 ---
@@ -76,6 +77,43 @@ Hardware input (e.g. 48000 Hz, f32 samples)
 
 ---
 
+## Noise Suppression
+
+With `audio.noise_suppression` on, each captured buffer goes through RNNoise
+(the [`nnnoiseless`](https://crates.io/crates/nnnoiseless) port) before it
+reaches inference. RNNoise applies per-band gains learned to keep voiced speech
+and pull down steady broadband noise — fans, hiss, hum, air conditioning.
+
+The denoiser lives in `crates/voxctrl-audio/src/denoise.rs` and reconciles three
+mismatched formats inside the capture callback:
+
+```
+mic buffer (hardware rate, [-1.0, 1.0])
+  → resample to 48 kHz            RNNoise runs at 48 kHz only
+  → scale to 16-bit range         RNNoise wants [-32768.0, 32767.0] floats
+  → process in 480-sample frames  a whole frame at a time; the remainder is
+                                  carried into the next callback
+  → scale back, resample to 16 kHz
+```
+
+The first frame out of RNNoise is discarded (it carries fade-in artifacts), and
+because only whole frames are processed, up to 10 ms is still buffered when a
+recording ends.
+
+State is per stream: opening a stream builds a fresh denoiser, so a device
+change never continues with the spectral estimate of the device it left.
+
+**Build requirement.** RNNoise is compiled in behind the `noisereduce` cargo
+feature on `voxctrl-audio`. The app enables it (`src-tauri/Cargo.toml`), so
+released builds have it. A build without it logs a warning when the setting is
+on and passes audio through unchanged.
+
+**Live toggle.** `AppState.noise_suppression` mirrors the setting as an
+`AtomicBool` the capture callback reads per buffer, so switching it in Settings
+applies to the next recording without a restart or a stream rebuild.
+
+---
+
 ## Noise Gate / VAD
 
 Voice Activity Detection is applied in the inference layer (not capture), after the full recording is accumulated:
@@ -106,8 +144,7 @@ All under `audio` in `config.json`:
 | `evdev_device` | string or null | `null` | Linux evdev keyboard path, e.g. `"/dev/input/event4"`. Only used by the evdev hotkey fallback; ignored when the desktop portal is available (the normal case) |
 | `gain` | float | `1.0` | Microphone amplification multiplier |
 | `vad_threshold` | float | `0.5` | Sensitivity 0.0–1.0; higher = more sensitive (0.0 RMS gate at 1.0) |
-| `min_silence_duration_ms` | integer | `500` | Milliseconds of silence to trigger recording stop |
-| `noise_suppression` | bool | `false` | Enable basic noise suppression |
+| `noise_suppression` | bool | `false` | Run captured audio through RNNoise before transcription (see [Noise Suppression](#noise-suppression)) |
 | `dynamic_stream` | bool | `true` | Open/close mic on demand vs. always-on |
 
 ---
@@ -124,6 +161,7 @@ pub struct AudioRecorder {
     dynamic_stream: Arc<AtomicBool>,
     input_device_index: Arc<AtomicU32>,
     gain: Arc<AtomicU32>,
+    noise_suppression: Arc<AtomicBool>,
 }
 ```
 

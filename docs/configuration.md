@@ -19,8 +19,7 @@ Full schema with defaults:
 ```json
 {
   "engine": {
-    "backend": "auto",
-    "inference_mode": "Balanced",
+    "backend": "whisper-cpp",
     "whisper_cpp": {
       "model_dir": "",
       "model_size": "tiny",
@@ -34,7 +33,6 @@ Full schema with defaults:
   },
   "audio": {
     "vad_threshold": 0.5,
-    "min_silence_duration_ms": 500,
     "input_device_index": null,
     "evdev_device": null,
     "noise_suppression": false,
@@ -50,14 +48,13 @@ Full schema with defaults:
     "overlay_monitor": "primary",
     "auto_show_settings": true,
     "show_notification": false,
-    "history_enabled": false
+    "setup_completed": true
   },
   "features": {
     "remove_fillers": true,
     "custom_vocabulary": [],
     "spoken_punctuation": true,
     "auto_format_lists": true,
-    "quiet_mode": false,
     "snippets": {}
   },
   "openai": {
@@ -79,10 +76,10 @@ Full schema with defaults:
     "response_overlay": true,
     "speed": 1.0,
     "gpu": false,
+    "hf_token": null,
     "pocket_tts": {
       "voice": "alba",
       "prewarm": false,
-      "hf_token": null,
       "voice_dir": ""
     },
     "inflect_micro": {
@@ -97,10 +94,9 @@ Full schema with defaults:
     "record_timeout": 15.0,
     "visual_feedback": true
   },
-  "atspi": {
-    "injection": true,
-    "context_prompt": true,
-    "auto_code_mode": true
+  "updates": {
+    "auto_check": true,
+    "skipped_version": null
   }
 }
 ```
@@ -114,8 +110,7 @@ The engine config is nested into two backend sub-objects.
 
 | Key | Type | Values | Description |
 |---|---|---|---|
-| `backend` | string | `"auto"`, `"whisper-cpp"`, `"moonshine"` | Which backend to use; `auto` selects based on GPU availability |
-| `inference_mode` | string | `"Balanced"`, `"Aggressive"` | Inference aggressiveness; `Balanced` is recommended |
+| `backend` | string | `"whisper-cpp"` (default), `"moonshine"` | Which speech-recognition backend to use. A config still holding the retired `"auto"` value loads as `"whisper-cpp"` |
 
 **`whisper_cpp` sub-object:**
 
@@ -155,10 +150,9 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `vad_threshold` | float | `0.5` | Voice Activity Detection sensitivity (0.0–1.0); **higher = more sensitive** (lower RMS gate) |
-| `min_silence_duration_ms` | integer | `500` | Milliseconds of silence before stopping a recording session |
 | `input_device_index` | integer or null | `null` | CPAL device index; null = auto-detect |
 | `evdev_device` | string or null | `null` | Linux evdev keyboard device path for hotkeys, e.g. `"/dev/input/event4"` |
-| `noise_suppression` | bool | `false` | Enable basic noise suppression pre-processing |
+| `noise_suppression` | bool | `false` | Run captured audio through RNNoise before transcription. Needs a build with the `noisereduce` feature (the shipped app has it); see [audio.md](audio.md#noise-suppression) |
 | `gain` | float | `1.0` | Microphone amplification multiplier |
 | `dynamic_stream` | bool | `true` | Open mic on-demand (true) vs. always-on (false) |
 
@@ -176,7 +170,7 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | `overlay_monitor` | string | `"primary"` or monitor name | `"primary"` | Specific display screen for visual overlay |
 | `auto_show_settings` | bool | | `true` | Auto-show Settings window on startup |
 | `show_notification` | bool | | `false` | Desktop toast notification after text delivery |
-| `history_enabled` | bool | | `false` | Enable transcription history tracking |
+| `setup_completed` | bool | | `false` on a new install | Whether the first-run wizard has been finished. Absent from a config file written by an earlier VoxCtrl, which is read as `true` — an existing install has plainly been set up already, and must not be handed a setup wizard on upgrade |
 
 ### `features` section
 
@@ -185,7 +179,6 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | `remove_fillers` | bool | `true` | Strip filler words (`uh`, `um`, `hmm`, `er`, `ah`, etc.) |
 | `spoken_punctuation` | bool | `true` | Convert spoken punctuation words to symbols (e.g. "period" → ".") |
 | `auto_format_lists` | bool | `true` | Detect "first/second/third" patterns and reformat as a numbered list |
-| `quiet_mode` | bool | `false` | Suppress overlay notifications during transcription |
 | `custom_vocabulary` | string[] | `[]` | Custom words; VoxCtrl uses fuzzy Levenshtein matching to correct near-matches post-transcription |
 | `snippets` | object | `{}` | Short code → expansion map |
 
@@ -245,29 +238,26 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 
 **`breeze_tts_2` sub-object:**
 
-[Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is a bilingual speech generation model with natural-language voice design speaker prompts. The model weights are gated on HuggingFace under the **BreezeBlue Research and Non-Commercial License** — supply your access token via `hf_token` (shared with Pocket-TTS).
+[Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is a bilingual speech generation model with natural-language voice design speaker prompts. The model weights are gated on HuggingFace under the **BreezeBlue Research and Non-Commercial License** — supply your access token via `tts.hf_token`, the single token shared by every gated model, or export it as `HF_TOKEN`, which takes precedence and is never written to the config.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `speaker_prompt` | string | `"A calm and clear female voice speaking at a natural pace"` | Natural-language prompt describing the desired speaker voice for Voice Design |
 | `model_dir` | string | `""` | Directory holding model weights & tokenizer; empty = `~/.local/share/voxctrl/models/breeze-tts-2/` |
-| `hf_token` | string or null | `null` | HuggingFace access token used to download gated model weights (shared with Pocket-TTS) |
 | `prewarm` | bool | `false` | Pre-warm model weights and tensors on startup so first speech is instantaneous |
-| `gpu` | bool | `false` | Enable CUDA GPU acceleration for maximum performance |
-| `temperature` | float | `0.7` | Sampling temperature controlling voice expressiveness (0.1 – 1.0) |
+| `gpu` | bool | `false` | Run synthesis on the GPU. Needs a build with the `breeze-cuda` or `breeze-metal` feature; falls back to the CPU otherwise, or when no GPU can be opened. Changing it reloads the model |
 
 **`pocket_tts` sub-object:**
 
 Pocket-TTS is a voice-cloning neural TTS engine: each voice is a short reference audio clip
 that conditions synthesis, rather than a fixed precomputed voice embedding. The model weights
 are hosted in a **gated** HuggingFace repository (`kyutai/pocket-tts`) — you must accept the
-license on HuggingFace and supply a personal access token via `hf_token`.
+license on HuggingFace and supply a personal access token via `tts.hf_token`.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `voice` | string | `"alba"` | Bundled reference voice ID (`"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"`), or the filename stem of a custom clip in `voice_dir` |
 | `prewarm` | bool | `false` | Pre-warm model on startup so first speech is instantaneous |
-| `hf_token` | string or null | `null` | HuggingFace access token used to download the gated model weights |
 | `voice_dir` | string | `""` | Directory scanned for custom `.wav` voice clips; empty = `~/.local/share/voxctrl/pocket-tts-voices/`. Drop a `<id>.wav` file in to add it to the voice list — naming it after a built-in voice (e.g. `alba.wav`) overrides that voice's clip. Supports `~` expansion. |
 
 **`inflect_micro` sub-object:**
@@ -290,16 +280,25 @@ shared `tts.speed`. See [tts.md](tts.md) for the full engine notes.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `server_enabled` | bool | `false` | Start the MCP socket server on launch |
-| `record_timeout` | float | `15.0` | Max seconds for `transcribe_voice` to wait for speech |
+| `record_timeout` | float | `15.0` | How long `transcribe_voice` listens when the MCP client passes no `timeout_seconds`. Read per call, so a change applies without restarting the server; a non-positive value falls back to `15.0` |
 | `visual_feedback` | bool | `true` | Show overlay indicator while MCP server is listening to microphone |
 
-### `atspi` section
+### `updates` section
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `injection` | bool | `true` | Use AT-SPI2 for text insertion when available |
-| `context_prompt` | bool | `true` | Read focused widget text to use as Whisper context prompt |
-| `auto_code_mode` | bool | `true` | Detect code editors/terminals and enable code-mode processing automatically |
+| `auto_check` | bool | `true` | Ask GitHub for the latest release ~10s after launch, and offer it if it is newer |
+| `skipped_version` | string \| null | `null` | A version the user pressed "Skip this version" on; a newer release is still offered |
+
+This is the only part of VoxCtrl that reaches the network without being asked
+to. The request is an unauthenticated `GET` to
+`api.github.com/repos/JRufer/VoxCtrl/releases/latest`, sending a `User-Agent` of
+`VoxCtrl/<version>` and nothing else — no machine, user or install identifier.
+Set `auto_check` to `false` (or untick Settings → General → "Check for a new
+version on launch") and VoxCtrl never contacts GitHub unless you press "Check
+now". See [privacy.md](privacy.md#network).
+
+Missing from an older `config.json`, both keys take the defaults above.
 
 ---
 
@@ -323,21 +322,14 @@ label = "My Target"
 delivery = "inject"
 
 # Text formatting
-append_newline = true         # Default: true
-strip_newlines = false        # Default: false. Replaces newlines with spaces and strips \r (Inject only)
-send_on_release = true        # Default: true
-initial_prompt = ""           # Whisper context prompt override for this target
+strip_newlines = false        # Default: false. Replaces newlines with spaces and strips \r (inject and command targets)
 
 # Per-target post-processing overrides (all optional; null = inherit global)
 [my_target.processing]
 remove_fillers = true
 spoken_punctuation = true
 auto_format_lists = true
-apply_snippets = true
 code_mode = false
-quiet_mode = false
-atspi_context = true
-noise_suppression = false
 ```
 
 ### Delivery-specific fields
@@ -348,6 +340,7 @@ delivery = "file"
 file_path = "~/Documents/notes.md"
 file_prefix = "- "
 file_timestamp = true          # Default: true
+file_timestamp_format = "%Y-%m-%dT%H:%M:%SZ"   # strftime pattern, rendered in UTC
 file_mode = "append"           # "append" or "write"
 ```
 
@@ -475,7 +468,7 @@ target_ids = ["default"]
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `id` | string | Yes | | Unique identifier |
-| `label` | string | Yes | `""` | Display name |
+| `label` | string | Yes | `""` | The target's name; also the phrase that routes dictation here through a `command` target |
 | `keys` | string[] | Yes | | Key names (evdev format, on every platform). Any number of modifiers plus exactly one regular key — see [Hotkeys](hotkeys.md#what-can-be-a-shortcut) |
 | `gesture` | string | Yes | | `"hold"`, `"toggle"`, `"double_tap"`, or `"double_tap_hold"` |
 | `target_ids` | string[] | Yes | | Ordered list of target IDs to route to |

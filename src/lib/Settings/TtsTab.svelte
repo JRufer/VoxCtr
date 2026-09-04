@@ -388,7 +388,7 @@
       await invoke("download_pocket_tts", {
         voice: cfg.tts.pocket_tts.voice,
         voiceDir: cfg.tts.pocket_tts.voice_dir,
-        hfToken: cfg.tts.pocket_tts.hf_token,
+        hfToken: cfg.tts.hf_token,
       });
       pocketTtsReady = true;
     } catch (e) {
@@ -403,8 +403,6 @@
     pocketTtsReady = false;
     checkPocketTtsReady();
   }
-
-  function onPocketTtsTokenChanged() { markDirty(); }
 
   // ── Breeze-TTS-2 ───────────────────────────────────────────────────────────
 
@@ -430,7 +428,7 @@
     if (breezeDownloading) return;
     breezeDownloading = true;
     try {
-      const token = cfg.tts.breeze_tts_2.hf_token || cfg.tts.pocket_tts.hf_token;
+      const token = cfg.tts.hf_token;
       await invoke("download_breeze_tts_2", {
         modelDir: cfg.tts.breeze_tts_2.model_dir,
         hfToken: token,
@@ -443,11 +441,23 @@
     }
   }
 
+  /**
+   * The HuggingFace token, shown by both gated-engine panels.
+   *
+   * One token serves every gated model, so the panels edit the same field
+   * rather than keeping a copy each. A token exported as `HF_TOKEN` wins at
+   * download time, so when the session has one it is displayed here read-only
+   * and never written to the config — a value typed over it would be saved and
+   * then ignored.
+   */
+  let envHfToken = $state<string | null>(null);
+  const hfFromEnv = $derived(!!envHfToken);
+  const hfTokenShown = $derived(envHfToken ?? cfg.tts.hf_token ?? "");
+
   function onHfTokenChanged(e: Event) {
+    if (hfFromEnv) return;
     const val = (e.target as HTMLInputElement).value;
-    const tokenVal = val.trim() ? val.trim() : null;
-    cfg.tts.pocket_tts.hf_token = tokenVal;
-    cfg.tts.breeze_tts_2.hf_token = tokenVal;
+    cfg.tts.hf_token = val.trim() ? val.trim() : null;
     markDirty();
   }
 
@@ -482,6 +492,10 @@
   }
 
   onMount(async () => {
+    invoke<string | null>("hf_token_env")
+      .then((t) => (envHfToken = t && t.trim() ? t.trim() : null))
+      .catch(() => (envHfToken = null));
+
     if (cfg.tts.voice_dir) {
       validateVoiceDir();
     } else {
@@ -655,38 +669,6 @@
 
   function removeTtsSnippetRow(index: number) {
     ttsSnippetList = ttsSnippetList.filter((_, i) => i !== index);
-  }
-
-  let ttsCustomVocabString = $derived(
-    cfg.tts.custom_vocabulary ? cfg.tts.custom_vocabulary.join(", ") : ""
-  );
-
-  function onTtsCustomVocabChange(e: Event) {
-    const target = e.target as HTMLTextAreaElement;
-    cfg.tts.custom_vocabulary = target.value
-      .split(",")
-      .map(w => w.trim())
-      .filter(w => w.length > 0);
-    markDirty();
-  }
-
-  function autoResize(node: HTMLTextAreaElement) {
-    function resize() {
-      node.style.height = "auto";
-      node.style.height = `${node.scrollHeight}px`;
-    }
-    node.addEventListener("input", resize);
-    const timer = setTimeout(resize, 0);
-
-    return {
-      update() {
-        resize();
-      },
-      destroy() {
-        clearTimeout(timer);
-        node.removeEventListener("input", resize);
-      }
-    };
   }
 
 </script>
@@ -897,10 +879,18 @@
       <span>HuggingFace access token</span>
       <input
         type="password"
-        value={cfg.tts.breeze_tts_2.hf_token || cfg.tts.pocket_tts.hf_token || ""}
+        value={hfTokenShown}
+        readonly={hfFromEnv}
+        title={hfFromEnv ? "Set by the HF_TOKEN environment variable" : undefined}
         oninput={onHfTokenChanged}
       />
     </div>
+    {#if hfFromEnv}
+      <p class="hint">
+        Using the <code>HF_TOKEN</code> environment variable. It takes precedence over a saved
+        token and is not written to your config.
+      </p>
+    {/if}
     <p class="hint">
       Breeze-TTS-2 model weights are hosted on HuggingFace. Create a token at
       <code>huggingface.co/settings/tokens</code> and accept the license at
@@ -908,27 +898,20 @@
     </p>
 
     <label class="field">
-      <span>GPU Acceleration (CUDA)</span>
+      <span>GPU Acceleration</span>
       <input type="checkbox" bind:checked={cfg.tts.breeze_tts_2.gpu} onchange={markDirty} />
     </label>
-    <p class="hint" style="margin-top: -6px;">Use NVIDIA CUDA GPU acceleration for fastest inference speed.</p>
+    <p class="hint" style="margin-top: -6px;">
+      Runs synthesis on the GPU for fastest inference speed. Needs a build with the
+      <code>breeze-cuda</code> (NVIDIA) or <code>breeze-metal</code> (macOS) feature; otherwise, and
+      whenever no GPU can be opened, synthesis stays on the CPU. The model reloads when you change this.
+    </p>
 
     <label class="field">
       <span>Pre-warm Model on Startup</span>
       <input type="checkbox" bind:checked={cfg.tts.breeze_tts_2.prewarm} onchange={markDirty} />
     </label>
     <p class="hint" style="margin-top: -6px;">Pre-loads model tensors into GPU VRAM on startup so the first speech generation is instant.</p>
-
-    <label class="field">
-      <span>Sampling Temperature ({cfg.tts.breeze_tts_2.temperature.toFixed(2)})</span>
-      <input
-        type="range" min="0.1" max="1.0" step="0.05"
-        bind:value={cfg.tts.breeze_tts_2.temperature}
-        onchange={markDirty}
-        class="range-input"
-      />
-    </label>
-    <p class="hint" style="margin-top: -6px;">Controls voice expressiveness and variation. Default is 0.70.</p>
 
     <div class="field">
       <span>Model directory (leave blank for default)</span>
@@ -972,14 +955,23 @@
       <span>HuggingFace access token</span>
       <input
         type="password"
-        bind:value={cfg.tts.pocket_tts.hf_token}
-        onchange={onPocketTtsTokenChanged}
+        value={hfTokenShown}
+        readonly={hfFromEnv}
+        title={hfFromEnv ? "Set by the HF_TOKEN environment variable" : undefined}
+        oninput={onHfTokenChanged}
       />
     </div>
+    {#if hfFromEnv}
+      <p class="hint">
+        Using the <code>HF_TOKEN</code> environment variable. It takes precedence over a saved
+        token and is not written to your config.
+      </p>
+    {/if}
     <p class="hint">
       Pocket-TTS model weights are hosted on a gated HuggingFace repo. Create a token at
       <code>huggingface.co/settings/tokens</code> and accept the license at
-      <code>huggingface.co/kyutai/pocket-tts</code> before downloading.
+      <code>huggingface.co/kyutai/pocket-tts</code> before downloading. This is the same token
+      Breeze-TTS-2 uses — the app stores one.
     </p>
 
     <div class="field">
@@ -1171,18 +1163,6 @@
   </div>
 
   <div class="field-group mt-6">
-    <h3>TTS Custom Dictionary</h3>
-    <p class="hint">Provide a comma-separated list of words (e.g. jargon or names) that the TTS engine should try to correct phonetic spellings for when speaking.</p>
-    <textarea 
-      class="custom-vocab-input"
-      placeholder="e.g. Waylin, Rufer, Enola, Kenz"
-      value={ttsCustomVocabString}
-      oninput={onTtsCustomVocabChange}
-      use:autoResize
-    ></textarea>
-  </div>
-
-  <div class="field-group mt-6">
     <div class="field-label-row">
       <div style="display: flex; flex-direction: column;">
         <h3 style="margin-bottom: 0;">TTS Snippets (Pronunciation Guide)</h3>
@@ -1311,18 +1291,6 @@
   .run-speed-value.counting {
     color: var(--accent2);
     text-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
-  }
-
-  .custom-vocab-input {
-    @apply w-full min-h-[80px] bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-[var(--radius)] p-2 px-3 text-[13px] resize-y mt-2 outline-none box-border transition-all duration-200 ease-out;
-  }
-
-  .custom-vocab-input:focus {
-    @apply border-[var(--accent2)] shadow-[0_0_0_2px_rgba(79,195,247,0.2)];
-  }
-
-  .custom-vocab-input::placeholder {
-    @apply text-[var(--text-muted)] opacity-50;
   }
 
   .non-commercial-warning {

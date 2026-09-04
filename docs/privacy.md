@@ -13,7 +13,8 @@ Everything below describes what the code does, with pointers to where it does it
 | Can VoxCtrl read what I type in other applications? | **No.** Your desktop delivers shortcuts; VoxCtrl is never given keystrokes. |
 | Does installing it grant any process new access to my keyboard? | **No.** No udev rule, no `input` group, nothing. |
 | Does my audio leave the machine? | **No**, unless you configure a target that sends it somewhere. |
-| Does it phone home, check for updates, or send telemetry? | **No.** |
+| Does it send telemetry or analytics? | **No.** Nothing about you or your machine is ever transmitted. |
+| Does it phone home at all? | **Once, for updates.** On launch it asks GitHub what the latest release is — no identifiers, nothing about you — and one setting turns it off. [Details](#network). |
 | Does it need root? | **No.** Administrator rights are requested once, optionally, to install packages. |
 | Can I verify all this? | Yes — see [Verifying it yourself](#verifying-it-yourself). |
 
@@ -94,7 +95,6 @@ Windows offers no portal equivalent; a low-level keyboard hook (`WH_KEYBOARD_LL`
 
 - The microphone is opened when a gesture starts recording and closed when it stops. It is not held open in between.
 - Audio is transcribed on your machine by `whisper.cpp` (or Moonshine). No audio is uploaded anywhere.
-- Transcription history is stored locally under `~/.local/share/voxctrl/`, and can be cleared from the History panel.
 
 The one exception is one you configure: `http`, `webhook`, `chat` and `mcp` targets send **transcribed text** to wherever you point them, and LLM post-processing sends text to the endpoint you configure. Those are opt-in, per-target, and visible in `targets.toml`. Audio itself is never sent by any target.
 
@@ -102,18 +102,46 @@ The one exception is one you configure: `http`, `webhook`, `chat` and `mcp` targ
 
 ## Network
 
-VoxCtrl makes no network requests on its own behalf. It has no telemetry, no analytics, no update check, and no crash reporting.
+VoxCtrl has no telemetry, no analytics, and no crash reporting. Nothing is ever
+sent about what you dictate, what you type, what you have installed, or who you
+are.
 
-It reaches the network only when you ask it to:
+It makes exactly one request you did not personally trigger: **the update
+check**. Everything else on the network happens because you asked for it:
 
-| Trigger | Destination |
-|---|---|
-| Downloading a speech model | HuggingFace / the model host, on demand |
-| Downloading a TTS voice | HuggingFace / the Piper voice host, on demand |
-| LLM post-processing | The OpenAI-compatible endpoint you configured |
-| `http` / `webhook` / `chat` / `mcp` targets | The destination you configured |
+| Trigger | Destination | Sends |
+|---|---|---|
+| Update check, ~10 s after launch | `api.github.com/repos/JRufer/VoxCtrl/releases/latest` | A `User-Agent` of `VoxCtrl/<version>`. Nothing else. |
+| Installing an offered update | `github.com` release download | Nothing beyond the request for the file |
+| Downloading a speech model | HuggingFace / the model host, on demand | Nothing beyond the request for the file |
+| Downloading a TTS voice | HuggingFace / the Piper voice host, on demand | Nothing beyond the request for the file |
+| LLM post-processing | The OpenAI-compatible endpoint you configured | The transcribed text |
+| `http` / `webhook` / `chat` / `mcp` targets | The destination you configured | The transcribed text |
 
-Once the app and its models are on disk, VoxCtrl runs fully air-gapped.
+### The update check, in full
+
+It is a plain unauthenticated `GET` for the public release listing — the same
+URL anyone can open in a browser. There is no request body, no cookie, no
+account, no install ID, and no way for it to carry one: GitHub is told which
+version of VoxCtrl is asking (because the API requires a `User-Agent`) and
+nothing more. What comes back is the release's tag, notes and file list, which
+is what the update window shows you. Nothing is downloaded or installed unless
+you press **Update and restart**, and a downloaded update is checked against the
+SHA-256 checksum GitHub publishes for it before it replaces anything.
+
+**Turning it off:** Settings → General → untick "Check for a new version on
+launch" (or `"updates": { "auto_check": false }` in `config.json`). VoxCtrl then
+makes no request at all unless you press "Check now". The update window offers
+the same switch, so declining an update and stopping the checks is one click.
+
+Once the app and its models are on disk, VoxCtrl runs fully air-gapped —
+including with update checking left on, which fails quietly and changes nothing
+when there is no network.
+
+**The code:** `crates/voxctrl-update/` is the whole of it — about 400 lines,
+with no dependency on the rest of the app. `release.rs` builds the one request,
+`apply.rs` downloads and verifies, `src-tauri/src/updater.rs` decides when to
+ask and what to show.
 
 ---
 
@@ -161,6 +189,15 @@ Press your shortcut. You will see `Activated` and `Deactivated` with a shortcut 
 ```bash
 sudo unshare -n sudo -u "$USER" ./VoxCtrl-x86_64.AppImage
 ```
+
+**See the update check for yourself.** With checking enabled, watch what leaves
+the machine in the first minute after launch:
+
+```bash
+sudo tcpdump -n -i any 'host api.github.com'   # one TLS connection, then nothing
+```
+
+Untick "Check for a new version on launch" and the same command stays silent.
 
 **Read the code.** The hotkey crate is about 1,500 lines and self-contained:
 

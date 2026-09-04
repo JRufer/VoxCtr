@@ -21,6 +21,7 @@ mod services;
 mod startup_log;
 mod state;
 mod tray;
+mod updater;
 mod window;
 
 #[cfg(test)]
@@ -49,6 +50,20 @@ pub mod test_utils {
 // ── Tauri app entry point ─────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Whether these command-line arguments ask for the setup wizard.
+///
+/// Accepted in a few spellings because this is the flag someone reaches for
+/// when the app is already configured and they want to see setup again; making
+/// them guess the exact word would defeat the point.
+pub fn wants_setup_wizard(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--setup" | "--wizard" | "--setup-wizard" | "--first-run"
+        )
+    })
+}
+
 pub fn run() {
     #[cfg(target_os = "linux")]
     {
@@ -120,14 +135,12 @@ pub fn run() {
     // Log the sanitized configuration parameters at startup
     tracing::info!("=== System Startup Config ===");
     tracing::info!("Backend choice: {:?}", config.data.engine.backend);
-    tracing::info!("Inference mode: {:?}", config.data.engine.inference_mode);
     tracing::info!("Whisper model size: {}", config.data.engine.whisper_cpp.model_size);
     tracing::info!("Whisper device: {}", config.data.engine.whisper_cpp.device);
     tracing::info!("Whisper threads: {}", config.data.engine.whisper_cpp.threads);
     tracing::info!("Moonshine model size: {}", config.data.engine.moonshine.model_size);
     tracing::info!("Moonshine language: {}", config.data.engine.moonshine.language);
     tracing::info!("VAD threshold: {}", config.data.audio.vad_threshold);
-    tracing::info!("Min silence duration ms: {}", config.data.audio.min_silence_duration_ms);
     tracing::info!("Noise suppression: {}", config.data.audio.noise_suppression);
     tracing::info!("Input device index: {:?}", config.data.audio.input_device_index);
     tracing::info!("Gain: {}", config.data.audio.gain);
@@ -139,12 +152,18 @@ pub fn run() {
     tracing::info!("TTS GPU: {}", config.data.tts.gpu);
     tracing::info!("Pocket-TTS voice: {}", config.data.tts.pocket_tts.voice);
     tracing::info!("Pocket-TTS prewarm: {}", config.data.tts.pocket_tts.prewarm);
-    tracing::info!("Pocket-TTS HF token set: {}", config.data.tts.pocket_tts.hf_token.is_some());
+    tracing::info!(
+        "HuggingFace token: {}",
+        if voxctrl_tts::hf_token_from_env().is_some() {
+            "from HF_TOKEN"
+        } else if config.data.tts.hf_token.is_some() {
+            "from config"
+        } else {
+            "not set"
+        }
+    );
     tracing::info!("MCP enabled: {}", config.data.mcp.server_enabled);
     tracing::info!("MCP record timeout: {}", config.data.mcp.record_timeout);
-    tracing::info!("ATSPI injection: {}", config.data.atspi.injection);
-    tracing::info!("ATSPI context prompt: {}", config.data.atspi.context_prompt);
-    tracing::info!("ATSPI auto code mode: {}", config.data.atspi.auto_code_mode);
     tracing::info!("=============================");
 
     let cfg_data = Arc::new(config.data.clone());
@@ -181,6 +200,7 @@ pub fn run() {
             cfg_data.audio.input_device_index.unwrap_or(u32::MAX),
         )),
         gain: Arc::new(AtomicU32::new(cfg_data.audio.gain.to_bits())),
+        noise_suppression: Arc::new(AtomicBool::new(cfg_data.audio.noise_suppression)),
         word_count: Arc::new(AtomicU32::new(0)),
         last_text: Arc::new(Mutex::new(String::new())),
         last_text_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -188,7 +208,6 @@ pub fn run() {
         active_binding_label: Arc::new(Mutex::new("Focused Window".to_string())),
         active_binding_id: Arc::new(Mutex::new(String::new())),
         targets: Arc::new(Mutex::new(targets.clone())),
-        history: Arc::new(Mutex::new(Vec::new())),
         audio_tx: audio_tx.clone(),
         tts_handle: Arc::new(Mutex::new(None)),
         active_fifos: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -196,6 +215,8 @@ pub fn run() {
         hotkey_gesture_tx: Arc::new(Mutex::new(None)),
         hotkey_health: hotkey_health.clone(),
         overlay_tx: overlay_tx.clone(),
+        pending_update: Arc::new(Mutex::new(None)),
+        updating: Arc::new(AtomicBool::new(false)),
     });
 
     let (audio_level_tx, audio_level_rx) = crossbeam_channel::bounded::<f32>(128);
@@ -209,6 +230,7 @@ pub fn run() {
             app_state.dynamic_stream.clone(),
             app_state.input_device_index.clone(),
             app_state.gain.clone(),
+            app_state.noise_suppression.clone(),
         );
         let _ = recorder.run(
             audio_tx,
@@ -315,8 +337,18 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             tracing::info!("Single instance trigger: argv={:?}, cwd={:?}", argv, cwd);
-            if let Some(window) = app.get_webview_window("settings") {
-                show_and_focus_window(&window);
+            // `voxctrl --setup` while the app is already running is a request
+            // to see the wizard, not to raise Settings. Without this the flag
+            // would appear to do nothing at all on the second launch, which is
+            // the launch a user testing it is most likely to make.
+            if wants_setup_wizard(&argv) {
+                if let Err(e) = crate::window::open_wizard_window(app) {
+                    tracing::error!("Could not open the setup wizard: {e}");
+                }
+                return;
+            }
+            if let Err(e) = crate::window::open_settings_window(app) {
+                tracing::error!("Could not open Settings: {e}");
             }
         }))
         .plugin(tauri_plugin_shell::init())
@@ -324,19 +356,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state.clone())
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let label = window.label();
-                if label == "settings" || label == "history" {
-                    api.prevent_close();
-                    let w = window.clone();
-                    let _ = w.hide();
-                    tauri::async_runtime::spawn(async move {
-                        let _ = w.hide();
-                    });
-                }
-            }
-        })
         .setup(move |app| {
             set_app_handle(app.handle().clone());
 
@@ -399,8 +418,18 @@ pub fn run() {
             // Spawn the Slint overlay helper process
             overlay_sidecar::spawn_overlay_process(overlay_rx);
 
-            // Auto download speech model if needed
-            services::auto_download_speech_model_if_needed(app, &cfg_data);
+            // Auto download speech model if needed. Skipped entirely when the
+            // wizard was asked for: it is about to ask which model the user
+            // wants, and fetching a different one behind its back would waste
+            // the download and confuse the step.
+            let forced_wizard = wants_setup_wizard(&std::env::args().collect::<Vec<_>>());
+            if forced_wizard {
+                if let Err(e) = crate::window::open_wizard_window(&app.handle().clone()) {
+                    tracing::error!("Could not open the setup wizard: {e}");
+                }
+            } else {
+                services::auto_download_speech_model_if_needed(app, &cfg_data);
+            }
 
             // Emit periodic status updates to all windows and animate tray
             tray::spawn_status_ticker(
@@ -410,6 +439,14 @@ pub fn run() {
                 record_off_icon,
                 processing_frames,
             );
+
+            // Look for a new release, unless the user has turned that off or
+            // is standing in front of the setup wizard — a fresh install is on
+            // the latest version anyway, and an update dialog landing on top of
+            // step one of setup is nobody's idea of a first impression.
+            if !forced_wizard && cfg_data.ui.setup_completed {
+                updater::spawn_launch_check(app.handle().clone(), app_state.clone());
+            }
 
             startup_log::STARTUP_COMPLETE.store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
@@ -426,8 +463,6 @@ pub fn run() {
             save_targets,
             get_bindings,
             save_bindings,
-            get_history,
-            clear_history,
             speak_text,
             show_overlay,
             hide_overlay,
@@ -438,6 +473,8 @@ pub fn run() {
             check_voice_downloaded,
             download_voice,
             check_breeze_tts_2_ready,
+            preview_timestamp_format,
+            hf_token_env,
             download_breeze_tts_2,
             check_pocket_tts_ready,
             download_pocket_tts,
@@ -462,13 +499,35 @@ pub fn run() {
             approve_shortcuts,
             install_system_integration,
             get_setup_status,
+            finish_setup_wizard,
+            open_setup_wizard,
             download_configured_model,
             open_settings_tab,
             stop_tts,
             reset_chat_conversation,
             test_chat_target,
             set_hotkeys_inhibited,
+            updater::check_for_update,
+            updater::get_pending_update,
+            updater::install_update,
+            updater::skip_update_version,
+            updater::set_update_auto_check,
+            updater::dismiss_update,
+            updater::open_update_window,
         ])
-        .run(tauri::generate_context!())
-        .expect("error running Tauri application");
+        .build(tauri::generate_context!())
+        .expect("error building Tauri application")
+        .run(|_app, event| {
+            // Windows are ordinary windows: the close button closes them, and
+            // every entry point rebuilds one when it is gone. That makes the
+            // last window closing look to Tauri like the app should exit, which
+            // for a tray app it must not — dictation carries on with nothing on
+            // screen. An explicit quit carries an exit code, so the tray's Quit
+            // item still works.
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

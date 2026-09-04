@@ -36,11 +36,13 @@ pub struct AppState {
     pub input_device_index: Arc<AtomicU32>,
     /// Live gain value, stored as f32 bits
     pub gain: Arc<AtomicU32>,
+    /// Live noise-suppression preference, read by the capture callback
+    pub noise_suppression: Arc<AtomicBool>,
 
     /// Total words injected this session
     pub word_count: Arc<std::sync::atomic::AtomicU32>,
 
-    /// Most recent transcription result (shown in history + overlay)
+    /// Most recent transcription result (shown in the overlay)
     pub last_text: Arc<Mutex<String>>,
 
     /// Monotonic counter — incremented each time last_text is written.
@@ -58,9 +60,6 @@ pub struct AppState {
 
     /// Currently configured target definitions (in-memory cache for fast lookups)
     pub targets: Arc<Mutex<Vec<voxctrl_routing::OutputTarget>>>,
-
-    /// Transcript history — most recent first
-    pub history: Arc<Mutex<Vec<HistoryEntry>>>,
 
     /// Channel sender to send empty audio chunks as sentinels to unblock the coordinator thread
     pub audio_tx: crossbeam_channel::Sender<Vec<f32>>,
@@ -84,14 +83,16 @@ pub struct AppState {
 
     /// Channel sender to forward stdin messages to the native Slint overlay process
     pub overlay_tx: crossbeam_channel::Sender<String>,
-}
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct HistoryEntry {
-    pub text: String,
-    pub target_id: String,
-    pub timestamp: String,
-    pub inference_ms: u32,
+    /// The update found by the last check, if there was one. Held so the update
+    /// window can be opened, closed and reopened without asking GitHub again,
+    /// and so installing does not have to re-resolve which asset to fetch.
+    pub pending_update: Arc<Mutex<Option<voxctrl_update::PendingUpdate>>>,
+
+    /// True while an update is downloading or being written into place. Guards
+    /// against a second "Update and restart" — from an impatient click or a
+    /// second window — starting a parallel download over the same file.
+    pub updating: Arc<AtomicBool>,
 }
 
 impl AppState {
@@ -138,6 +139,10 @@ impl AppState {
         self.input_device_index.store(v.unwrap_or(u32::MAX), Ordering::SeqCst);
     }
 
+    pub fn set_noise_suppression(&self, v: bool) {
+        self.noise_suppression.store(v, Ordering::SeqCst);
+    }
+
     pub fn set_gain(&self, v: f32) {
         self.gain.store(v.to_bits(), Ordering::SeqCst);
     }
@@ -159,6 +164,23 @@ impl AppState {
 
     pub fn set_overlay_enabled(&self, v: bool) {
         self.overlay_enabled.store(v, Ordering::SeqCst);
+    }
+
+    /// Claim the right to run an update, returning false if one is already
+    /// running. Compare-and-swap rather than a check followed by a store: two
+    /// clicks a millisecond apart must not both get through.
+    pub fn begin_update(&self) -> bool {
+        self.updating
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    pub fn end_update(&self) {
+        self.updating.store(false, Ordering::SeqCst);
+    }
+
+    pub fn is_updating(&self) -> bool {
+        self.updating.load(Ordering::SeqCst)
     }
 
     pub fn is_mcp_recording(&self) -> bool {

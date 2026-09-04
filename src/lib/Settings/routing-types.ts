@@ -1,11 +1,7 @@
 export interface TargetProcessingConfig {
-  noise_suppression?: boolean;
-  quiet_mode?: boolean;
-  atspi_context?: boolean;
   remove_fillers?: boolean;
   spoken_punctuation?: boolean;
   auto_format_lists?: boolean;
-  apply_snippets?: boolean;
   code_mode?: boolean;
 }
 
@@ -21,6 +17,7 @@ export interface OutputTarget {
   file_path?: string;
   file_prefix: string;
   file_timestamp: boolean;
+  file_timestamp_format: string;
   file_mode?: string;
   dbus_signal?: string;
   http_url?: string;
@@ -41,10 +38,7 @@ export interface OutputTarget {
   chat_timeout_secs: number;
   chat_reply_mode: string;
   chat_reset_phrase?: string;
-  send_on_release: boolean;
-  append_newline: boolean;
   strip_newlines: boolean;
-  initial_prompt?: string;
   processing?: TargetProcessingConfig;
   response_pipe?: string;
 }

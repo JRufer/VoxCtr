@@ -106,7 +106,7 @@ jobs:
       # suite passing. Without a display here those tests silently skip and the
       # gap reopens.
       - name: cargo test
-        run: xvfb-run -a cargo test -p voxctrl-config -p voxctrl-routing -p voxctrl-hotkeys -p voxctrl-tts -p voxctrl-app
+        run: xvfb-run -a cargo test -p voxctrl-config -p voxctrl-routing -p voxctrl-hotkeys -p voxctrl-tts -p voxctrl-update -p voxctrl-app
 
   # ── Frontend type check ───────────────────────────────────────────────────────
   frontend-check:

@@ -186,11 +186,86 @@ pub fn ensure_pocket_tts_config() -> Result<()> {
 /// path relative to the cwd. Swapping it from the TTS worker thread while the
 /// webview was spawning a helper aborted the whole app at startup.
 pub(crate) fn load_pocket_tts_model(variant: &str) -> Result<pocket_tts::TTSModel> {
+    load_pocket_tts_model_where(variant, || pocket_tts::TTSModel::load(variant))
+}
+
+/// Load the model onto the GPU when `gpu` is set, falling back to the CPU when
+/// this build has no GPU backend or the device cannot be opened.
+///
+/// candle — which pocket-tts runs on — has CUDA and Metal backends and no
+/// Vulkan one, so "GPU" here means whichever of those the binary was built
+/// with (`breeze-cuda` / `breeze-metal`).
+pub(crate) fn load_pocket_tts_model_on_gpu(
+    variant: &str,
+    gpu: bool,
+) -> Result<pocket_tts::TTSModel> {
+    if !gpu {
+        return load_pocket_tts_model(variant);
+    }
+
+    #[cfg(any(feature = "breeze-cuda", feature = "breeze-metal"))]
+    {
+        use pocket_tts::config::defaults;
+
+        match gpu_device() {
+            Some(device) => {
+                tracing::info!("Loading Breeze-TTS-2 onto {device:?}");
+                load_pocket_tts_model_where(variant, || {
+                    pocket_tts::TTSModel::load_with_params_device(
+                        variant,
+                        defaults::TEMPERATURE,
+                        defaults::LSD_DECODE_STEPS,
+                        defaults::EOS_THRESHOLD,
+                        defaults::NOISE_CLAMP,
+                        &device,
+                    )
+                })
+            }
+            None => load_pocket_tts_model(variant),
+        }
+    }
+
+    #[cfg(not(any(feature = "breeze-cuda", feature = "breeze-metal")))]
+    {
+        tracing::warn!(
+            "Breeze-TTS-2 GPU acceleration is enabled in settings, but this build has \
+             neither the `breeze-cuda` nor the `breeze-metal` feature — synthesis stays on the CPU"
+        );
+        load_pocket_tts_model(variant)
+    }
+}
+
+/// Open the GPU device this build was compiled for, or `None` (meaning: use the
+/// CPU) when there is no usable one — no driver, no device, or a runtime that
+/// refuses to initialise. A missing GPU downgrades to slower speech, never to
+/// no speech at all.
+#[cfg(any(feature = "breeze-cuda", feature = "breeze-metal"))]
+fn gpu_device() -> Option<candle_core::Device> {
+    #[cfg(feature = "breeze-cuda")]
+    let opened = candle_core::Device::new_cuda(0);
+    #[cfg(all(feature = "breeze-metal", not(feature = "breeze-cuda")))]
+    let opened = candle_core::Device::new_metal(0);
+
+    match opened {
+        Ok(device) => Some(device),
+        Err(e) => {
+            tracing::warn!("Could not open a GPU for Breeze-TTS-2 ({e}); falling back to CPU");
+            None
+        }
+    }
+}
+
+/// Runs `load` with the working directory pocket-tts needs to find
+/// `config/<variant>.yaml`, restoring the process's own afterwards.
+fn load_pocket_tts_model_where<F>(variant: &str, load: F) -> Result<pocket_tts::TTSModel>
+where
+    F: FnOnce() -> Result<pocket_tts::TTSModel>,
+{
     ensure_pocket_tts_config().context("ensure pocket-tts config file")?;
 
     let cwd_config = Path::new("config").join(format!("{variant}.yaml"));
     if cwd_config.exists() {
-        return pocket_tts::TTSModel::load(variant);
+        return load();
     }
 
     let app_dir = dirs::data_local_dir()
@@ -200,7 +275,7 @@ pub(crate) fn load_pocket_tts_model(variant: &str) -> Result<pocket_tts::TTSMode
     if app_dir.exists() {
         let _ = std::env::set_current_dir(&app_dir);
     }
-    let load_res = pocket_tts::TTSModel::load(variant);
+    let load_res = load();
     if let Some(ref orig) = orig_cwd {
         let _ = std::env::set_current_dir(orig);
     }
@@ -260,13 +335,11 @@ fn hf_cache_file_present(hf_path: &str) -> bool {
 }
 
 /// Download the pocket-tts model weights, tokenizer, and the selected voice's reference
-/// clip into the local HuggingFace cache. Requires `HF_TOKEN` to be set (the default
-/// weights repo is gated and requires accepting the model license on huggingface.co).
+/// clip into the local HuggingFace cache. The weights repo is gated, so this
+/// needs a token: an exported `HF_TOKEN` if the session has one, otherwise the
+/// configured token passed in here.
 pub async fn download_pocket_tts_assets(voice: &str, voice_dir: &str, hf_token: Option<String>) -> Result<()> {
-    if let Some(token) = hf_token {
-        // SAFETY: single-threaded at startup/download time; no concurrent env access.
-        unsafe { std::env::set_var("HF_TOKEN", token) };
-    }
+    crate::hf::apply_hf_token(hf_token.as_deref());
 
     let reference_clip = resolve_pocket_tts_voice_clip(voice, voice_dir)
         .ok_or_else(|| anyhow::anyhow!("unknown pocket-tts voice: {voice}"))?;

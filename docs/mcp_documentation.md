@@ -135,7 +135,7 @@ Opens the microphone and returns a transcript when speech ends.
 
 | Name | Type | Default | Description |
 |---|---|---|---|
-| `timeout_seconds` | `number` | `15.0` | Maximum seconds to wait for speech before returning |
+| `timeout_seconds` | `number` | `mcp.record_timeout` (`15.0`) | Maximum seconds to wait for speech before returning. Omit it to use the timeout configured in Settings → General |
 
 **Request**
 
@@ -365,7 +365,7 @@ For agents that generate responses to a named FIFO, VoxCtrl can dynamically read
 
 ### How it works
 
-1. The user configures an output target specifying a `response_pipe` path.
+1. The user configures an output command specifying a `response_pipe` path.
 2. The Tauri application spawns an asynchronous `run_fifo_responder` task that watches this FIFO file.
 3. When the agent writes its response text to the FIFO, VoxCtrl reads each line and pushes it to the TTS Engine worker queue.
 4. Playback proceeds automatically, showing the visual speaking overlay.
@@ -380,7 +380,6 @@ label = "My Agent"
 delivery = "pipe"
 pipe_path = "/tmp/my-agent.in"
 response_pipe = "/tmp/my-agent.out"   # ← agent writes responses here
-append_newline = true
 ```
 
 ---
@@ -397,7 +396,7 @@ All TTS settings live in `~/.config/voxctrl/config.json` under the `tts` key (**
 | `tts.stop_key` | `string[]` | `["KEY_ESCAPE"]` | Hotkeys to stop TTS playback |
 | `tts.response_overlay` | `bool` | `true` | Show speaking overlay while TTS plays |
 | `mcp.server_enabled` | `bool` | `false` | Start the MCP server on launch |
-| `mcp.record_timeout` | `number` | `15.0` | Default recording timeout in seconds |
+| `mcp.record_timeout` | `number` | `15.0` | Timeout used by `transcribe_voice` when the caller passes no `timeout_seconds`. Read per call, so it applies without a restart; a non-positive value falls back to `15.0` |
 | `mcp.visual_feedback` | `bool` | `true` | Show overlay indicator while MCP server is listening to microphone |
 
 ### Available voices
@@ -465,7 +464,7 @@ The socket exists but the server is not listening yet. Wait a moment after VoxCt
 **`transcribe_voice` returns `(no speech detected)`**
 
 * Confirm your microphone is selected in **Settings → Audio**.
-* Raise `timeout_seconds` — the default 15 s may be too short if recording takes time to initialize.
+* Raise `timeout_seconds` — the configured default (15 s out of the box) may be too short if recording takes time to initialize.
 * Check the VAD threshold in **Settings → Audio** — a higher sensitivity value (lower raw threshold) may be needed for quiet speech.
 
 **Claude Desktop does not see the tools**

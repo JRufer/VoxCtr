@@ -88,7 +88,7 @@ Note the parameter name is `newConfig` (camelCase), not `config`.
 ### Routing
 
 #### `get_targets() → OutputTarget[]`
-Returns all output targets from `targets.toml`.
+Returns all output commands from `targets.toml`. Named `targets` throughout the API; "Output Commands" is the UI label for the same thing.
 
 ```typescript
 const targets = await invoke<OutputTarget[]>('get_targets');
@@ -148,32 +148,118 @@ try {
 
 ---
 
-### History
+### Setup & First Run
 
-#### `get_history() → HistoryEntry[]`
-Returns the transcription history (in-memory, current session only).
+#### `open_setup_wizard() → void`
+Opens the first-run wizard, building its window if it has been closed. A
+re-opened wizard starts at step one.
 
 ```typescript
-const history = await invoke<HistoryEntry[]>('get_history');
+await invoke('open_setup_wizard');
 ```
 
+---
+
+#### `finish_setup_wizard(openSettings: boolean) → void`
+Marks setup complete (`ui.setup_completed = true`), persists the config, and
+closes the wizard window. Pass `true` to open Settings afterwards.
+
 ```typescript
-interface HistoryEntry {
-  text: string;
-  target_id: string;
-  timestamp: string;    // ISO 8601
-  inference_ms: number;
+await invoke('finish_setup_wizard', { openSettings: false });
+```
+
+---
+
+#### `get_setup_status() → SetupStatusPayload`
+Everything first-run setup depends on, in one call: how global shortcuts are
+being delivered, whether text can be typed into other windows, and whether a
+speech model is on disk. The wizard's final screen uses it to report problems
+it did not itself cause.
+
+```typescript
+interface SetupStatusPayload {
+  hotkeys: HotkeyStatusPayload;
+  hotkeys_active: boolean;
+  model_ready: boolean;
+  model_size: string;
+  model_auto_downloads: boolean;    // small models fetch themselves in the background
+  missing_injection_tool: string | null;
+  pkexec_available: boolean;
+  manual_package_commands: string;
+  is_complete: boolean;
 }
 ```
 
 ---
 
-#### `clear_history() → void`
-Clears the in-memory history log and resets the word count.
+### Updates
+
+#### `check_for_update() → UpdateCheckPayload`
+Asks GitHub for the latest published release and compares it with the running
+version. Also resolves which release file matches this installation, so
+`install_update` does not have to fetch anything twice.
 
 ```typescript
-await invoke('clear_history');
+interface UpdateInfo {
+  version: string;              // "0.4.0"
+  tag: string;                  // "v0.4.0"
+  current_version: string;      // the version running now
+  notes: string;                // release notes, trimmed for a dialog
+  release_url: string;
+  asset_name: string | null;    // the file that would be installed
+  download_size: number;        // bytes
+  can_self_update: boolean;     // false for .deb / source / unwritable installs
+  unsupported_reason: string | null;
+}
+
+interface UpdateCheckPayload {
+  current_version: string;
+  update: UpdateInfo | null;    // null when this is the latest release
+  skipped: boolean;             // the user pressed "Skip this version" on it
+}
+
+const result = await invoke<UpdateCheckPayload>('check_for_update');
 ```
+
+---
+
+#### `get_pending_update() → UpdateCheckPayload`
+What the last check found, without contacting GitHub. Returns `update: null`
+if no check has run yet.
+
+---
+
+#### `install_update() → void`
+Downloads the pending update, verifies it against the SHA-256 digest GitHub
+published, replaces the running application file and restarts into it. Emits
+`update-progress` while downloading and `update-installed` just before the app
+exits; on any failure it emits `update-failed` and leaves the running version
+untouched. Rejects if no update is pending, if this installation cannot update
+itself, or if an install is already running.
+
+```typescript
+await invoke('install_update');
+```
+
+---
+
+#### `skip_update_version(version: string) → void`
+Records `updates.skipped_version`, so this release is not raised again. A newer
+one still is.
+
+```typescript
+await invoke('skip_update_version', { version: '0.4.0' });
+```
+
+---
+
+#### `set_update_auto_check(enabled: boolean) → void`
+Turns the launch-time check on or off and persists it (`updates.auto_check`).
+
+---
+
+#### `open_update_window() → void` / `dismiss_update() → void`
+Opens the update window (building it if needed), and closes it.
 
 ---
 
@@ -421,6 +507,23 @@ await listen<number>('audio-level', (event) => {
 });
 ```
 
+### `update-progress`
+Emitted while an update downloads, at most once per megabyte.
+
+```typescript
+await listen<{ downloaded: number; total: number }>('update-progress', (event) => {
+  // total is 0 when the server sent no content length
+});
+```
+
+### `update-installed`
+Emitted with the new version once it is in place. The app exits shortly after
+and the new build starts itself.
+
+### `update-failed`
+Emitted with a message when an update could not be installed. The running
+version is unchanged.
+
 ---
 
 ## TypeScript Types
@@ -436,12 +539,10 @@ interface AppConfig {
   openai: OpenAiConfig;
   tts: TtsConfig;
   mcp: McpConfig;
-  atspi: AtspiConfig;
 }
 
 interface EngineConfig {
-  backend: "auto" | "whisper-cpp" | "moonshine";
-  inference_mode: "Balanced" | "Aggressive";
+  backend: "whisper-cpp" | "moonshine";  // a legacy "auto" loads as whisper-cpp
   whisper_cpp: WhisperCppConfig;
   moonshine: MoonshineConfig;
 }
@@ -460,7 +561,6 @@ interface MoonshineConfig {
 
 interface AudioConfig {
   vad_threshold: number;
-  min_silence_duration_ms: number;
   input_device_index: number | null;
   evdev_device: string | null;
   noise_suppression: boolean;
@@ -474,8 +574,8 @@ interface UiConfig {
   overlay_position: string;
   overlay_monitor: string;
   auto_show_settings: boolean;
+  setup_completed: boolean;
   show_notification: boolean;
-  history_enabled: boolean;
 }
 
 interface FeaturesConfig {
@@ -483,7 +583,6 @@ interface FeaturesConfig {
   custom_vocabulary: string[];
   spoken_punctuation: boolean;
   auto_format_lists: boolean;
-  quiet_mode: boolean;
   snippets: Record<string, string>;
 }
 
@@ -502,7 +601,6 @@ interface OpenAiConfig {
 interface PocketTtsConfig {
   voice: string;
   prewarm: boolean;
-  hf_token: string | null;
   voice_dir: string;       // custom .wav voice clips; empty = default directory
 }
 
@@ -513,29 +611,37 @@ interface InflectMicroConfig {
   prewarm: boolean;
 }
 
+interface BreezeTts2Config {
+  voice_mode: "prompt" | "clone";
+  cloned_voice: string;     // voice id from the shared clip folder
+  voice_dir: string;        // shared with pocket_tts; empty = default directory
+  speaker_prompt: string;   // Voice Design description
+  model_dir: string;        // empty = default directory
+  prewarm: boolean;
+  gpu: boolean;             // needs a breeze-cuda / breeze-metal build
+}
+
 interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro";
+  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro" | "breeze_tts_2";
   voice: string;
   voice_dir: string;
   stop_key: string[];       // singular field name, plural value
   response_overlay: boolean;
   speed: number;            // not used by pocket_tts
-  gpu: boolean;             // only applies to piper
+  gpu: boolean;             // only applies to piper; Breeze has its own flag
+  hf_token: string | null;  // one token for every gated model download;
+                            // an exported HF_TOKEN wins and is never saved here
   pocket_tts: PocketTtsConfig;
   inflect_micro: InflectMicroConfig;  // fixed-voice, so no voice field
+  breeze_tts_2: BreezeTts2Config;
+  snippets: Record<string, string>;   // pronunciation guide, speech only
 }
 
 interface McpConfig {
   server_enabled: boolean;  // not "enabled"
-  record_timeout: number;
+  record_timeout: number;   // default for transcribe_voice, read per call
   visual_feedback: boolean;
-}
-
-interface AtspiConfig {
-  injection: boolean;       // not "enabled"
-  context_prompt: boolean;
-  auto_code_mode: boolean;
 }
 
 interface OutputTarget {
@@ -558,6 +664,7 @@ interface OutputTarget {
   file_path?: string;
   file_prefix: string;
   file_timestamp: boolean;
+  file_timestamp_format: string;  // strftime, UTC; default "%Y-%m-%dT%H:%M:%SZ"
   file_mode: string;        // "append" or "write"
 
   // dbus
@@ -585,10 +692,7 @@ interface OutputTarget {
   chat_reply_mode: string;    // "speak" | "inject" | "clipboard" | "none"
   chat_reset_phrase?: string;
 
-  send_on_release: boolean;   // default: true
-  append_newline: boolean;    // default: true
-  strip_newlines: boolean;    // default: false
-  initial_prompt?: string;
+  strip_newlines: boolean;    // default: false; inject and command targets
 
   processing: TargetProcessingConfig;
 
@@ -596,13 +700,9 @@ interface OutputTarget {
 }
 
 interface TargetProcessingConfig {
-  noise_suppression?: boolean;
-  quiet_mode?: boolean;
-  atspi_context?: boolean;
   remove_fillers?: boolean;
   spoken_punctuation?: boolean;
   auto_format_lists?: boolean;
-  apply_snippets?: boolean;
   code_mode?: boolean;
 }
 
@@ -632,12 +732,5 @@ interface AppStatus {
   word_count: number;
   active_target_id?: string;
   active_target_label?: string;
-}
-
-interface HistoryEntry {
-  text: string;
-  target_id: string;
-  timestamp: string;
-  inference_ms: number;
 }
 ```

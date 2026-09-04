@@ -36,13 +36,16 @@ dirs                   = { workspace = true }
 voxctrl-config    = { workspace = true }
 voxctrl-routing   = { workspace = true }
 voxctrl-hotkeys   = { workspace = true }
-voxctrl-audio     = { workspace = true }
+# `noisereduce` compiles RNNoise in, so the Audio tab's noise-suppression
+# toggle has something to switch on.
+voxctrl-audio     = { workspace = true, features = ["noisereduce"] }
 voxctrl-inference = { workspace = true }
 voxctrl-tts       = { workspace = true }
 voxctrl-inject    = { workspace = true }
 voxctrl-dbus      = { workspace = true }
 voxctrl-mcp       = { workspace = true }
 voxctrl-llm       = { workspace = true }
+voxctrl-update    = { workspace = true }
 
 # Runtime and utilities
 tokio = { workspace = true }

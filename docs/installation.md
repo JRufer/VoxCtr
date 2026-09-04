@@ -152,25 +152,51 @@ sudo pacman -S xdotool
 
 ## First Run
 
-On first launch, VoxCtrl will:
+On a machine with no `~/.config/voxctrl/config.json`, VoxCtrl will:
 1. Create `~/.config/voxctrl/` with default `config.json`, `targets.toml`, and `bindings.toml`
 2. Create `~/.local/share/voxctrl/` for model and voice storage
-3. Open the Settings window
+3. Open the **setup wizard**, and nothing else
 
-### Download a Whisper Model
-Before you can dictate, you need a speech recognition model:
-1. Go to Settings → Engine
-2. Choose a model size (recommendation: `small` for a good speed/accuracy balance; the default is `large-v3` for maximum accuracy)
-3. Click "Download" and wait for completion (~142 MB for `base`, ~466 MB for `small`, ~3 GB for `large-v3`)
+The wizard covers everything needed to dictate, in seven steps:
 
-### Configure a Hotkey
-A default binding (`Super + Space`, hold gesture → inject to focused window) is created automatically. Verify it in Settings → Hotkeys, or change the key combo if it conflicts with your desktop environment.
+1. **Welcome** — what the remaining steps will ask
+2. **Engine** — whisper.cpp or Moonshine, and a model size. Continuing downloads
+   the model and waits for it, so the later test has something to transcribe
+3. **Hotkey** — a gesture and a key combination, registered with your desktop.
+   Only gestures your shortcut backend can actually deliver are offered
+4. **Overlay** — which on-screen indicator to show while the mic is live, or none
+5. **Test** — a real dictation into a box on screen, using the hotkey you just bound
+6. **Voice** — optionally enable speech output and download an engine
+7. **Done** — a summary, plus anything that failed and the error behind it
 
-### Test Dictation
-1. Open any text editor
-2. Click into the text area
-3. Hold `Super + Space` and speak
-4. Release to transcribe
+Every choice is written to the config as it is made, so quitting the wizard
+halfway keeps what you picked. If something fails — a model that will not
+download, a shortcut your desktop refuses — the last screen says so with the
+underlying error and a copyable diagnostics report, rather than reporting the
+app as ready.
+
+The first hotkey is bound to a target named "Command", which types into the
+focused window exactly like `inject` until you add a second target, at which
+point voice command routing works without re-binding anything.
+
+### Running it again
+
+The wizard is not only for first launch:
+
+```bash
+voxctrl --setup
+```
+
+Works whether or not VoxCtrl is already running, and `--wizard`,
+`--setup-wizard` and `--first-run` do the same thing. Settings → General has an
+**Open setup wizard** button for the same purpose. A re-run always starts at
+step one.
+
+### Skipping it
+
+"Skip setup" on the first screen closes the wizard and leaves the app running
+with its defaults. Everything the wizard asks is also in Settings: Engine for
+the model, Hotkeys for bindings, Visual for the overlay, TTS for speech output.
 
 ---
 
@@ -215,12 +241,48 @@ Pocket-TTS is a pure-Rust voice-cloning TTS engine (no system packages required)
 1. Create a free [HuggingFace](https://huggingface.co/) account if you don't have one.
 2. Visit [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) and accept the model license.
 3. Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (read access is sufficient).
-4. Paste the token into **Settings → TTS → Pocket-TTS → HuggingFace Token**, or set it via the `HF_TOKEN` environment variable before launching VoxCtrl.
+4. Paste the token into **Settings → TTS → HuggingFace access token** (or the setup wizard's voice step — it is one token for every gated model), or export `HF_TOKEN` before launching VoxCtrl. An exported token wins over the saved one and is never written to the config; the fields show it read-only when it is set.
 5. Pick a voice and click **Download** in Settings → TTS. The model weights, tokenizer, and the selected voice's reference clip are downloaded once and cached locally under `~/.cache/huggingface/hub/`.
 
 ### MCP Server (Claude Desktop / Cursor)
 1. Enable in Settings → Engine → MCP Server
 2. Configure your MCP client to connect to `/tmp/voxctrl-mcp.sock`
+
+---
+
+## Updating
+
+VoxCtrl checks GitHub for a newer release about ten seconds after it starts. If
+there is one, a window opens with the release notes and three choices: **Update
+and restart**, **Skip this version** (never asked about that release again; a
+later one still gets offered), or **Not now** (asked again next launch).
+
+Choosing to update downloads the release file that matches this installation —
+the CPU AppImage, the Vulkan AppImage, or the Windows installer — checks it
+against the SHA-256 checksum GitHub published for it, replaces the running
+application file, and restarts into the new version. Your config, models and
+voices live elsewhere and are untouched. If anything fails at any point, the
+version you are running is left exactly as it was.
+
+The application file keeps its exact path, so desktop entries, dock pins and
+shell aliases go on working — which does mean an AppImage whose file name
+carries a version number keeps the old number in its name while containing the
+new build. Settings → About reports the version that is actually running.
+
+A few installations cannot update themselves, and say so instead of offering a
+button that would not work:
+
+- **A `.deb` or distro package** — the package manager owns those files. Update
+  it the way you installed it.
+- **A build from source** — nothing to replace; rebuild.
+- **An AppImage in a directory you cannot write to** (`/opt`, a read-only mount)
+  — move it somewhere you own, or download the new release by hand. This is
+  detected *before* the download starts, not after.
+
+To check on demand, or to turn the automatic check off entirely: **Settings →
+General → Updates**. With it off, VoxCtrl makes no network request unless you
+press "Check now". What the check sends — nothing that identifies you — is
+spelled out in [privacy.md](privacy.md#network).
 
 ---
 

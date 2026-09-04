@@ -96,11 +96,21 @@ jobs:
             vulkan: true
 
           # ── Windows CPU ────────────────────────────────────────────────────
-          - name: windows-cpu
-            os: windows-2022
-            features: ""
-            artifact_label: windows-x86_64
-            cuda: false
+          # DISABLED: the Windows build is the slowest job in the matrix and
+          # nobody can test what it produces at the moment, so it is not worth
+          # the wait on every push to master.
+          #
+          # To re-enable: uncomment the five lines below, and put the Windows
+          # row back in the "## Downloads" table in the release body at the
+          # bottom of this file. Every Windows-specific *step* further down
+          # (`if: runner.os == 'Windows'`) is left in place and simply never
+          # runs while no Windows entry exists in this matrix — nothing else
+          # needs changing.
+          # - name: windows-cpu
+          #   os: windows-2022
+          #   features: ""
+          #   artifact_label: windows-x86_64
+          #   cuda: false
 
     steps:
       - uses: actions/checkout@v4
@@ -426,45 +436,145 @@ jobs:
           # release never ships the previous version's notes. Everything under
           # "## Downloads" is evergreen, and GitHub appends its own generated
           # "What's Changed" list of merged PRs beneath all of this.
+          #
+          # The Downloads table lists no Windows build because the Windows job
+          # is commented out of the build matrix above; a row for a file this
+          # workflow does not produce would send people looking for a download
+          # that is not there. Restore the row when the job comes back:
+          #   | Windows | `-windows-x86_64-setup.exe` | None |
+          # Note this is a literal YAML block scalar — a `#` inside `body:`
+          # would be published as text, which is why the row is removed rather
+          # than commented out.
           body: |
-            ## What's new in 0.3.10
+            ## What's new in 0.4.0
 
-            **Fixes the X11 shortcut backend that 0.3.9 shipped broken.** On
-            Cinnamon, MATE and Xfce, 0.3.9 asked the X server for its key events
-            in a way the protocol does not allow, the server refused the whole
-            request, and no key ever arrived. The setup window reported it —
+            The largest release so far: a new machine is walked through setup instead of
+            dropped into a settings window, VoxCtrl can update itself, output targets are
+            now Output Commands and say how to use them, and a settings audit removed or
+            implemented every control that was doing nothing.
 
-            ```
-            X11 shortcuts: the X server refused raw key events:
-            ... bad_value: 11 ... request_name: Some("XISelectEvents")
-            ```
+            ### First-run setup wizard
 
-            — and fell back to a native desktop shortcut, which serves only
-            tap-to-start/tap-to-stop. So on those desktops 0.3.9 delivered none
-            of the hold or double-tap styles it was written to deliver.
+            A first launch used to open Settings on a config nobody had chosen — the
+            default model downloading in the background, a `Super+Space` binding the user
+            never saw, and no sign whether any of it worked. The first thing that told you
+            something was wrong was pressing a key and getting silence.
 
-            The cause: VoxCtrl asked for raw key events and device-hotplug
-            notifications in a single request. Hotplug notifications may only be
-            requested for "all devices" and raw key events only for "all master
-            devices", and mixing them makes the server reject both. They are two
-            requests now, and only the first has to succeed.
+            A fresh install now gets a seven-step wizard in its own window: pick a
+            transcription engine and model size (downloaded before you continue), bind a
+            hotkey and register it with your desktop, choose an overlay, dictate a live
+            test, add a voice, and finish on a screen that reports anything that failed.
+            Every choice is written to the config as it is made, so quitting halfway keeps
+            what you picked.
 
-            0.3.9's other fixes were sound and are unchanged — the native
-            Cinnamon/MATE shortcut route, the setup window no longer claiming
-            shortcuts work when nothing is bound, and gesture styles the running
-            backend cannot deliver no longer being offered. What 0.3.10 adds is
-            that the X11 backend those fixes were the fallback *for* now
-            actually runs.
+            - The hotkey step offers only gestures your desktop's shortcut backend can
+              actually deliver, and will not let you past until the desktop has *accepted*
+              the binding — because the next screen is a live dictation test that would
+              otherwise be guaranteed to fail.
+            - The test step is genuinely end to end: the transcript is typed into the
+              wizard's own textarea down the real delivery path.
+            - The first binding is pointed at a "Command" output, so voice commands work
+              the day you add a second one, with nothing to re-bind.
+            - The window sizes itself to the display it opens on, so a 1080p desktop at
+              125% scaling no longer puts the Continue button past the bottom edge.
 
-            ### How this got past 0.3.9, and what stops it next time
+            Run it again any time with `voxctrl --setup`, or Settings → General → "Open
+            setup wizard". An upgrade never triggers it: a config file written by an
+            earlier VoxCtrl reads as already set up.
 
-            Only a real X server rejects a malformed request; no unit test can.
-            The suite passed in full while the backend could not select a single
-            key event. VoxCtrl's tests now talk to a real X server when one is
-            present — including a test that runs the backend's own startup path
-            end to end, and one that pins the exact malformed request as an
-            error — and CI runs them under a virtual display so they cannot
-            silently skip.
+            ### VoxCtrl updates itself
+
+            An AppImage sits where you downloaded it, so until now the only way to update
+            was to notice the release yourself and fetch the right file by hand.
+
+            Ten seconds after launch, VoxCtrl asks GitHub what the latest release is. If
+            there is a newer one, a window shows the version, the release notes and the
+            download size, and offers **Update and restart**, **Skip this version** or
+            **Not now**. Confirming downloads the build matching your installation — CPU
+            AppImage or Vulkan AppImage — verifies it against the SHA-256 checksum GitHub
+            published, replaces the running file and restarts into it.
+
+            Nothing is replaced until a complete, verified file is on disk beside the one
+            it replaces, and the swap is a single rename. A failed download, a checksum
+            mismatch or a directory you cannot write to each leave the working version
+            exactly as it was, and "cannot write to" is detected *before* the download
+            rather than after 100 MB of it. A `.deb`, a distro package or a build from
+            source is told why it cannot self-update instead of being given a button that
+            cannot work.
+
+            **On privacy:** this is the first thing VoxCtrl does on the network without
+            being asked. It is one unauthenticated GET to the public releases API, sending
+            a `User-Agent` of `VoxCtrl/<version>` and nothing else — no cookie, no account,
+            no install ID, nothing about you or your machine. Settings → General →
+            "Check for a new version on launch" turns it off, as does one click in the
+            update window; with it off VoxCtrl makes no request unless you press "Check
+            now". docs/privacy.md documents exactly what is sent and how to watch it with
+            `tcpdump`.
+
+            ### Output Targets are now Output Commands
+
+            "Output Targets" described where text lands, which is the implementer's view.
+            What you actually do with one is say its name mid-dictation — and nothing in
+            the app ever said so.
+
+            The tab is now **Output Commands**, and it opens with the thing you need to
+            know: start dictation, say *"VoxCtrl"*, then the command's name, then your
+            text. *"VoxCtrl notes, remember to call the plumber"* sends the rest to the
+            command named **notes**. Dictation with no such phrase in it goes wherever your
+            hotkey already points.
+
+            Nothing on disk changed: still `targets.toml`, still `[[target]]`, still
+            `target_id` in bindings. No existing config, script or integration is touched.
+
+            ### Settings that were doing nothing — implemented or removed
+
+            An audit found controls that had never been wired to anything. Each was taken
+            in the direction it deserved.
+
+            **Now real:**
+
+            - **Noise suppression** runs RNNoise on the capture path, and the toggle
+              applies without a restart.
+            - **MCP record timeout** is now the default `transcribe_voice` listens for when
+              the caller omits one, instead of a hardcoded 15 seconds, and is advertised in
+              the tool schema.
+            - **Breeze-TTS-2 GPU** loads the model onto a CUDA or Metal device (opt-in at
+              build time; falls back to CPU with a warning).
+            - **File targets choose their timestamp format**, validated as you type, with
+              a bad pattern falling back to the default rather than costing you a
+              dictation.
+
+            **Removed, because nothing read them:** the AT-SPI2 section, Inference mode,
+            Silence duration, the TTS custom-vocabulary box, Breeze's temperature slider,
+            quiet mode, the Backend "Auto-detect" entry (it always resolved to
+            whisper.cpp), and four unwired options in the target editor. Existing
+            `config.json` and `targets.toml` files keep loading — the removed keys are
+            simply ignored.
+
+            ### Fixes and smaller changes
+
+            - **Dictation no longer appends a newline.** It appends a single trailing space
+              instead, so consecutive utterances do not run their words together; text that
+              already ends in whitespace is left alone.
+            - **The delivery-type dropdown is no longer clipped** by the editor's scrolling
+              body — it could previously cut off mid-list with the rest unreachable.
+            - **Clicking the tray now actually raises Settings** when it is open behind
+              another window, instead of blinking the taskbar entry.
+            - **Windows close when you close them**, and the app carries on in the tray
+              rather than treating the last window as a quit.
+            - **The HuggingFace token is asked for once** in the wizard and stored once; an
+              exported `HF_TOKEN` wins and is never written to the config.
+            - The settings sidebar sizes itself to its longest label instead of clipping it
+              on wide system fonts.
+            - The transcript history feature is gone.
+
+            ### Windows builds are paused
+
+            **This release has no Windows download.** The Windows job is the slowest leg of
+            the build and nothing it produced was being tested, so it is commented out of
+            the release workflow rather than removed — restoring it is uncommenting five
+            lines. Windows support in the code is untouched; only the automated build is
+            off. Build from source in the meantime.
 
             ### Requirements
 
@@ -483,7 +593,6 @@ jobs:
             |---|---|---|
             | Linux | `-linux-x86_64.AppImage` | None |
             | Linux (GPU) | `-linux-x86_64-vulkan.AppImage` | Any Vulkan GPU |
-            | Windows | `-windows-x86_64-setup.exe` | None |
 
             **The Vulkan AppImage** is a portable GPU build: it accelerates any
             NVIDIA/AMD/Intel GPU via the host Vulkan driver, and falls back to

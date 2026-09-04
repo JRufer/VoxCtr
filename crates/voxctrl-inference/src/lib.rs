@@ -36,8 +36,6 @@ pub struct InferenceRequest {
     pub target_id: String,
     /// Hotkey binding ID (if triggered by a hotkey)
     pub binding_id: Option<String>,
-    /// AT-SPI2 surrounding text for initial prompt, if available
-    pub context_text: Option<String>,
 }
 
 /// Final output after transcription + post-processing.
@@ -128,34 +126,15 @@ impl InferenceEngine {
 
         let dir = voxctrl_routing::config_dir();
         let targets = voxctrl_routing::load_targets(&dir).unwrap_or_default();
-        let target_ids: Vec<&str> = req.target_id.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-        let first_target_id = target_ids.first().copied().unwrap_or("default");
-        let target = targets.iter().find(|t| t.id == first_target_id);
 
         let mut merged_prompt = String::from("VoxCtrl is a voice control assistant application. VoxCtrl commands start with VoxCtrl. ");
 
-        // 1. Target's initial prompt if defined
-        if let Some(target_prompt) = target.and_then(|t| t.initial_prompt.as_ref()) {
-            if !target_prompt.trim().is_empty() {
-                merged_prompt.push_str(target_prompt.trim());
-                merged_prompt.push_str(". ");
-            }
-        }
-
-        // 2. Custom vocabulary words from features config
+        // Custom vocabulary words from features config
         if !app_config.features.custom_vocabulary.is_empty() {
             // Append as: "Vocabulary: word1, word2, word3..."
             merged_prompt.push_str("Vocabulary: ");
             merged_prompt.push_str(&app_config.features.custom_vocabulary.join(", "));
             merged_prompt.push_str(". ");
-        }
-
-        // 3. Fallback context text if available
-        if let Some(ref context) = req.context_text {
-            if !context.trim().is_empty() {
-                merged_prompt.push_str(context.trim());
-                merged_prompt.push_str(". ");
-            }
         }
 
         let initial_prompt = if merged_prompt.trim().is_empty() {
@@ -291,10 +270,6 @@ impl InferenceEngine {
             .and_then(|t| t.processing.auto_format_lists)
             .unwrap_or(app_config.features.auto_format_lists);
 
-        let apply_snippets = target
-            .and_then(|t| t.processing.apply_snippets)
-            .unwrap_or(true); // default to true
-
         let code_mode = target
             .and_then(|t| t.processing.code_mode)
             .unwrap_or(false);
@@ -303,7 +278,9 @@ impl InferenceEngine {
             remove_fillers,
             spoken_punctuation,
             auto_format_lists,
-            apply_snippets: apply_snippets && !app_config.features.snippets.is_empty(),
+            // Snippets always expand; the only thing that turns them off is
+            // having none defined.
+            apply_snippets: !app_config.features.snippets.is_empty(),
             snippets: app_config.features.snippets.clone(),
             code_mode,
             custom_vocabulary: app_config.features.custom_vocabulary.clone(),
@@ -334,74 +311,7 @@ fn build_backend(config: &AppConfig) -> Box<dyn TranscriptionBackend> {
                 Box::new(WhisperCppBackend::new(config.engine.whisper_cpp.clone()))
             }
         }
-        BackendChoice::Auto => {
-            let selected = auto_select(config);
-            info!("Auto-selected backend: {}", selected.name());
-            selected
-        }
     }
-}
-
-fn auto_select(config: &AppConfig) -> Box<dyn TranscriptionBackend> {
-    // GPU detection
-    let has_nvidia = detect_nvidia();
-    let has_vulkan = detect_vulkan();
-
-    if has_nvidia || has_vulkan {
-        info!(
-            nvidia = has_nvidia,
-            vulkan = has_vulkan,
-            "GPU detected; using whisper-cpp with GPU acceleration"
-        );
-    } else {
-        info!("No GPU detected; using whisper-cpp CPU");
-    }
-
-    Box::new(WhisperCppBackend::new(config.engine.whisper_cpp.clone()))
-}
-
-fn detect_nvidia() -> bool {
-    // 1. Try standard nvidia-smi command
-    if let Ok(output) = std::process::Command::new("nvidia-smi")
-        .arg("--query-gpu=name")
-        .arg("--format=csv,noheader")
-        .output()
-    {
-        if output.status.success() {
-            return true;
-        }
-    }
-
-    // 2. Check if Nvidia driver proc file exists (Linux proprietary driver)
-    if std::path::Path::new("/proc/driver/nvidia/version").exists() {
-        return true;
-    }
-
-    // 3. Check for Nvidia device nodes in /dev
-    if std::path::Path::new("/dev/nvidia0").exists() || std::path::Path::new("/dev/nvidiactl").exists() {
-        return true;
-    }
-
-    false
-}
-
-fn detect_vulkan() -> bool {
-    // 1. Try vulkaninfo
-    if let Ok(output) = std::process::Command::new("vulkaninfo")
-        .arg("--summary")
-        .output()
-    {
-        if output.status.success() {
-            return true;
-        }
-    }
-
-    // 2. Check for Vulkan ICD loader configs
-    if std::path::Path::new("/usr/share/vulkan/icd.d").exists() || std::path::Path::new("/etc/vulkan/icd.d").exists() {
-        return true;
-    }
-
-    false
 }
 
 // ── Threaded worker ───────────────────────────────────────────────────────────
@@ -514,22 +424,8 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_nvidia_does_not_panic() {
-        // Just verify execution compiles and runs
-        let _ = detect_nvidia();
-    }
-
-    #[test]
-    fn test_detect_vulkan_does_not_panic() {
-        // Just verify execution compiles and runs
-        let _ = detect_vulkan();
-    }
-
-    #[test]
-    fn test_auto_select_backend() {
-        let mut cfg = AppConfig::default();
-        cfg.engine.whisper_cpp.device = "auto".to_string();
-        let backend = auto_select(&cfg);
-        assert_eq!(backend.name(), "whisper-cpp");
+    fn default_backend_is_whisper_cpp() {
+        let cfg = AppConfig::default();
+        assert_eq!(build_backend(&cfg).name(), "whisper-cpp");
     }
 }

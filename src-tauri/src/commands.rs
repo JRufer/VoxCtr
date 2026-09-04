@@ -5,7 +5,7 @@ use tracing::info;
 use voxctrl_config::AppConfig;
 use voxctrl_routing::{HotkeyBinding, OutputTarget};
 
-use crate::state::{AppState, HistoryEntry};
+use crate::state::AppState;
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
@@ -95,6 +95,7 @@ pub async fn save_config(
     state.set_dynamic_stream(new_config.audio.dynamic_stream);
     state.set_input_device_index(new_config.audio.input_device_index);
     state.set_gain(new_config.audio.gain);
+    state.set_noise_suppression(new_config.audio.noise_suppression);
     state.set_overlay_enabled(new_config.ui.show_overlay);
 
     // Dynamic TTS engine lifecycle management
@@ -376,23 +377,6 @@ pub async fn test_chat_target(target: OutputTarget) -> Result<OpenAiTestResult, 
     }
 }
 
-// ── History ───────────────────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn get_history(
-    state: State<'_, Arc<AppState>>,
-) -> Result<Vec<HistoryEntry>, String> {
-    let guard = state.history.lock().await;
-    Ok(guard.clone())
-}
-
-#[tauri::command]
-pub async fn clear_history(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.history.lock().await.clear();
-    state.word_count.store(0, std::sync::atomic::Ordering::SeqCst);
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn speak_text(
     state: State<'_, Arc<AppState>>,
@@ -421,6 +405,27 @@ pub async fn download_voice(voice_name: String, voice_dir: String) -> Result<(),
     voxctrl_tts::download_voice(&voice_name, &voice_dir)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Render a file target's timestamp format so the Settings UI can preview it
+/// and report a bad pattern before the target is saved.
+///
+/// chrono is the authority on what a `strftime` pattern means, so the preview
+/// comes from the same code the file target writes with rather than from a
+/// second implementation in TypeScript.
+#[tauri::command]
+pub async fn preview_timestamp_format(format: String) -> Result<String, String> {
+    voxctrl_routing::render_timestamp(&format, chrono::Utc::now())
+}
+
+/// The HuggingFace token exported into the environment, if any.
+///
+/// The UI shows it in place of the configured one and stops editing, because
+/// `HF_TOKEN` wins at download time — a value typed over it would be saved and
+/// then ignored, which is worse than not offering the field.
+#[tauri::command]
+pub async fn hf_token_env() -> Option<String> {
+    voxctrl_tts::hf_token_from_env()
 }
 
 #[tauri::command]
@@ -1546,16 +1551,69 @@ pub async fn download_configured_model(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Re-open the first-run wizard on demand.
+///
+/// Setup is not a one-time event in practice: a user changes microphone, moves
+/// to a machine with a GPU, or wants to redo a hotkey they regret — and, more
+/// immediately, whoever is developing the wizard needs to see it without
+/// hand-editing `setup_completed` out of their config file.
+#[tauri::command]
+pub async fn open_setup_wizard(app: tauri::AppHandle) -> Result<(), String> {
+    crate::window::open_wizard_window(&app)
+}
+
+/// Mark the first-run wizard finished and get out of the way.
+///
+/// The flag is written here rather than through `save_config` so that closing
+/// the wizard is one atomic step: the config the wizard has been editing all
+/// along is already persisted, and this only flips the bit that decides
+/// whether the wizard opens again on the next launch.
+#[tauri::command]
+pub async fn finish_setup_wizard(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Arc<crate::state::AppState>>,
+    open_settings: bool,
+) -> Result<(), String> {
+    let updated = {
+        let mut guard = state.config.lock().await;
+        guard.data.ui.setup_completed = true;
+        guard.save().map_err(|e| e.to_string())?;
+        guard.data.clone()
+    };
+    let _ = app.emit("config-changed", updated);
+    info!("First-run setup wizard completed");
+
+    if let Some(window) = app.get_webview_window(crate::window::WIZARD_WINDOW) {
+        let _ = window.hide();
+        let _ = window.close();
+    }
+    if open_settings {
+        if let Err(e) = crate::window::open_settings_window(&app) {
+            tracing::error!("Could not open Settings after setup: {e}");
+        }
+    }
+    Ok(())
+}
+
 /// Open the settings window on a specific tab. Used by the setup window so
 /// "choose a different model" lands the user on the right screen instead of
 /// making them find it.
 #[tauri::command]
 pub async fn open_settings_tab(app: tauri::AppHandle, tab: String) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("settings") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        let _ = window.emit("focus-settings-tab", tab);
+    let existed = app.get_webview_window("settings").is_some();
+    let window = crate::window::open_settings_window(&app)?;
+    let _ = window.emit("focus-settings-tab", tab.clone());
+
+    // A window built just now has no listener registered yet, so the first
+    // emit lands before anything is listening. Repeating it once the frontend
+    // has had a moment to mount costs nothing — selecting the same tab twice
+    // is idempotent — and is the difference between landing on the right tab
+    // and landing on the default one.
+    if !existed {
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            let _ = window.emit("focus-settings-tab", tab);
+        });
     }
     Ok(())
 }

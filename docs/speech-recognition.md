@@ -34,12 +34,12 @@ Change the active model via `engine.whisper_cpp.model_size` in config. Changing 
 
 | Value | Description |
 |---|---|
-| `auto` | Auto-detect: tries CUDA (nvidia-smi / /dev/nvidia0), then Vulkan (vulkaninfo / ICD dirs), then CPU |
+| `auto` | Let whisper.cpp use whatever GPU support the build has, falling back to CPU |
 | `cuda` | NVIDIA GPU via CUDA *(requires CUDA build — see below)* |
 | `vulkan` | Any GPU via Vulkan (AMD/Intel/NVIDIA) |
 | `cpu` | Force CPU |
 
-On startup, VoxCtrl probes for CUDA (via `nvidia-smi`, `/proc/driver/nvidia/version`, `/dev/nvidia0`) and Vulkan (via `vulkaninfo`, `/usr/share/vulkan/icd.d`) to select the best backend.
+Anything other than `cpu` turns whisper.cpp's GPU path on (`use_gpu`), and whisper.cpp then uses whichever accelerator the binary was built with — CUDA in a `--features cuda` build, Vulkan in the standard one. `auto` and an explicit `cuda`/`vulkan` therefore behave the same; only `cpu` differs.
 
 > **CUDA is opt-in at compile time.** The default build runs on any machine without a GPU. To enable NVIDIA GPU acceleration, build with the `cuda` cargo feature:
 > ```bash
@@ -57,7 +57,6 @@ When a recording session ends, the accumulated audio buffer is sent to the infer
 InferenceRequest {
     audio: Vec<f32>,           // 16 kHz mono PCM
     target_id: String,         // Which output target (comma-separated for multi-target)
-    context_text: Option<String>, // AT-SPI context text, if enabled
 }
 ```
 
@@ -72,10 +71,8 @@ The worker runs:
    └─ rms(audio) < rms_threshold → return ""
 
 3. Build Whisper initial prompt
-   a. Target's initial_prompt (if set)
-   b. Custom vocabulary words from features.custom_vocabulary
-   c. AT-SPI context text (if context_prompt enabled)
-   → Merged into a single prompt string for Whisper
+   └─ Custom vocabulary words from features.custom_vocabulary, appended to the
+      standing VoxCtrl preamble
 
 4. whisper-rs transcription
    └─ Reuses pre-allocated WhisperState (KV cache + attention buffers loaded once at startup)
@@ -198,12 +195,9 @@ This threshold (0.003 RMS) is intentionally below any genuine speech energy, so 
 
 ## Context Prompting
 
-When `atspi.context_prompt = true`, the surrounding text from the focused widget (read via AT-SPI2) is included in the Whisper initial prompt. This improves continuity with existing text in the field.
-
-The Whisper initial prompt also incorporates:
-1. The target's `initial_prompt` field (if set)
-2. The `features.custom_vocabulary` list, formatted as: `"Vocabulary: word1, word2, ..."`
-3. The AT-SPI2 surrounding text
+The Whisper initial prompt is a fixed VoxCtrl preamble plus the
+`features.custom_vocabulary` list, formatted as
+`"Vocabulary: word1, word2, ..."`. There is no per-target prompt override.
 
 ---
 

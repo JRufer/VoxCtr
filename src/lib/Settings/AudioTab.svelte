@@ -157,11 +157,6 @@
       />
       <span class="val">{cfg.audio.vad_threshold.toFixed(2)}</span>
     </label>
-    <label class="field">
-      <span>Silence duration (ms)</span>
-      <input type="number" min="100" max="5000" step="50"
-        bind:value={cfg.audio.min_silence_duration_ms} onchange={markDirty} />
-    </label>
   </div>
 
   <div class="field-group">
@@ -170,6 +165,10 @@
       <span>Noise suppression (RNNoise)</span>
       <input type="checkbox" bind:checked={cfg.audio.noise_suppression} onchange={markDirty} />
     </label>
+    <p class="hint">
+      Removes steady background noise (fans, hiss, hum) from the microphone before
+      transcription, keeping speech intact. Takes effect on the next recording — no restart needed.
+    </p>
     <label class="field">
       <span>Input gain</span>
       <input type="range" min="0.5" max="4.0" step="0.1"

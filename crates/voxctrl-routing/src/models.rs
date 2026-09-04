@@ -110,25 +110,17 @@ pub enum DeliveryType {
 /// None = inherit global config; Some(x) = override for this target.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TargetProcessingConfig {
-    pub noise_suppression: Option<bool>,
-    pub quiet_mode: Option<bool>,
-    pub atspi_context: Option<bool>,
     pub remove_fillers: Option<bool>,
     pub spoken_punctuation: Option<bool>,
     pub auto_format_lists: Option<bool>,
-    pub apply_snippets: Option<bool>,
     pub code_mode: Option<bool>,
 }
 
 impl TargetProcessingConfig {
     pub fn has_any(&self) -> bool {
-        self.noise_suppression.is_some()
-            || self.quiet_mode.is_some()
-            || self.atspi_context.is_some()
-            || self.remove_fillers.is_some()
+        self.remove_fillers.is_some()
             || self.spoken_punctuation.is_some()
             || self.auto_format_lists.is_some()
-            || self.apply_snippets.is_some()
             || self.code_mode.is_some()
     }
 }
@@ -201,13 +193,16 @@ pub struct OutputTarget {
     /// being sent to the model. Case- and punctuation-insensitive.
     pub chat_reset_phrase: Option<String>,
 
-    #[serde(default = "bool_true")]
-    pub send_on_release: bool,
-    #[serde(default = "bool_true")]
-    pub append_newline: bool,
+    /// strftime pattern for the timestamp the `file` target writes when
+    /// `file_timestamp` is on. An unusable pattern falls back to the default
+    /// rather than failing the delivery.
+    #[serde(default = "crate::timestamp::default_file_timestamp_format")]
+    pub file_timestamp_format: String,
+
+    /// Flatten the transcript onto one line before delivering it. Honored by
+    /// the `inject` and `command` targets.
     #[serde(default)]
     pub strip_newlines: bool,
-    pub initial_prompt: Option<String>,
 
     #[serde(default)]
     pub processing: TargetProcessingConfig,
@@ -272,10 +267,8 @@ impl OutputTarget {
             chat_timeout_secs: default_chat_timeout_secs(),
             chat_reply_mode: default_chat_reply_mode(),
             chat_reset_phrase: None,
-            send_on_release: true,
-            append_newline: false,
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             strip_newlines: false,
-            initial_prompt: None,
             processing: TargetProcessingConfig::default(),
             response_pipe: None,
         }

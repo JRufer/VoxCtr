@@ -14,7 +14,7 @@ VoxCtrl is a **Tauri 2** application: a compiled Rust backend that spawns a WebV
 │  └───────────────────┘      └──────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
          │                              │
-   Settings/History              Audio devices,
+   Settings                      Audio devices,
    windows                       Filesystem, DBus,
                                  Network (OpenAI API/HTTP)
 ```
@@ -47,8 +47,9 @@ VoxCtrl/
     ├── voxctrl-mcp/        # MCP JSON-RPC server (Unix socket / named pipe)
     ├── voxctrl-dbus/       # DBus service (Linux session bus)
     ├── voxctrl-llm/        # OpenAI-compatible LLM HTTP client
-    └── voxctrl-text/       # Shared snippet expansion + fuzzy vocab correction
-                             #   (used by both voxctrl-inference and voxctrl-tts)
+    ├── voxctrl-text/       # Shared snippet expansion + fuzzy vocab correction
+    │                        #   (used by both voxctrl-inference and voxctrl-tts)
+    └── voxctrl-update/     # GitHub release check, download, verify, self-replace
 ```
 
 ---
@@ -106,7 +107,7 @@ voxctrl-hotkeys ──gesture_tx──► lib.rs coordinator
                     └── pipe → named FIFO
                          │
                     Tauri event → frontend
-                    (status-tick, history update)
+                    (status-tick)
 ```
 
 ---
@@ -128,7 +129,7 @@ VoxCtrl uses Tokio for async I/O plus dedicated OS threads for latency-sensitive
 | DBus service | Tokio task | Session bus method handler |
 | TTS FIFO watcher | Tokio task | Named pipe reader for TTS input |
 
-**Shared state** is an `Arc<AppState>` with `AtomicBool`/`AtomicU32` for hot-path flags and `Mutex` for heavier data (targets, history, TTS handle).
+**Shared state** is an `Arc<AppState>` with `AtomicBool`/`AtomicU32` for hot-path flags and `Mutex` for heavier data (targets, TTS handle).
 
 **Channels** (crossbeam/tokio):
 - `audio_tx` / `audio_rx` — `Vec<f32>` chunks
@@ -157,6 +158,15 @@ App.svelte  (route switcher)
   │     ├── OpenAiTab  (labeled "OpenAI API")
   │     └── AboutTab
   │
+  ├── /wizard    → SetupWizard component (first-run setup, 7 steps)
+  │     ├── WelcomeStep
+  │     ├── EngineStep     (engine + model, downloads before continuing)
+  │     ├── HotkeyStep     (gesture + key capture, desktop registration)
+  │     ├── OverlayStep    (style + position, bundled webm previews)
+  │     ├── TestStep       (live end-to-end dictation)
+  │     ├── VoiceStep      (optional TTS engine, per-card download)
+  │     └── DoneStep       (summary + anything that failed)
+  │
   ├── /overlay   → Overlay component (web overlay layer; the on-screen HUD
   │     │          for built-in styles is the native voxctrl-overlay helper)
   │     ├── BlueWave       (default — "Ocean Wave" tide pool)
@@ -164,12 +174,11 @@ App.svelte  (route switcher)
   │     ├── Waveform       (green-phosphor oscilloscope)
   │     └── Pulse          ("Pulse Ring" sonar dial)
   │
-  └── /history   → History component
 ```
 
 **State management:**
 - `src/stores/config.ts` — reactive `AppConfig` with 400ms debounced auto-save via `save_config` IPC; also listens for `config-changed` events
-- `src/stores/status.ts` — live state from `status-tick` events + derived stores (`recording`, `speaking`, `wordCount`, `activeTargetLabel`)
+- `src/stores/status.ts` — live state from `status-tick` events + derived stores (`recording`, `speaking`, `wordCount`, `activeTargetLabel`). Falls back to polling `get_status` once a second when ticks have been absent for two, so a window the events do not reach still shows live state; while ticks are arriving it does no IPC at all
 
 ---
 

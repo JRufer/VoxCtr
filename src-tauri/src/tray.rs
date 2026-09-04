@@ -2,10 +2,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::{
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
+    Emitter,
 };
 use crate::state::AppState;
-use crate::window::{show_and_focus_window, SETUP_WINDOW};
 
 /// The tray entry that doubles as the setup indicator.
 static SETUP_MENU_ITEM: OnceLock<tauri::menu::MenuItem<tauri::Wry>> = OnceLock::new();
@@ -38,13 +37,12 @@ pub fn create_tray(app: &tauri::App) -> Result<tauri::tray::TrayIcon, tauri::Err
     let tray_icon = record_off_icon.clone();
 
     let settings_i = tauri::menu::MenuItem::with_id(app, "settings", "⚙  Settings", true, None::<&str>)?;
-    let history_i = tauri::menu::MenuItem::with_id(app, "history", "📋  History", true, None::<&str>)?;
     let setup_i = tauri::menu::MenuItem::with_id(app, "setup", TRAY_SETUP_OK, true, None::<&str>)?;
     let separator = tauri::menu::PredefinedMenuItem::separator(app)?;
     let quit_i = tauri::menu::MenuItem::with_id(app, "quit", "Quit VoxCtrl", true, None::<&str>)?;
     let menu = tauri::menu::Menu::with_items(
         app,
-        &[&settings_i, &history_i, &setup_i, &separator, &quit_i],
+        &[&settings_i, &setup_i, &separator, &quit_i],
     )?;
     let _ = SETUP_MENU_ITEM.set(setup_i);
 
@@ -55,19 +53,12 @@ pub fn create_tray(app: &tauri::App) -> Result<tauri::tray::TrayIcon, tauri::Err
         .on_menu_event(|app, event| {
             match event.id().as_ref() {
                 "settings" => {
-                    if let Some(window) = app.get_webview_window("settings") {
-                        show_and_focus_window(&window);
-                    }
-                }
-                "history" => {
-                    if let Some(window) = app.get_webview_window("history") {
-                        show_and_focus_window(&window);
+                    if let Err(e) = crate::window::open_settings_window(app) {
+                        tracing::error!("Could not open Settings: {e}");
                     }
                 }
                 "setup" => {
-                    if let Some(window) = app.get_webview_window(SETUP_WINDOW) {
-                        show_and_focus_window(&window);
-                    }
+                    crate::window::show_setup_window();
                 }
                 "quit" => {
                     app.exit(0);
@@ -77,8 +68,8 @@ pub fn create_tray(app: &tauri::App) -> Result<tauri::tray::TrayIcon, tauri::Err
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
-                if let Some(window) = tray.app_handle().get_webview_window("settings") {
-                    show_and_focus_window(&window);
+                if let Err(e) = crate::window::open_settings_window(tray.app_handle()) {
+                    tracing::error!("Could not open Settings: {e}");
                 }
             }
         })

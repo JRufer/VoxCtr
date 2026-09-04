@@ -19,8 +19,6 @@ format_version = "1.1"
 id = "default"
 label = "Focused Window"
 delivery = "inject"
-append_newline = false
-send_on_release = true
 file_timestamp = true
 
 # ── Hermes: talk, listen to the answer ───────────────────────────────────────
@@ -40,11 +38,9 @@ chat_reply_mode = "speak"
 chat_max_history = 20
 chat_timeout_secs = 120
 chat_reset_phrase = "new conversation"
-append_newline = false
-send_on_release = true
 file_timestamp = false
 # Keep the raw phrasing — the model handles disfluencies better than a filter does.
-processing = { remove_fillers = true, spoken_punctuation = false, apply_snippets = false }
+processing = { remove_fillers = true, spoken_punctuation = false }
 
 # ── Hermes: dictate a question, get the answer typed where you are ───────────
 # Useful in an editor or chat box: the reply lands as text instead of audio.
@@ -58,11 +54,9 @@ chat_system_prompt = "Answer directly and concisely. Return only the answer."
 chat_reply_mode = "inject"
 chat_max_history = 12
 chat_timeout_secs = 120
-append_newline = false
 strip_newlines = false
-send_on_release = true
 file_timestamp = false
-processing = { remove_fillers = true, spoken_punctuation = true, apply_snippets = true }
+processing = { remove_fillers = true, spoken_punctuation = true }
 
 # ── A separate, independent conversation ─────────────────────────────────────
 # History is keyed by target id, so two targets against the same server keep two
@@ -78,8 +72,6 @@ chat_reply_mode = "speak"
 chat_max_history = 0              # 0 = send the entire conversation every turn
 chat_timeout_secs = 180
 chat_reset_phrase = "start over"
-append_newline = false
-send_on_release = true
 file_timestamp = false
 
 # ── Remote provider over the same target type ────────────────────────────────

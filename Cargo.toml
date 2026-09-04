@@ -11,12 +11,13 @@ members = [
     "crates/voxctrl-mcp",
     "crates/voxctrl-llm",
     "crates/voxctrl-text",
+    "crates/voxctrl-update",
     "src-tauri",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.10"
+version = "0.4.0"
 edition = "2021"
 authors = ["VoxCtrl Contributors"]
 license = "MIT"
@@ -129,6 +130,7 @@ voxctrl-dbus     = { path = "crates/voxctrl-dbus" }
 voxctrl-mcp      = { path = "crates/voxctrl-mcp" }
 voxctrl-llm      = { path = "crates/voxctrl-llm" }
 voxctrl-text     = { path = "crates/voxctrl-text" }
+voxctrl-update   = { path = "crates/voxctrl-update" }
 
 [profile.release]
 lto = "fat"

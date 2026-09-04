@@ -48,10 +48,13 @@ VoxCtrl/
 │   ├── stores/
 │   │   ├── config.ts
 │   │   └── status.ts
+│   ├── assets/
+│   │   └── overlays/       # Bundled .webm previews of each overlay style
 │   └── lib/
 │       ├── Settings/
 │       ├── Overlay/
-│       └── History/
+│       ├── Wizard/         # First-run setup wizard (shell + steps/)
+│       ├── Diagnostics/
 │
 ├── src-tauri/              # Tauri application shell
 │   ├── Cargo.toml
@@ -171,6 +174,33 @@ npm run tauri build -- --no-default-features --features custom-protocol
 In such a build, selecting Moonshine falls back to whisper-cpp, and the Inflect
 TTS engine still downloads its model but leaves Test TTS disabled — only
 synthesis is gated.
+
+### Breeze-TTS-2 on the GPU (opt-in)
+
+Breeze-TTS-2 runs on candle, whose GPU backends are CUDA and Metal — there is no
+Vulkan backend to select. Neither is on by default, because each needs its
+toolchain at build time:
+
+```bash
+npm run tauri build -- --features breeze-cuda    # NVIDIA
+npm run tauri build -- --features breeze-metal   # macOS
+```
+
+Without one of these, `tts.breeze_tts_2.gpu` has nothing to switch to: the
+setting is saved, a warning is logged, and synthesis stays on the CPU. The same
+fallback covers a GPU that fails to open at runtime.
+
+### Noise suppression
+
+RNNoise sits behind `noisereduce` on `voxctrl-audio`, and `src-tauri` enables it,
+so a normal build can honor the Audio tab's noise-suppression toggle. Building
+`voxctrl-audio` on its own (or with `--no-default-features` on that crate) leaves
+it out, and the toggle then logs a warning and passes audio through unchanged.
+Its tests need the feature:
+
+```bash
+cargo test -p voxctrl-audio --features noisereduce
+```
 # Or use the helper script:
 .\scripts\build_windows.ps1 -Cuda
 ```
@@ -231,13 +261,13 @@ Defines `OutputTarget`, `HotkeyBinding`, `DeliveryType`, `TargetProcessingConfig
 
 ---
 
-## Adding a New Output Target Type
+## Adding a New Output Command Delivery Type
 
 1. Add a variant to `DeliveryType` enum in `crates/voxctrl-routing/src/models.rs`
 2. Add any target-specific fields to `OutputTarget` in `crates/voxctrl-routing/src/models.rs`
 3. Add a match arm in the router dispatch logic in `crates/voxctrl-routing/src/router.rs`
 4. Update the TypeScript `OutputTarget` interface in `src/stores/config.ts`
-5. Add the new type to the delivery type selector in `src/lib/Settings/RoutingTab.svelte`
+5. Add the new type to the "Delivery System" selector in `src/lib/Settings/TargetEditorModal.svelte` (opened from `CommandsTab.svelte`, the Output Commands tab)
 6. Document in `docs/routing.md`
 
 ---

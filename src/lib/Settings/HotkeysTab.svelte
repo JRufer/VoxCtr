@@ -272,7 +272,7 @@
   // --- CRUD Hotkey Bindings ---
   function addNewBinding() {
     if (targets.length === 0) {
-      alert("Please create at least one Output Target before making a hotkey binding.");
+      alert("Please create at least one Output Command before making a hotkey binding.");
       return;
     }
     isEditingBindingNew = true;
@@ -396,12 +396,12 @@
     if (editingBinding.target_ids && editingBinding.target_ids.length > 0) {
       editingBinding.target_ids = editingBinding.target_ids.filter(id => id.trim() !== "");
       if (editingBinding.target_ids.length === 0) {
-        alert("Please assign at least one Output Target.");
+        alert("Please assign at least one Output Command.");
         return;
       }
       const uniqueIds = new Set(editingBinding.target_ids);
       if (uniqueIds.size !== editingBinding.target_ids.length) {
-        alert("Duplicate targets detected.\nYou cannot assign the same Output Target multiple times to a single keybind.");
+        alert("Duplicate commands detected.\nYou cannot assign the same Output Command multiple times to a single keybind.");
         return;
       }
       editingBinding.target_id = editingBinding.target_ids[0];
@@ -602,6 +602,7 @@
       delivery: "inject",
       file_prefix: "- ",
       file_timestamp: true,
+      file_timestamp_format: "%Y-%m-%dT%H:%M:%SZ",
       file_mode: "append",
       http_method: "POST",
       http_json_template: { text: "{text}" },
@@ -611,12 +612,8 @@
       chat_max_history: 20,
       chat_timeout_secs: 120,
       chat_reply_mode: "speak",
-      send_on_release: false,
-      append_newline: true,
       strip_newlines: false,
-      processing: {
-        apply_snippets: true,
-      }
+      processing: {},
     };
   }
 
@@ -879,7 +876,7 @@
 
         <div class="field col">
           <div class="field-label-row">
-            <span class="field-title">Assign to Output Targets</span>
+            <span class="field-title">Assign to Output Commands</span>
             <button class="btn-add-inline" type="button" onclick={addBindingTarget}>
               ＋ Add Target
             </button>

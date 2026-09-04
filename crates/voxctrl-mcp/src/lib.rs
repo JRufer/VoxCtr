@@ -76,6 +76,13 @@ pub trait McpCallbacks: Send + Sync + 'static {
 
     /// Get current status flags.
     fn get_status(&self) -> impl std::future::Future<Output = (bool, bool)> + Send;
+
+    /// The user's configured recording timeout (Settings → General → Record
+    /// timeout), in seconds. Used for `transcribe_voice` whenever the caller
+    /// does not pass an explicit `timeout_seconds`, and advertised as the
+    /// default in the tool schema. Read per call so a change in Settings
+    /// applies without restarting the server.
+    fn default_record_timeout(&self) -> impl std::future::Future<Output = f64> + Send;
 }
 
 // ── Server ────────────────────────────────────────────────────────────────────
@@ -203,7 +210,7 @@ async fn dispatch<C: McpCallbacks>(raw: &str, cb: &Arc<C>) -> Option<JsonRpcResp
             JsonRpcResponse::ok(id, json!({}))
         }
         "tools/list" => {
-            JsonRpcResponse::ok(id, get_tool_list())
+            JsonRpcResponse::ok(id, get_tool_list(cb.default_record_timeout().await))
         }
         "tools/call" => {
             let name = req.params.as_ref()
@@ -228,18 +235,18 @@ async fn dispatch<C: McpCallbacks>(raw: &str, cb: &Arc<C>) -> Option<JsonRpcResp
 
 // ── Tool List Definition ──────────────────────────────────────────────────────
 
-fn get_tool_list() -> Value {
+fn get_tool_list(default_record_timeout: f64) -> Value {
     json!({
         "tools": [
             {
                 "name": "transcribe_voice",
-                "description": "Records the user's voice through their microphone and returns the transcribed text.\n\nHOW IT WORKS:\n  Calling this tool immediately activates the user's microphone. The user speaks, and when they stop (or the timeout is reached) the audio is transcribed locally using Whisper and the text is returned. The microphone indicator in the app's system tray will show a recording state while this tool is active.\n\nWHEN TO USE:\n  - Whenever you need a spoken response or clarification from the user.\n  - To conduct a voice-driven conversation: speak a question with speak_text, then call transcribe_voice to capture the answer.\n  - When the user has indicated they prefer to respond by voice rather than typing.\n  - To capture dictated content such as notes, messages, or commands.\n\nWHEN NOT TO USE:\n  - Do not call while get_status shows recording=true (a recording is already in progress). Check status first if unsure.\n  - Do not call while get_status shows speaking=true; wait for TTS to finish so the microphone does not pick up the synthesised voice.\n  - Do not loop rapidly on empty results; if '(no speech detected)' is returned twice in a row, inform the user and wait for a typed prompt instead.\n\nPARAMETERS:\n  timeout_seconds (number, optional, default 15): Maximum wall-clock seconds to wait for the user to finish speaking. Use a shorter value (5–8 s) for quick yes/no questions. Use a longer value (30–60 s) when asking the user to dictate a paragraph or give detailed instructions.\n\nRETURN VALUE:\n  A plain-text string containing the transcribed speech. If no speech was detected within the timeout the string will be '(no speech detected)'. The transcript may contain minor errors from the speech model; treat it as lightly noisy text and correct obvious errors from context before acting on it.\n\nEXAMPLE FLOW — voice Q&A:\n  1. speak_text(\"What city are you in?\")\n  2. transcribe_voice(timeout_seconds=10)  → \"I'm in Seattle\"\n  3. Use 'Seattle' in subsequent tool calls or responses.\n\nEXAMPLE FLOW — voice dictation:\n  1. speak_text(\"Please dictate your message now.\")\n  2. transcribe_voice(timeout_seconds=45)  → full dictated message\n  3. Present the transcript back to the user for confirmation before sending.",
+                "description": "Records the user's voice through their microphone and returns the transcribed text.\n\nHOW IT WORKS:\n  Calling this tool immediately activates the user's microphone. The user speaks, and when they stop (or the timeout is reached) the audio is transcribed locally using Whisper and the text is returned. The microphone indicator in the app's system tray will show a recording state while this tool is active.\n\nWHEN TO USE:\n  - Whenever you need a spoken response or clarification from the user.\n  - To conduct a voice-driven conversation: speak a question with speak_text, then call transcribe_voice to capture the answer.\n  - When the user has indicated they prefer to respond by voice rather than typing.\n  - To capture dictated content such as notes, messages, or commands.\n\nWHEN NOT TO USE:\n  - Do not call while get_status shows recording=true (a recording is already in progress). Check status first if unsure.\n  - Do not call while get_status shows speaking=true; wait for TTS to finish so the microphone does not pick up the synthesised voice.\n  - Do not loop rapidly on empty results; if '(no speech detected)' is returned twice in a row, inform the user and wait for a typed prompt instead.\n\nPARAMETERS:\n  timeout_seconds (number, optional): Maximum wall-clock seconds to wait for the user to finish speaking. Use a shorter value (5–8 s) for quick yes/no questions. Use a longer value (30–60 s) when asking the user to dictate a paragraph or give detailed instructions.\n\nRETURN VALUE:\n  A plain-text string containing the transcribed speech. If no speech was detected within the timeout the string will be '(no speech detected)'. The transcript may contain minor errors from the speech model; treat it as lightly noisy text and correct obvious errors from context before acting on it.\n\nEXAMPLE FLOW — voice Q&A:\n  1. speak_text(\"What city are you in?\")\n  2. transcribe_voice(timeout_seconds=10)  → \"I'm in Seattle\"\n  3. Use 'Seattle' in subsequent tool calls or responses.\n\nEXAMPLE FLOW — voice dictation:\n  1. speak_text(\"Please dictate your message now.\")\n  2. transcribe_voice(timeout_seconds=45)  → full dictated message\n  3. Present the transcript back to the user for confirmation before sending.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "timeout_seconds": {
                             "type": "number",
-                            "description": "Maximum seconds to wait for the user to finish speaking. Defaults to 15. Use 5–8 for short answers, 30–60 for dictation."
+                            "description": format!("Maximum seconds to wait for the user to finish speaking. Defaults to {default_record_timeout} (the Record timeout set in VoxCtrl Settings). Use 5–8 for short answers, 30–60 for dictation.")
                         }
                     }
                 }
@@ -275,10 +282,10 @@ fn get_tool_list() -> Value {
 async fn call_tool<C: McpCallbacks>(name: &str, args: Option<&Value>, cb: &Arc<C>) -> Result<Value> {
     match name {
         "transcribe_voice" => {
-            let timeout = args
-                .and_then(|a| a.get("timeout_seconds"))
-                .and_then(|t| t.as_f64())
-                .unwrap_or(15.0);
+            let timeout = match args.and_then(|a| a.get("timeout_seconds")).and_then(|t| t.as_f64()) {
+                Some(t) => t,
+                None => cb.default_record_timeout().await,
+            };
 
             let text = cb.transcribe_voice(timeout).await?;
             Ok(json!({
@@ -324,5 +331,121 @@ async fn call_tool<C: McpCallbacks>(name: &str, args: Option<&Value>, cb: &Arc<C
             }))
         }
         other => Err(anyhow::anyhow!("Unknown tool: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Records the timeout `transcribe_voice` was actually called with, and
+    /// reports a configured default distinguishable from the old hard-coded
+    /// 15.0 so a regression cannot pass by coincidence.
+    struct FakeApp {
+        configured_timeout: f64,
+        /// Last timeout seen by `transcribe_voice`, as f64 bits.
+        seen: AtomicU64,
+    }
+
+    impl FakeApp {
+        fn new(configured_timeout: f64) -> Arc<Self> {
+            Arc::new(Self {
+                configured_timeout,
+                seen: AtomicU64::new(f64::NAN.to_bits()),
+            })
+        }
+
+        fn seen_timeout(&self) -> f64 {
+            f64::from_bits(self.seen.load(Ordering::SeqCst))
+        }
+    }
+
+    impl McpCallbacks for FakeApp {
+        fn transcribe_voice(
+            &self,
+            timeout_secs: f64,
+        ) -> impl std::future::Future<Output = Result<String>> + Send {
+            async move {
+                self.seen.store(timeout_secs.to_bits(), Ordering::SeqCst);
+                Ok("hello".to_string())
+            }
+        }
+
+        fn speak_text(&self, _text: String) -> impl std::future::Future<Output = Result<()>> + Send {
+            async move { Ok(()) }
+        }
+
+        fn get_status(&self) -> impl std::future::Future<Output = (bool, bool)> + Send {
+            async move { (false, false) }
+        }
+
+        fn default_record_timeout(&self) -> impl std::future::Future<Output = f64> + Send {
+            async move { self.configured_timeout }
+        }
+    }
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    fn transcribe_request(arguments: Value) -> String {
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "transcribe_voice", "arguments": arguments},
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn omitted_timeout_uses_the_configured_record_timeout() {
+        let app = FakeApp::new(42.0);
+        let res = block_on(dispatch(&transcribe_request(json!({})), &app));
+
+        assert!(res.is_some(), "request produced no response");
+        assert_eq!(app.seen_timeout(), 42.0);
+    }
+
+    #[test]
+    fn missing_arguments_object_still_uses_the_configured_timeout() {
+        let app = FakeApp::new(7.5);
+        let raw = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "transcribe_voice"},
+        })
+        .to_string();
+
+        block_on(dispatch(&raw, &app));
+        assert_eq!(app.seen_timeout(), 7.5);
+    }
+
+    #[test]
+    fn explicit_timeout_wins_over_the_configured_one() {
+        let app = FakeApp::new(42.0);
+        block_on(dispatch(
+            &transcribe_request(json!({"timeout_seconds": 3.0})),
+            &app,
+        ));
+        assert_eq!(app.seen_timeout(), 3.0);
+    }
+
+    #[test]
+    fn tool_schema_advertises_the_configured_timeout() {
+        let app = FakeApp::new(42.0);
+        let raw = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).to_string();
+        let res = block_on(dispatch(&raw, &app)).expect("no response");
+
+        let described = serde_json::to_string(&res.result.unwrap()).unwrap();
+        assert!(
+            described.contains("Defaults to 42"),
+            "tools/list did not advertise the configured default: {described}"
+        );
     }
 }

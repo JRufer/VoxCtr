@@ -6,28 +6,38 @@
 
 VoxCtrl's routing system decouples *what you say* from *where it goes*. You define:
 
-- **Output Targets** (`targets.toml`) — named delivery destinations
-- **Hotkey Bindings** (`bindings.toml`) — which keys trigger which targets
+- **Output Commands** (`targets.toml`) — named delivery destinations
+- **Hotkey Bindings** (`bindings.toml`) — which keys trigger which commands
+
+> [!NOTE]
+> Output Commands are called *targets* everywhere below the UI: the file is
+> `targets.toml`, each block is `[[target]]`, bindings reference `target_id`,
+> and the Tauri commands are `get_targets` / `save_targets`. Only the name the
+> app shows you changed; nothing on disk did.
 
 Both files are hot-reloaded when changed on disk.
 
 ---
 
-## Output Targets
+## Output Commands
 
 Defined in `~/.config/voxctrl/targets.toml`. Each `[[target]]` block describes one destination.
+
+**Saying one by name.** Start dictation and say *"VoxCtrl"*, then the command's
+name, then the text: *"VoxCtrl notes, remember to call the plumber"* delivers
+*remember to call the plumber* to the command named **notes**, whatever the
+active hotkey was pointed at. Everything after the name is the payload. The full
+matching rules — conversational lead-ins, fuzzy name matching, the overlay —
+are under [`command` — Voice Command Router](#command--voice-command-router).
 
 ### Common Fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `id` | string | required | Unique identifier, referenced by bindings |
-| `label` | string | required | Display name in the UI |
+| `label` | string | required | The target's name — shown in the UI, and spoken to route dictation here through a `command` target (see [Voice Command Router](#command--voice-command-router)) |
 | `delivery` | string | required | Delivery type (see below) |
-| `append_newline` | bool | `true` | Append `\n` after injected text |
-| `strip_newlines` | bool | `false` | Replace newlines (`\n`) with spaces and strip carriage returns (`\r`) (Inject only) |
-| `send_on_release` | bool | `true` | Wait for hotkey release before delivering |
-| `initial_prompt` | string | null | Whisper context prompt override for this target |
+| `strip_newlines` | bool | `false` | Replace newlines (`\n`) with spaces and strip carriage returns (`\r`). Honored by the `inject` and `command` targets |
 | `processing` | object | (inherit) | Per-target post-processing overrides |
 | `response_pipe` | string | null | FIFO path for TTS response output |
 
@@ -47,6 +57,11 @@ id = "default"
 label = "Focused Window"
 delivery = "inject"
 ```
+
+Delivered text always ends with a single space, so consecutive dictations do
+not run their last and first words together; text that already ends in
+whitespace is left alone. The clipboard target does the same. Nothing appends a
+newline.
 
 Linux injection priority:
 1. `wtype` (Wayland)
@@ -79,9 +94,21 @@ label = "Meeting Notes"
 delivery = "file"
 file_path = "~/Documents/notes.md"
 file_prefix = "- "        # Prepend to each entry
-file_timestamp = true     # Prepend ISO timestamp (default: true)
+file_timestamp = true     # Prepend a timestamp (default: true)
+file_timestamp_format = "%Y-%m-%dT%H:%M:%SZ"   # strftime pattern, UTC
 file_mode = "append"      # "append" or "write" (default: "append")
 ```
+
+With `file_timestamp` on, each line is prefixed with `[<timestamp>] `.
+`file_timestamp_format` is a chrono
+[strftime](https://docs.rs/chrono/latest/chrono/format/strftime/index.html)
+pattern rendered in UTC — `%Y` year, `%m` month, `%d` day, `%H` hour, `%M`
+minute, `%S` second, `%b` month name, `%a` weekday, `%p` AM/PM, `%Z` zone,
+`%%` a literal percent; anything else is written as typed. The target editor
+previews the pattern as you type and flags one it cannot render. A pattern that
+is unusable at delivery time falls back to the default,
+`%Y-%m-%dT%H:%M:%SZ`, with a warning — a bad format never costs you the
+dictation.
 
 ---
 
@@ -226,6 +253,12 @@ label = "Voice Command Router"
 delivery = "command"
 ```
 
+On a new install the first-run wizard creates this target, named "Command", and
+binds the first hotkey to it. Until a second target exists it behaves exactly
+like `inject` — a transcription with no trigger keyword in it falls through to
+typing into the focused window — so voice command routing works the day another
+target is added, with no re-binding.
+
 **How Voice Command Routing Works:**
 - **Trigger Keyword**: Listens for the `"VoxCtrl"` keyword (case-insensitive, supporting `VoxCtrl`, `voxctrl`, `vox ctrl`, `vox-ctrl`, and optional punctuation like `VoxCtrl:`).
 - **Target Resolution**: Matches spoken target names against all configured target IDs and Labels (case-insensitively). Longest candidate target names take precedence (e.g. `"Personal Notes"` is matched before `"Notes"`).
@@ -279,8 +312,8 @@ by the *Reset conversation* button in the target editor, or by restarting VoxCtr
 never written to disk.
 
 **Reply handling.** `speak` requires TTS to be enabled under Settings → TTS. `inject`
-types the reply into the focused window and honours the target's `strip_newlines` and
-`append_newline` settings. `none` runs the conversation without surfacing replies.
+types the reply into the focused window and honours the target's `strip_newlines`
+setting. `none` runs the conversation without surfacing replies.
 
 **Failure behaviour.** If the request fails, times out, or returns an empty completion,
 the unanswered turn is rolled back so it is not resent on the next dictation.
@@ -294,7 +327,7 @@ the unanswered turn is rolled back so it is not resent on the next dictation.
 
 ### Per-Target Processing
 
-Each target can override global post-processing settings. All fields are optional (`null` = inherit global config):
+Each target can override global post-processing settings. All fields are optional (`null` = inherit global config). Snippet expansion is not among them — snippets always apply, and are switched off only by defining none.
 
 ```toml
 [[target]]
@@ -307,10 +340,6 @@ code_mode = true
 remove_fillers = false
 spoken_punctuation = true
 auto_format_lists = false
-apply_snippets = true
-atspi_context = true
-noise_suppression = false
-quiet_mode = false
 ```
 
 > [!NOTE]
@@ -419,7 +448,7 @@ Shadowing is resolved when a key goes *down*. Releasing `CTRL` part-way through 
 
 1. Look up target by `target_id` from the in-memory cache
 2. Apply per-target `processing` overrides (inheriting globals for null fields)
-3. Build delivery payload (append newline, prefix, timestamp)
+3. Build delivery payload (single-line flattening, trailing space, prefix, timestamp)
 4. Dispatch to the appropriate delivery handler
 5. On error (socket unavailable, file unwritable, etc.), log the failure and continue — never crashes or drops the UI
 

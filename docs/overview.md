@@ -4,7 +4,7 @@
 
 VoxCtrl ("Voice Controller") is a desktop dictation application that turns your voice into text and routes it wherever you need it — injected directly into the focused window, saved to a file, sent to an HTTP endpoint, or handed off to an LLM agent via the MCP protocol.
 
-It is designed as a **programmable voice input broker**: you define output targets (where text goes) and hotkey bindings (what keys trigger recording for which targets), and VoxCtrl handles the rest.
+It is designed as a **programmable voice input broker**: you define output commands (where text goes) and hotkey bindings (what keys trigger recording for which commands), and VoxCtrl handles the rest. A command can also be picked mid-sentence by saying "VoxCtrl" and its name.
 
 Everything runs locally. No audio ever leaves your machine.
 
@@ -18,6 +18,9 @@ Everything runs locally. No audio ever leaves your machine.
 - **Whisper speech recognition** — the same model family powering OpenAI's transcription API, running entirely on-device
 - **GPU acceleration** — automatic CUDA or Vulkan selection when available; falls back to CPU
 - **Multiple model sizes** — tiny through large-v3, trading speed for accuracy
+
+### First-Run Setup
+A seven-step wizard runs the first time VoxCtrl starts on a machine with no config file, covering the choices the app cannot make for you: transcription engine and model size, hotkey gesture and key combination, on-screen overlay, a live end-to-end dictation test, and optional speech output. Choices are written to the config as they are made rather than at the end, so a wizard that is quit halfway still leaves the app configured as far as it got. The final screen reports anything that failed — a model that would not download, a shortcut the desktop refused — with the underlying error, rather than claiming the app is ready.
 
 ### Privacy & Offline Operation
 - Zero network requests during normal operation
@@ -69,9 +72,6 @@ VoxCtrl exposes a Model Context Protocol server so LLM agents (Claude Desktop, C
 
 ### DBus Service (Linux)
 Exposes `ai.voxctrl.Dictation` on the session bus for shell scripts and desktop integrations to start/stop recording and receive text output as signals.
-
-### History
-Maintains an in-memory transcript log with word count, timestamps, and source target. Viewable in a dedicated history window.
 
 ---
 

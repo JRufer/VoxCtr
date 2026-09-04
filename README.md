@@ -15,7 +15,7 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 * **VoxCtrl does not read your keyboard**: Global shortcuts are registered with your desktop through the XDG `GlobalShortcuts` portal. Your desktop owns the key grab and tells VoxCtrl exactly one thing — that its own shortcut fired. VoxCtrl cannot see what you type in your browser, your terminal, or your password manager, because it is never given the data.
 * **No permissions to grant**: No udev rule, no `input` group, no logout, no reboot. There is nothing to undo later, and installing VoxCtrl does not change your machine's security posture. *(Earlier versions installed a udev rule granting read access to every input device. That has been removed — see [why](docs/hotkeys.md#why-this-changed).)*
 * **No Cloud API Keys Required**: VoxCtrl relies exclusively on OpenAI's Whisper models (via native CPU/GPU accelerated `whisper-rs`) running directly on your local hardware.
-* **No Telemetry**: Your ambient microphone data never leaves your machine. There are no hidden tracking scripts or analytical pings.
+* **No Telemetry**: Your ambient microphone data never leaves your machine. There are no hidden tracking scripts or analytical pings. The one request VoxCtrl makes on its own is the update check — a plain GET to GitHub's public release listing, carrying nothing about you, and off with one tick in Settings → General.
 * **Air-Gapped Ready**: Once the application and models are downloaded, VoxCtrl requires zero internet access to function.
 * **Local Neural Voices**: All text-to-speech feedback is generated offline by a local engine — Breeze-TTS-2, Piper, Pocket-TTS, Inflect-Micro-v2, or eSpeak-NG.
 
@@ -38,23 +38,33 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 ## 🌟 Key Features
 
 * **High-Performance Offline Speech Recognition**: Local on-device inference using native `whisper.cpp` (via `whisper-rs`) supporting multi-threaded CPU execution. NVIDIA CUDA GPU acceleration is available as an opt-in compile-time feature (`--features cuda`); Vulkan acceleration (AMD/Intel/NVIDIA) works in the standard build. The Moonshine ONNX backend is compiled in by default.
-* **Modern GUI & Tray System**: A sleek Svelte-based user interface with dedicated, swappable, fully animated overlays (Ocean Wave, Voice Card, Waveform, and Pulse Ring), a searchable transcription history panel, and a native desktop System Tray utility.
-* **Low-Latency Audio Loop**: Streamlined recording and VAD (Voice Activity Detection) built using `cpal` to minimize capture latency.
+* **First-Run Setup Wizard**: A new machine is walked through setup in seven steps — pick a transcription engine and model size (downloaded before you continue), bind a hotkey and register it with your desktop, choose an overlay, dictate a live test, and optionally add a voice — instead of being dropped into a settings window full of defaults nobody chose. Every choice is written to the config as it is made, so quitting halfway keeps what you picked. Reachable again afterwards with `voxctrl --setup`, or Settings → General → "Open setup wizard".
+* **Self-Updating**: VoxCtrl checks GitHub for a newer release on launch, shows what changed, and — if you say yes — downloads the build matching your installation (CPU AppImage, Vulkan AppImage or Windows installer), verifies it against the checksum GitHub published, replaces itself and restarts. Nothing is replaced until a complete, verified file is on disk, so a failed update leaves the working version alone. The check is one unauthenticated request carrying no identifier, and Settings → General turns it off.
+* **Modern GUI & Tray System**: A sleek Svelte-based user interface with dedicated, swappable, fully animated overlays (Ocean Wave, Voice Card, Waveform, and Pulse Ring), and a native desktop System Tray utility.
+* **Low-Latency Audio Loop**: Streamlined recording and VAD (Voice Activity Detection) built using `cpal` to minimize capture latency, with optional RNNoise background-noise suppression on the capture path.
 * **Built-in Model Context Protocol (MCP) Server**: Exposes voice dictation and speech synthesis as high-level JSON-RPC tools to AI clients (like Claude Desktop or Cursor) via local secure sockets—keeping integrations fully local.
 * **Privacy-Preserving Global Hotkeys**: Shortcuts are registered with your desktop through the XDG `GlobalShortcuts` portal (KDE Plasma, GNOME 48+, Hyprland), so VoxCtrl receives its own shortcuts and never reads a keystroke. Bind hold-to-talk, toggle-to-talk, double-tap, or double-tap & hold gestures. Works identically on Wayland and X11, with no permission setup at all.
 * **DBus Dictation Service**: Exposes `ai.voxctrl.Dictation` on the local Linux session bus, letting you script recording states securely without network exposure.
-* **Neural Text-to-Speech (TTS)**: Built-in local voice feedback with a choice of engines — **Breeze-TTS-2** (neural, voice design from natural language prompts; gated HF download under non-commercial license), **Piper** (neural, high quality), **Pocket-TTS** (neural, clones a voice from a reference clip), **Inflect-Micro-v2** (neural, 38 MB ONNX), and **eSpeak-NG** (lightweight, always available) — with automatic local package installation and an in-app model downloader.
+* **Neural Text-to-Speech (TTS)**: Built-in local voice feedback with a choice of engines — **Breeze-TTS-2** (neural, voice design from natural language prompts; gated HF download under non-commercial license, optional CUDA/Metal GPU offload), **Piper** (neural, high quality), **Pocket-TTS** (neural, clones a voice from a reference clip), **Inflect-Micro-v2** (neural, 38 MB ONNX), and **eSpeak-NG** (lightweight, always available) — with automatic local package installation and an in-app model downloader.
 * **Intelligent Post-Processing & LLM Rewriting**: Real-time automatic filler-word cleanup (e.g. stripping "um", "uh", "hmm") to sanitize dictation, combined with optional post-processing through any **OpenAI-compatible API server** (a local [Ollama](https://ollama.ai/) or LM Studio instance, or a hosted provider) for real-time grammar correction, tone rewriting, or custom formatting. Point it at any URL and supply an API key when the server requires one.
 
 ---
 
-## 🎯 The Deep Targeting System
+## 🎯 Output Commands — The Deep Targeting System
 
-The core of VoxCtrl is its **Output Target Router**. Rather than simply pasting text where your cursor is, VoxCtrl allows you to declare **named output targets** in `targets.toml` and bind them to different global keyboard gestures. This turns your voice into a programmable router.
+The core of VoxCtrl is its **Output Command Router**. Rather than simply pasting text where your cursor is, VoxCtrl allows you to declare **named output commands** in `targets.toml` and bind them to different global keyboard gestures. This turns your voice into a programmable router.
 
-**New in v0.1:** You can now bind **multiple targets** to a single hotkey gesture! When activated, your text is broadcast concurrently to all bound targets. Configurations also **hot-reload instantly** in the background, without requiring an app restart.
+**Say a command by name.** Start dictation and say *"VoxCtrl"*, then the command's
+name, then what you want to send — *"VoxCtrl notes, remember to call the plumber"*
+routes *remember to call the plumber* to the command named **notes**. Everything
+after the name is the text, natural phrasing works (*"VoxCtrl, add this to my
+notes: …"*), and a dictation with no such phrase in it simply goes wherever your
+hotkey already points. See [docs/routing.md](docs/routing.md#command--voice-command-router)
+for the full matching rules.
 
-Below are the 11 target types supported by VoxCtrl and what they are used for:
+**New in v0.1:** You can now bind **multiple commands** to a single hotkey gesture! When activated, your text is broadcast concurrently to all bound commands. Configurations also **hot-reload instantly** in the background, without requiring an app restart.
+
+Below are the 11 delivery types supported by VoxCtrl and what they are used for:
 
 | Delivery Type | Mechanism | Perfect Use Case |
 | :--- | :--- | :--- |
@@ -107,7 +117,7 @@ Below are the 11 target types supported by VoxCtrl and what they are used for:
                                  │ (transcription, target_id)
                                  ▼
                   ┌──────────────────────────────┐
-                  │     Output Target Router     │
+                  │     Output Command Router    │
                   │      (targets.toml)          │
                   └───────┬───────┬────────┬─────┘
                           │       │        │
@@ -134,7 +144,7 @@ VoxCtrl provides a clean, native settings window and overlay environment:
 ![Settings Panel](assets/settings.png)
 
 ### 📌 Interactive Settings UI
-* **General tab**: Configure core system attributes, including the local MCP JSON-RPC server toggles, record timeouts, and Wayland/X11 AT-SPI2 text injection behaviors.
+* **General tab**: Configure core system attributes, including the local MCP JSON-RPC server toggles and record timeouts.
 * **Visual tab**: A premium Cyber Obsidian interface that groups all aesthetic and presentation settings. It features an interactive **Overlay Style Selector** (supporting Voice Card, Waveform, Pulse Ring, Ocean Wave, Mono Bars, Neon Spectrum, Retro Terminal, Analog VU, or Disabled styles), toggles for displaying heads-up HUD overlays while speaking, **Command Trigger Overlay toggles and duration sliders**, and controls for sending system notifications on transcription. It also lets you configure if the Settings window should open automatically at launch or start minimized in the system tray.
 
 ### 🎨 Heads-Up HUD Overlay Styles
@@ -174,12 +184,12 @@ Whenever a voice command trigger is matched (e.g. *"VoxCtrl notes Help me!"*), V
 VoxCtrl features a native Model Context Protocol (MCP) server listening on a local Unix socket at `/tmp/voxctrl-mcp.sock`. This allows advanced LLM agents (such as **Claude Desktop** or **Cursor**) to interface directly with your voice and speak responses back to you.
 
 ### Exposed MCP Tools
-1. **`transcribe_voice(timeout_secs)`**: Prompts the application to open your default recording device, capture speech, transcribe it using the Whisper engine, and return the raw text to the model.
+1. **`transcribe_voice(timeout_seconds)`**: Prompts the application to open your default recording device, capture speech, transcribe it using the Whisper engine, and return the raw text to the model. The argument is optional — omit it and VoxCtrl listens for the **Record timeout** configured in Settings → General.
 2. **`speak_text(text)`**: Queues text to be spoken aloud locally on the user's host machine using the configured neural TTS engine.
 3. **`get_status()`**: Returns a JSON object with boolean states indicating whether the microphone is currently recording or the TTS engine is currently speaking.
 
 ### 🎯 Generic MCP Routing Target
-VoxCtrl supports routing transcribed text directly to any local or networked MCP server via its **Output Target Router** using the `mcp` delivery type in `targets.toml`. 
+VoxCtrl supports routing transcribed text directly to any local or networked MCP server via its **Output Command Router** using the `mcp` delivery type in `targets.toml`. 
 
 The client is fully standard-compliant (Option B, performing `initialize` -> `notifications/initialized` -> `tools/call` handshakes on socket connect) to guarantee maximum compatibility with strict third-party MCP servers.
 
@@ -290,7 +300,8 @@ Once set up, you can execute the application in three ways:
 All configurations are stored locally inside `~/.config/voxctrl/`.
 
 ### `targets.toml`
-Defines the output target router destinations:
+Defines your Output Commands. The file and its `[[target]]` blocks keep their
+original names on disk, so an existing config needs no changes:
 ```toml
 format_version = "1.1"
 
@@ -298,7 +309,6 @@ format_version = "1.1"
 id = "default"
 label = "Focused Window"
 delivery = "inject"
-append_newline = false
 
 [[target]]
 id = "notes"
@@ -307,6 +317,7 @@ delivery = "file"
 file_path = "~/Documents/meeting_notes.md"
 file_prefix = "- "
 file_timestamp = true
+file_timestamp_format = "%Y-%m-%dT%H:%M:%SZ"
 
 [[target]]
 id = "cmd_router"
@@ -348,8 +359,8 @@ Supported gestures are `hold`, `toggle`, `double_tap` and `double_tap_hold`.
 See [docs/hotkeys.md](docs/hotkeys.md) for how each behaves and how to tune the
 double-tap timings.
 
-### Multi-Target Hotkey Bindings
-VoxCtrl supports routing your speech to **multiple output targets simultaneously** using a single hotkey gesture! 
+### Multi-Command Hotkey Bindings
+VoxCtrl supports routing your speech to **multiple Output Commands simultaneously** using a single hotkey gesture! 
 
 When a multi-target binding is activated:
 1. Your speech is captured and transcribed **once**.

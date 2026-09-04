@@ -10,12 +10,11 @@ export interface AppConfig {
   openai: OpenAiConfig;
   tts: TtsConfig;
   mcp: McpConfig;
-  atspi: AtspiConfig;
+  updates: UpdateConfig;
 }
 
 export interface EngineConfig {
-  backend: "auto" | "whisper-cpp" | "moonshine";
-  inference_mode: "Balanced" | "Aggressive";
+  backend: "whisper-cpp" | "moonshine";
   whisper_cpp: WhisperCppConfig;
   moonshine: MoonshineConfig;
 }
@@ -34,7 +33,6 @@ export interface MoonshineConfig {
 
 export interface AudioConfig {
   vad_threshold: number;
-  min_silence_duration_ms: number;
   input_device_index: number | null;
   evdev_device: string | null;
   noise_suppression: boolean;
@@ -49,7 +47,6 @@ export interface UiConfig {
   overlay_monitor: string;
   auto_show_settings: boolean;
   show_notification: boolean;
-  history_enabled: boolean;
   show_command_overlay: boolean;
   command_overlay_duration_secs: number;
 }
@@ -59,7 +56,6 @@ export interface FeaturesConfig {
   custom_vocabulary: string[];
   spoken_punctuation: boolean;
   auto_format_lists: boolean;
-  quiet_mode: boolean;
   snippets: Record<string, string>;
 }
 
@@ -78,7 +74,6 @@ export interface OpenAiConfig {
 export interface PocketTtsConfig {
   voice: string;
   prewarm: boolean;
-  hf_token: string | null;
   voice_dir: string;
 }
 
@@ -92,10 +87,8 @@ export interface InflectMicroConfig {
 export interface BreezeTts2Config {
   speaker_prompt: string;
   model_dir: string;
-  hf_token: string | null;
   prewarm: boolean;
   gpu: boolean;
-  temperature: number;
 }
 
 export interface TtsConfig {
@@ -107,11 +100,12 @@ export interface TtsConfig {
   response_overlay: boolean;
   speed: number;
   gpu: boolean;
+  /** One HuggingFace token for every gated model the app downloads. */
+  hf_token: string | null;
   pocket_tts: PocketTtsConfig;
   inflect_micro: InflectMicroConfig;
   breeze_tts_2: BreezeTts2Config;
   snippets: Record<string, string>;
-  custom_vocabulary: string[];
 }
 
 export interface McpConfig {
@@ -120,16 +114,16 @@ export interface McpConfig {
   visual_feedback: boolean;
 }
 
-export interface AtspiConfig {
-  injection: boolean;
-  context_prompt: boolean;
-  auto_code_mode: boolean;
+export interface UpdateConfig {
+  /** Ask GitHub for a newer release when the app starts. */
+  auto_check: boolean;
+  /** A version the user chose not to be reminded about again. */
+  skipped_version: string | null;
 }
 
 const defaultConfig: AppConfig = {
   engine: {
-    backend: "auto",
-    inference_mode: "Balanced",
+    backend: "whisper-cpp",
     whisper_cpp: {
       model_dir: "",
       model_size: "tiny",
@@ -140,7 +134,6 @@ const defaultConfig: AppConfig = {
   },
   audio: {
     vad_threshold: 0.5,
-    min_silence_duration_ms: 500,
     input_device_index: null,
     evdev_device: null,
     noise_suppression: false,
@@ -154,7 +147,6 @@ const defaultConfig: AppConfig = {
     overlay_monitor: "primary",
     auto_show_settings: true,
     show_notification: false,
-    history_enabled: false,
     show_command_overlay: true,
     command_overlay_duration_secs: 3,
   },
@@ -163,7 +155,6 @@ const defaultConfig: AppConfig = {
     custom_vocabulary: ["VoxCtrl"],
     spoken_punctuation: true,
     auto_format_lists: true,
-    quiet_mode: false,
     snippets: {},
   },
   openai: {
@@ -186,10 +177,10 @@ const defaultConfig: AppConfig = {
     response_overlay: true,
     speed: 1.0,
     gpu: false,
+    hf_token: null,
     pocket_tts: {
       voice: "alba",
       prewarm: false,
-      hf_token: null,
       voice_dir: "",
     },
     inflect_micro: {
@@ -201,18 +192,15 @@ const defaultConfig: AppConfig = {
     breeze_tts_2: {
       speaker_prompt: "A calm and clear female voice speaking at a natural pace",
       model_dir: "",
-      hf_token: null,
       prewarm: false,
       gpu: false,
-      temperature: 0.7,
     },
     snippets: {
       "VoxCtrl": "Vox Control"
     },
-    custom_vocabulary: ["VoxCtrl"],
   },
   mcp: { server_enabled: false, record_timeout: 15.0, visual_feedback: true },
-  atspi: { injection: true, context_prompt: true, auto_code_mode: true },
+  updates: { auto_check: true, skipped_version: null },
 };
 
 export const config = writable<AppConfig>(defaultConfig);

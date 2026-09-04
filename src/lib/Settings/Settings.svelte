@@ -12,20 +12,20 @@
   import EngineTab from "./EngineTab.svelte";
   import AudioTab from "./AudioTab.svelte";
   import HotkeysTab from "./HotkeysTab.svelte";
-  import TargetsTab from "./TargetsTab.svelte";
+  import CommandsTab from "./CommandsTab.svelte";
   import TtsTab from "./TtsTab.svelte";
   import OpenAiTab from "./OpenAiTab.svelte";
   import FeaturesTab from "./FeaturesTab.svelte";
   import AboutTab from "./AboutTab.svelte";
 
-  type Tab = "general" | "engine" | "hotkeys" | "targets" | "visual" | "audio" | "tts" | "features" | "openai" | "about";
+  type Tab = "general" | "engine" | "hotkeys" | "commands" | "visual" | "audio" | "tts" | "features" | "openai" | "about";
   let activeTab = $state<Tab>("general");
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "general",  label: "General",  icon: "⚙️" },
     { id: "engine",   label: "Engine",   icon: "🧠" },
     { id: "hotkeys",  label: "Hotkeys",  icon: "⌨️" },
-    { id: "targets",  label: "Output Targets", icon: "🎯" },
+    { id: "commands", label: "Output Commands", icon: "🎯" },
     { id: "visual",   label: "Visual",   icon: "🎨" },
     { id: "audio",    label: "Audio",    icon: "🔊" },
     { id: "tts",      label: "TTS",      icon: "🗣️" },
@@ -179,8 +179,8 @@
         <EngineTab bind:cfg={$config} />
       {:else if activeTab === "hotkeys"}
         <HotkeysTab />
-      {:else if activeTab === "targets"}
-        <TargetsTab />
+      {:else if activeTab === "commands"}
+        <CommandsTab />
       {:else if activeTab === "visual"}
         <VisualTab bind:cfg={$config} />
       {:else if activeTab === "audio"}
@@ -216,8 +216,16 @@
   }
 
   /* Redesigned Sidebar Base */
+  /* Sized to its contents rather than to a fixed width. The longest label
+     ("Output Commands") is 87px in Cantarell/Noto and 110px in DejaVu Sans at
+     this size, and the app renders in whichever sans the system provides —
+     neither Outfit nor Inter is bundled, and the CSP cannot fetch them. The old
+     fixed 135px left 86px for the label, which clipped "Output Commands" by a
+     hair on the narrow fonts and badly on the wide ones. `w-fit` fits whatever
+     the machine actually renders; the floor keeps the old width as a minimum so
+     nothing else in the panel gets narrower than it was. */
   .sidebar {
-    @apply flex flex-col w-[135px] bg-[var(--color-obsidian-900)] border-r border-[var(--border)] shrink-0 px-1.5 py-5 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.25)];
+    @apply flex flex-col w-fit min-w-[135px] bg-[var(--color-obsidian-900)] border-r border-[var(--border)] shrink-0 px-1.5 py-5 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.25)];
   }
 
   .brand {
@@ -251,7 +259,7 @@
 
   /* Nav Links with Snappy Elastic Springs */
   .nav-btn {
-    @apply relative flex items-center gap-2 px-1.5 py-2 rounded-[var(--radius)] text-[var(--color-obsidian-300)] text-xs font-semibold text-left transition-all duration-150 ease-out whitespace-nowrap;
+    @apply relative flex items-center gap-2 px-2 py-2 rounded-[var(--radius)] text-[var(--color-obsidian-300)] text-xs font-semibold text-left transition-all duration-150 ease-out whitespace-nowrap;
   }
 
   .nav-btn:hover {

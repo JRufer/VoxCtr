@@ -38,7 +38,6 @@ describe("Settings.svelte Startup Redirect", () => {
     config.set({
       engine: {
         backend: "whisper-cpp",
-        inference_mode: "Balanced",
         whisper_cpp: {
           model_dir: "",
           model_size: "large-v3", // missing model triggers redirect
@@ -52,7 +51,6 @@ describe("Settings.svelte Startup Redirect", () => {
       },
       audio: {
         vad_threshold: 0.5,
-        min_silence_duration_ms: 500,
         input_device_index: null,
         evdev_device: null,
         noise_suppression: false,
@@ -64,14 +62,12 @@ describe("Settings.svelte Startup Redirect", () => {
         overlay_style: "mono_bars",
         auto_show_settings: true,
         show_notification: false,
-        history_enabled: false,
       },
       features: {
         remove_fillers: true,
         custom_vocabulary: [],
         spoken_punctuation: true,
         auto_format_lists: true,
-        quiet_mode: false,
         snippets: {},
       },
       openai: {
@@ -93,10 +89,9 @@ describe("Settings.svelte Startup Redirect", () => {
         server_enabled: false,
         record_timeout: 15.0,
       },
-      atspi: {
-        injection: true,
-        context_prompt: true,
-        auto_code_mode: true,
+      updates: {
+        auto_check: true,
+        skipped_version: null,
       },
     } as any);
     configLoaded.set(true);

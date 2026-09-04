@@ -62,33 +62,23 @@ impl Default for MoonshineConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendChoice {
-    Auto,
+    /// `alias = "auto"` migrates configs written when the backend could be
+    /// left unset: auto-selection always resolved to whisper.cpp anyway, so
+    /// those installs keep the backend they were already running.
+    #[serde(alias = "auto")]
     WhisperCpp,
     Moonshine,
 }
 
 impl Default for BackendChoice {
     fn default() -> Self {
-        Self::Auto
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum InferenceMode {
-    Balanced,
-    Aggressive,
-}
-
-impl Default for InferenceMode {
-    fn default() -> Self {
-        Self::Balanced
+        Self::WhisperCpp
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EngineConfig {
     pub backend: BackendChoice,
-    pub inference_mode: InferenceMode,
     pub whisper_cpp: WhisperCppConfig,
     pub moonshine: MoonshineConfig,
 }
@@ -106,7 +96,6 @@ fn default_dynamic_stream() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioConfig {
     pub vad_threshold: f32,
-    pub min_silence_duration_ms: u32,
     /// None = use default system device
     pub input_device_index: Option<u32>,
     /// Saved evdev device path, e.g. "/dev/input/event4" (Linux only)
@@ -123,7 +112,6 @@ impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             vad_threshold: 0.5,
-            min_silence_duration_ms: 500,
             input_device_index: None,
             evdev_device: None,
             noise_suppression: false,
@@ -134,6 +122,10 @@ impl Default for AudioConfig {
 }
 
 fn default_auto_show_settings() -> bool {
+    true
+}
+
+fn default_setup_completed() -> bool {
     true
 }
 
@@ -169,12 +161,19 @@ pub struct UiConfig {
     pub auto_show_settings: bool,
     #[serde(default = "default_show_notification")]
     pub show_notification: bool,
-    #[serde(default)]
-    pub history_enabled: bool,
     #[serde(default = "default_show_command_overlay")]
     pub show_command_overlay: bool,
     #[serde(default = "default_command_overlay_duration_secs")]
     pub command_overlay_duration_secs: u32,
+    /// Whether the first-run setup wizard has been finished.
+    ///
+    /// The serde default is `true` on purpose: a config file written by an
+    /// earlier VoxCtrl has no such field, and its owner has plainly already
+    /// set the app up by hand. Only `UiConfig::default()` — reached when no
+    /// config file exists at all — starts this at `false`, so the wizard runs
+    /// exactly once, on a genuinely new machine.
+    #[serde(default = "default_setup_completed")]
+    pub setup_completed: bool,
 }
 
 impl Default for UiConfig {
@@ -186,9 +185,9 @@ impl Default for UiConfig {
             overlay_monitor: "primary".into(),
             auto_show_settings: true,
             show_notification: false,
-            history_enabled: false,
             show_command_overlay: true,
             command_overlay_duration_secs: 3,
+            setup_completed: false,
         }
     }
 }
@@ -201,7 +200,6 @@ pub struct FeaturesConfig {
     pub custom_vocabulary: Vec<String>,
     pub spoken_punctuation: bool,
     pub auto_format_lists: bool,
-    pub quiet_mode: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_notification: Option<bool>,
     /// Map of trigger → expansion, e.g. {"addr" → "123 Main St"}
@@ -215,7 +213,6 @@ impl Default for FeaturesConfig {
             custom_vocabulary: vec!["VoxCtrl".into()],
             spoken_punctuation: true,
             auto_format_lists: true,
-            quiet_mode: false,
             show_notification: None,
             snippets: std::collections::HashMap::new(),
         }
@@ -320,10 +317,6 @@ fn default_breeze_tts_2_speaker_prompt() -> String {
     "A calm and clear female voice speaking at a natural pace".into()
 }
 
-fn default_breeze_temperature() -> f32 {
-    0.7
-}
-
 fn default_tts_speed() -> f32 {
     1.0
 }
@@ -337,9 +330,11 @@ pub struct PocketTtsConfig {
     /// Pre-warm model on startup so the first synthesis is instant
     #[serde(default)]
     pub prewarm: bool,
-    /// HuggingFace access token (required to download the gated `kyutai/pocket-tts` weights)
-    #[serde(default)]
-    pub hf_token: Option<String>,
+    /// Where this engine's token used to live, kept only so a config written
+    /// before `tts.hf_token` existed can be migrated. Cleared once lifted, and
+    /// never written back.
+    #[serde(default, rename = "hf_token", skip_serializing_if = "Option::is_none")]
+    pub legacy_hf_token: Option<String>,
     /// Directory scanned for custom voice clips (`<id>.wav`). Empty = platform default
     /// (`~/.local/share/voxctrl/pocket-tts-voices/`).
     #[serde(default)]
@@ -351,7 +346,7 @@ impl Default for PocketTtsConfig {
         Self {
             voice: default_pocket_tts_voice(),
             prewarm: false,
-            hf_token: None,
+            legacy_hf_token: None,
             voice_dir: String::new(),
         }
     }
@@ -378,18 +373,16 @@ pub struct BreezeTts2Config {
     /// (`~/.local/share/voxctrl/models/breeze-tts-2/`).
     #[serde(default)]
     pub model_dir: String,
-    /// HuggingFace access token (shared with Pocket-TTS)
-    #[serde(default)]
-    pub hf_token: Option<String>,
+    /// Where this engine's token used to live; see
+    /// [`PocketTtsConfig::legacy_hf_token`].
+    #[serde(default, rename = "hf_token", skip_serializing_if = "Option::is_none")]
+    pub legacy_hf_token: Option<String>,
     /// Pre-warm model on startup so the first synthesis is instant
     #[serde(default)]
     pub prewarm: bool,
     /// Enable GPU acceleration (CUDA)
     #[serde(default)]
     pub gpu: bool,
-    /// Sampling temperature / noise scale for speech generation
-    #[serde(default = "default_breeze_temperature")]
-    pub temperature: f32,
 }
 
 fn default_breeze_voice_mode() -> String {
@@ -404,10 +397,9 @@ impl Default for BreezeTts2Config {
             voice_dir: String::new(),
             speaker_prompt: default_breeze_tts_2_speaker_prompt(),
             model_dir: String::new(),
-            hf_token: None,
+            legacy_hf_token: None,
             prewarm: false,
             gpu: false,
-            temperature: default_breeze_temperature(),
         }
     }
 }
@@ -473,6 +465,11 @@ pub struct TtsConfig {
     /// Enable GPU acceleration for Piper
     #[serde(default)]
     pub gpu: bool,
+    /// The single HuggingFace access token for every gated model VoxCtrl
+    /// downloads (Pocket-TTS and Breeze-TTS-2 today). One token, one place —
+    /// entering it in Settings or in the setup wizard writes here.
+    #[serde(default)]
+    pub hf_token: Option<String>,
     #[serde(default)]
     pub pocket_tts: PocketTtsConfig,
     #[serde(default)]
@@ -498,6 +495,7 @@ impl Default for TtsConfig {
             response_overlay: true,
             speed: 1.0,
             gpu: false,
+            hf_token: None,
             pocket_tts: PocketTtsConfig::default(),
             inflect_micro: InflectMicroConfig::default(),
             breeze_tts_2: BreezeTts2Config::default(),
@@ -536,24 +534,34 @@ impl Default for McpConfig {
     }
 }
 
-// ── AT-SPI2 ───────────────────────────────────────────────────────────────────
+// ── Updates ───────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AtspiConfig {
-    /// Use AT-SPI2 for text insertion when available
-    pub injection: bool,
-    /// Feed surrounding text to Whisper as initial prompt
-    pub context_prompt: bool,
-    /// Automatically switch to code mode in terminals/IDEs
-    pub auto_code_mode: bool,
+fn default_auto_check() -> bool {
+    true
 }
 
-impl Default for AtspiConfig {
+/// Automatic update checking.
+///
+/// This is the only thing in VoxCtrl that reaches the network without being
+/// asked to: on launch it fetches the public GitHub releases API to see whether
+/// a newer version has been published. The request carries no identifier of any
+/// kind, and `auto_check = false` stops it entirely — see `docs/privacy.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    /// Check GitHub for a newer release when the app starts.
+    #[serde(default = "default_auto_check")]
+    pub auto_check: bool,
+    /// A version the user chose to skip, so the same release is not raised
+    /// with them at every launch. A newer one still is.
+    #[serde(default)]
+    pub skipped_version: Option<String>,
+}
+
+impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
-            injection: true,
-            context_prompt: true,
-            auto_code_mode: true,
+            auto_check: true,
+            skipped_version: None,
         }
     }
 }
@@ -571,7 +579,33 @@ pub struct AppConfig {
     pub openai: OpenAiConfig,
     pub tts: TtsConfig,
     pub mcp: McpConfig,
-    pub atspi: AtspiConfig,
+    /// Added after 0.3.10, so it must default rather than fail configs written
+    /// before it existed — every one of which would otherwise fall back to
+    /// defaults wholesale and lose the user's settings.
+    #[serde(default)]
+    pub updates: UpdateConfig,
+}
+
+/// Lift a HuggingFace token stored per engine onto the single `tts.hf_token`,
+/// clearing the old copies. Returns whether anything moved, so the caller
+/// knows to rewrite the file.
+///
+/// Pocket-TTS and Breeze-TTS-2 each used to hold their own copy, synchronized
+/// on load; they now share one key, and the same token downloads both.
+fn migrate_hf_token(data: &mut AppConfig) -> bool {
+    let legacy = data
+        .tts
+        .pocket_tts
+        .legacy_hf_token
+        .take()
+        .or_else(|| data.tts.breeze_tts_2.legacy_hf_token.take());
+    data.tts.breeze_tts_2.legacy_hf_token = None;
+
+    let Some(token) = legacy else { return false };
+    if data.tts.hf_token.is_none() {
+        data.tts.hf_token = Some(token);
+    }
+    true
 }
 
 // ── Config manager ────────────────────────────────────────────────────────────
@@ -655,11 +689,13 @@ impl Config {
             }
         }
 
-        // Synchronize HuggingFace token between Pocket-TTS and Breeze-TTS-2
-        if data.tts.pocket_tts.hf_token.is_some() && data.tts.breeze_tts_2.hf_token.is_none() {
-            data.tts.breeze_tts_2.hf_token = data.tts.pocket_tts.hf_token.clone();
-        } else if data.tts.breeze_tts_2.hf_token.is_some() && data.tts.pocket_tts.hf_token.is_none() {
-            data.tts.pocket_tts.hf_token = data.tts.breeze_tts_2.hf_token.clone();
+        // One token now serves every gated model; older configs carry a copy
+        // per engine. Rewrite the file so the duplicates go away for good.
+        if migrate_hf_token(&mut data) {
+            let migrated = Self { data: data.clone(), path: path.clone() };
+            if let Err(e) = migrated.save() {
+                tracing::error!("Failed to save migrated HuggingFace token: {e}");
+            }
         }
 
         Self { data, path }
@@ -758,6 +794,112 @@ pub fn validate(cfg: &AppConfig) -> Vec<String> {
 mod tests {
     use super::*;
 
+    fn tts_json(body: &str) -> TtsConfig {
+        serde_json::from_str(body).expect("tts config should parse")
+    }
+
+    /// A config written when each engine carried its own copy of the token
+    /// must come back with one token on `tts`, and the file it writes next
+    /// must hold that token exactly once.
+    #[test]
+    fn migrates_per_engine_hf_tokens_onto_one_key() {
+        let mut data = AppConfig::default();
+        data.tts = tts_json(
+            r#"{"enabled": true, "engine": "pocket_tts", "voice": "v",
+                "stop_key": ["KEY_ESC"], "response_overlay": true,
+                "pocket_tts": {"voice": "alba", "hf_token": "hf_from_pocket"},
+                "breeze_tts_2": {"hf_token": "hf_from_pocket"}}"#,
+        );
+        assert_eq!(
+            data.tts.pocket_tts.legacy_hf_token.as_deref(),
+            Some("hf_from_pocket"),
+            "the old location must still parse"
+        );
+
+        assert!(migrate_hf_token(&mut data));
+
+        assert_eq!(data.tts.hf_token.as_deref(), Some("hf_from_pocket"));
+        assert!(data.tts.pocket_tts.legacy_hf_token.is_none());
+        assert!(data.tts.breeze_tts_2.legacy_hf_token.is_none());
+
+        let written = serde_json::to_string(&data.tts).unwrap();
+        assert_eq!(
+            written.matches("hf_token").count(),
+            1,
+            "the token must be stored once, not per engine: {written}"
+        );
+    }
+
+    /// A token set only on Breeze is lifted too — either copy will do.
+    #[test]
+    fn migrates_a_breeze_only_token() {
+        let mut data = AppConfig::default();
+        data.tts = tts_json(
+            r#"{"enabled": false, "engine": "espeak", "voice": "v", "stop_key": [],
+                "response_overlay": true, "breeze_tts_2": {"hf_token": "hf_from_breeze"}}"#,
+        );
+
+        assert!(migrate_hf_token(&mut data));
+        assert_eq!(data.tts.hf_token.as_deref(), Some("hf_from_breeze"));
+    }
+
+    /// A config that already has the single key keeps it, and needs no rewrite.
+    #[test]
+    fn a_config_with_one_token_is_left_alone() {
+        let mut data = AppConfig::default();
+        data.tts = tts_json(
+            r#"{"enabled": false, "engine": "espeak", "voice": "v", "stop_key": [],
+                "response_overlay": true, "hf_token": "hf_single"}"#,
+        );
+
+        assert!(!migrate_hf_token(&mut data), "nothing to migrate");
+        assert_eq!(data.tts.hf_token.as_deref(), Some("hf_single"));
+        assert_eq!(
+            serde_json::to_string(&data.tts).unwrap().matches("hf_token").count(),
+            1
+        );
+    }
+
+    /// The single key wins over a stale per-engine copy rather than being
+    /// overwritten by it.
+    #[test]
+    fn the_single_token_wins_over_a_legacy_copy() {
+        let mut data = AppConfig::default();
+        data.tts = tts_json(
+            r#"{"enabled": false, "engine": "espeak", "voice": "v", "stop_key": [],
+                "response_overlay": true, "hf_token": "hf_current",
+                "pocket_tts": {"hf_token": "hf_stale"}}"#,
+        );
+
+        assert!(migrate_hf_token(&mut data));
+        assert_eq!(data.tts.hf_token.as_deref(), Some("hf_current"));
+        assert!(data.tts.pocket_tts.legacy_hf_token.is_none());
+    }
+
+
+    /// Configs written before the Backend dropdown lost its "Auto-detect"
+    /// entry still say `"auto"`. They must keep loading, on whisper.cpp —
+    /// which is what auto-selection resolved to in every case — rather than
+    /// failing the whole config back to defaults.
+    #[test]
+    fn legacy_auto_backend_loads_as_whisper_cpp() {
+        let parsed: BackendChoice = serde_json::from_str(r#""auto""#).unwrap();
+        assert_eq!(parsed, BackendChoice::WhisperCpp);
+        assert_eq!(BackendChoice::default(), BackendChoice::WhisperCpp);
+    }
+
+    #[test]
+    fn backend_choice_serializes_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&BackendChoice::WhisperCpp).unwrap(),
+            r#""whisper-cpp""#
+        );
+        assert_eq!(
+            serde_json::to_string(&BackendChoice::Moonshine).unwrap(),
+            r#""moonshine""#
+        );
+    }
+
     #[test]
     fn test_default_config_values() {
         let cfg = AppConfig::default();
@@ -774,7 +916,6 @@ mod tests {
         let legacy_json = r#"{
             "engine": {
                 "backend": "auto",
-                "inference_mode": "Balanced",
                 "whisper_cpp": {
                     "model_dir": "",
                     "model_size": "large-v3",
@@ -788,7 +929,6 @@ mod tests {
             },
             "audio": {
                 "vad_threshold": 0.5,
-                "min_silence_duration_ms": 500,
                 "input_device_index": null,
                 "evdev_device": null,
                 "noise_suppression": false,
@@ -804,7 +944,6 @@ mod tests {
                 "custom_vocabulary": [],
                 "spoken_punctuation": true,
                 "auto_format_lists": true,
-                "quiet_mode": false,
                 "show_notification": true,
                 "snippets": {}
             },
@@ -826,11 +965,6 @@ mod tests {
             "mcp": {
                 "server_enabled": false,
                 "record_timeout": 15.0
-            },
-            "atspi": {
-                "injection": true,
-                "context_prompt": true,
-                "auto_code_mode": true
             }
         }"#;
 
@@ -873,8 +1007,52 @@ mod tests {
     "custom_vocabulary": [],
     "spoken_punctuation": true,
     "auto_format_lists": true,
-    "quiet_mode": false,
     "show_notification": true"#));
+    }
+
+    #[test]
+    fn test_fresh_install_starts_with_the_wizard_pending() {
+        // No config file on disk means a machine that has never run VoxCtrl,
+        // so the first-run wizard has to be pending.
+        let cfg = AppConfig::default();
+        assert!(!cfg.ui.setup_completed);
+    }
+
+    #[test]
+    fn test_existing_config_file_never_reopens_the_wizard() {
+        // A config written by an earlier VoxCtrl has no `setup_completed` key.
+        // Its owner has plainly already set the app up, so deserializing must
+        // treat the missing field as "done" rather than ambushing them with a
+        // setup wizard on an upgrade.
+        let legacy_json = r#"{
+            "show_overlay": true,
+            "overlay_style": "waveform",
+            "auto_show_settings": true,
+            "show_notification": false
+        }"#;
+
+        let parsed: UiConfig = serde_json::from_str(legacy_json).unwrap();
+        assert!(parsed.setup_completed);
+    }
+
+    #[test]
+    fn test_setup_completed_round_trips() {
+        let mut cfg = AppConfig::default();
+        assert!(!cfg.ui.setup_completed);
+
+        cfg.ui.setup_completed = true;
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.ui.setup_completed);
+
+        cfg.ui.setup_completed = false;
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(
+            !back.ui.setup_completed,
+            "an explicit false must survive a save/load cycle, or a user who \
+             quits the wizard would never see it again"
+        );
     }
 
     #[test]
@@ -883,8 +1061,7 @@ mod tests {
             "show_overlay": true,
             "overlay_style": "waveform",
             "auto_show_settings": true,
-            "show_notification": false,
-            "history_enabled": false
+            "show_notification": false
         }"#;
 
         let parsed: UiConfig = serde_json::from_str(partial_json).unwrap();
@@ -953,5 +1130,37 @@ mod tests {
         let parsed2: TtsEngine = serde_json::from_str(r#""breeze_tts2""#).unwrap();
         assert_eq!(parsed2, TtsEngine::BreezeTts2);
     }
-}
 
+    #[test]
+    fn update_checking_is_on_by_default_and_skips_nothing() {
+        let cfg = AppConfig::default();
+        assert!(cfg.updates.auto_check);
+        assert!(cfg.updates.skipped_version.is_none());
+    }
+
+    /// A config written before the updates section existed must keep every
+    /// setting in it. Without `#[serde(default)]` the whole file fails to parse
+    /// and the user silently gets defaults for everything they ever chose.
+    #[test]
+    fn a_config_without_an_updates_section_still_loads() {
+        let json = serde_json::to_string(&AppConfig::default()).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value.as_object_mut().unwrap().remove("updates");
+        let stripped = serde_json::to_string(&value).unwrap();
+
+        let parsed: AppConfig = serde_json::from_str(&stripped).expect("older configs must load");
+        assert!(parsed.updates.auto_check);
+    }
+
+    #[test]
+    fn turning_auto_check_off_survives_a_round_trip() {
+        let mut cfg = AppConfig::default();
+        cfg.updates.auto_check = false;
+        cfg.updates.skipped_version = Some("0.4.0".to_string());
+
+        let json = serde_json::to_string(&cfg).unwrap();
+        let parsed: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.updates.auto_check);
+        assert_eq!(parsed.updates.skipped_version.as_deref(), Some("0.4.0"));
+    }
+}

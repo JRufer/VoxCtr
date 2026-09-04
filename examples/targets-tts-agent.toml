@@ -14,8 +14,6 @@ format_version = "1.1"
 id = "default"
 label = "Focused Window"
 delivery = "inject"
-append_newline = false
-send_on_release = true
 file_timestamp = true
 
 # ── Hermes conversational agent via FIFO ─────────────────────────────────────
@@ -27,10 +25,8 @@ label = "Hermes Agent"
 delivery = "pipe"
 pipe_path = "/tmp/hermes.in"
 response_pipe = "/tmp/hermes.out"
-append_newline = true
-send_on_release = true
 file_timestamp = false
-processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, openai_enabled = false}
+processing = {remove_fillers = true, spoken_punctuation = false, openai_enabled = false}
 
 # ── Claude Code via pipe ──────────────────────────────────────────────────────
 [[target]]
@@ -39,11 +35,9 @@ label = "Claude Code"
 delivery = "pipe"
 pipe_path = "/tmp/claude.in"
 response_pipe = "/tmp/claude.out"
-append_newline = true
-send_on_release = true
 file_timestamp = false
 # Code-style dictation: no punctuation expansion, no filler removal
-processing = {code_mode = false, remove_fillers = true, spoken_punctuation = false, apply_snippets = true, openai_enabled = false}
+processing = {code_mode = false, remove_fillers = true, spoken_punctuation = false, openai_enabled = false}
 
 # ── Remote agent via TCP socket ───────────────────────────────────────────────
 [[target]]
@@ -53,8 +47,6 @@ delivery = "socket"
 socket_host = "192.168.1.100"
 socket_port = 9001
 response_pipe = "/tmp/remote_agent.out"
-append_newline = true
-send_on_release = true
 file_timestamp = false
 processing = {remove_fillers = true, spoken_punctuation = true, openai_enabled = false}
 
@@ -67,8 +59,6 @@ label = "Ollama Chat"
 delivery = "exec"
 command = "voxctl-ollama-bridge --model llama3.2:3b --response-pipe /tmp/ollama_chat.out {TEXT}"
 response_pipe = "/tmp/ollama_chat.out"
-append_newline = false
-send_on_release = true
 file_timestamp = false
 # Don't double-process with local Ollama; the bridge handles that
 processing = {remove_fillers = true, spoken_punctuation = false, openai_enabled = false}

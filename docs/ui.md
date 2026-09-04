@@ -8,30 +8,47 @@ VoxCtrl opens separate native windows managed by Tauri, plus a native overlay he
 
 | Window | Route / Process | Default Size | Properties |
 |---|---|---|---|
-| Settings | `/settings` | 840 × 640 (min 700 × 500) | Resizable, standard chrome |
+| Settings | `/settings` | 720 × 640 (min 600 × 450) | Resizable, standard chrome |
+| Setup Wizard | `/wizard` | Fitted to the display, 16:9 (min 1280 × 720) | Resizable, first run only |
+| Setup / Diagnostics | `/udev-warning` | 580 × 600 (min 480 × 420) | Always-on-top |
+| Update | `/update` | 560 × 620 (min 460 × 420) | Resizable, built on demand |
 | Overlay | `voxctrl-overlay` helper (Slint) | 560 × 190 | Transparent, always-on-top, no decorations, click-through |
-| History | `/history` | 600 × 500 | Resizable, standard chrome |
 
 The Tauri windows are declared in `src-tauri/tauri.conf.json`, start hidden (`visible: false`), and are shown programmatically. The overlay is a separate native process (`src-tauri/src/overlay.rs`) spawned at startup and driven over stdin; the Svelte `/overlay` route hosts the web counterparts of the same visualizers (used for custom HTML overlays).
+
+### Window Lifecycle
+
+Windows close like any other window: the close button destroys them rather than
+hiding them. VoxCtrl is a tray application, so the last window closing must not
+end the process — the app refuses the resulting exit request (an explicit quit
+from the tray carries an exit code, and is honoured) and carries on listening
+for its hotkey with nothing on screen.
+
+Because a closed window no longer exists, every entry point rebuilds one on
+demand: the tray menu and its left click, a second launch of the binary, the
+startup auto-open, and the wizard's hand-off to Settings. Raising an existing
+window pins it above others briefly before focusing it — Linux desktops
+routinely ignore a bare focus request from a process that does not already own
+the focused window — and does not move it.
 
 ---
 
 ## Settings Window
 
-The main configuration interface. Organized into a sidebar with nine tabs:
+The main configuration interface. Organized into a sidebar with ten tabs:
 
 ### General Tab
+- "Open setup wizard" button — re-runs the first-run wizard
+- "Check for a new version on launch" toggle, and a "Check for updates" button that reports the result inline
 - Overlay show/hide toggle
 - Overlay style selector
 - Auto-show settings on startup toggle
 - Desktop notification toggle
-- History tracking toggle
 - Recording status indicator and word count
 - Manual record/stop button
 
 ### Engine Tab
-- Backend selector (`auto`, `whisper-cpp`, `moonshine`)
-- Inference mode selector (`Balanced`, `Aggressive`)
+- Backend selector (`whisper-cpp`, `moonshine`)
 - Whisper model size selector with download status
 - Compute device selector (auto / CPU / CUDA / Vulkan)
 - Thread count control
@@ -39,10 +56,17 @@ The main configuration interface. Organized into a sidebar with nine tabs:
 - "Download Model" button with progress
 - **Missing Model Warning & Auto-Redirection**: Startup check programmatically determines if the configured Whisper voice model file is downloaded on the local machine. If missing, it immediately switches the active Settings tab to "Engine" and presents a Tailwind-styled yellow warning alert prompting the user to select and download a GGUF voice model size.
 
-### Routing Tab
-- Visual editor for `targets.toml` — add/edit/delete output targets
-- Per-target fields: label, delivery type, type-specific options
-- Per-target processing override controls
+### Output Commands Tab
+- Visual editor for `targets.toml` — add/edit/delete output commands (the tab is
+  labelled "Output Commands"; the file and its `[[target]]` blocks are unchanged)
+- A note at the top explaining the spoken form: "VoxCtrl", then the command's
+  name, then the text
+- Per-target fields: command name (the target's name, and the phrase that routes
+  dictation here through a Voice Command Router target), delivery type, and
+  type-specific options — including, for file targets, a timestamp format with a
+  live preview that flags an invalid pattern
+- Per-target processing override controls (filler removal, spoken punctuation, list formatting, code mode)
+- Single-line mode for `inject` and `command` targets
 - Hotkey binding management (add/edit/delete bindings, key combo recorder, gesture selector). Shows which mechanism is delivering shortcuts and, on the portal path, the keys your desktop actually bound for each binding — which may differ from what was requested, since your desktop gets the final say. The key recorder captures inside VoxCtrl's own focused window using ordinary browser key events; it is not a global listener. It refuses combinations no desktop can bind — modifiers with no regular key, or two regular keys — explains why while you are still recording, and leaves the existing shortcut in place.
 
 ### Visual Tab
@@ -57,14 +81,15 @@ The main configuration interface. Organized into a sidebar with nine tabs:
 - Input device selector (lists all CPAL devices)
 - Gain slider
 - VAD threshold slider
-- Noise suppression toggle
+- Noise suppression toggle (RNNoise; applies to the next recording)
 - Dynamic stream toggle
 - Live audio level meter (VU meter, updates from `audio-level` events during monitoring)
 - Evdev device path input
 
 ### TTS Tab
 - Enable/disable toggle
-- Engine selector (Piper / Espeak)
+- Engine selector (eSpeak-NG / Piper / Pocket-TTS / Inflect-Micro-v2 / Breeze-TTS-2)
+- HuggingFace access token — one field, shared by every gated model; read-only, showing the value, when `HF_TOKEN` is exported
 - Voice selector with download status per voice
 - "Download Voice" button per voice
 - Stop key configuration
@@ -74,7 +99,6 @@ The main configuration interface. Organized into a sidebar with nine tabs:
 - Filler removal toggle
 - Spoken punctuation toggle
 - Auto-format lists toggle
-- Quiet mode toggle
 - Custom vocabulary list editor
 - Snippet key-value editor
 
@@ -126,21 +150,36 @@ While TTS is speaking, a green "SYSTEM RESPONDING" pill with a live mini-equaliz
 
 ---
 
-## History Window
+## Setup Wizard
 
-Displays a log of all transcription sessions in reverse-chronological order.
+Opens once, on a machine whose config file does not exist yet, and is the only
+window shown on that first launch. Seven steps, each writing its choice to the
+config as it is made:
 
-Each entry shows:
-- Timestamp
-- Transcribed text
-- Target that received the text
-- Inference time (ms)
+| Step | Writes | Notes |
+|---|---|---|
+| Welcome | — | A read-only contents page; the cards preview the steps rather than linking to them |
+| Engine | `engine.backend`, model size, `whisper_cpp.device` | Continue downloads the chosen model and waits for it. A model already on disk needs no click; one that is not requires an explicit engine and size, so a multi-gigabyte default is never fetched unasked |
+| Hotkey | `bindings.toml` | Only gestures the running shortcut backend can deliver are offered, and the combination is validated by the same Rust rules the portal registration uses. Blocked until the desktop has accepted the shortcut, because the next step is a live test |
+| Overlay | `ui.show_overlay`, `ui.overlay_style`, `ui.overlay_position` | Each style previews a recording of the real overlay, bundled at `src/assets/overlays/<style id>.webm`, falling back to a CSS animation |
+| Test | — | A real dictation: the transcript is injected into the focused window, and the readout follows the pipeline's own recording and processing state |
+| Voice | `tts.enabled`, `tts.engine`, `tts.hf_token` | Each engine downloads from its own card; the play button unlocks once its assets are on disk. Pocket-TTS and Breeze-TTS-2 are gated downloads, so the step asks for a HuggingFace access token and keeps those two cards locked — unselectable, undownloadable — until one is entered. The token is saved to `tts.hf_token`, the same field Settings → TTS writes. An exported `HF_TOKEN` is shown instead, read-only, and left out of the config |
+| Done | `ui.setup_completed` | Lists anything that failed, with the raw backend error and a copyable diagnostics report |
 
-Features:
-- "Clear History" button (also resets word count)
-- History persists in memory until the app is closed (not written to disk)
+The first hotkey is bound to a `command` delivery target named "Command",
+created by the wizard if it does not exist. Command delivery falls through to
+typing into the focused window when no "VoxCtrl &lt;target&gt;" phrase is present,
+so it behaves exactly like `inject` until a second target exists.
 
-Enabled via `ui.history_enabled = true` in config.
+The window opens at the largest 16:9 size that fits the display, capped at
+1600 × 900 and floored at 1280 × 720 — the size below which the layout starts
+to wrap. A fixed size is not safe: 1600 × 900 on a 1080p display at 125%
+scaling is 2000 × 1125 physical, and opens with its footer off-screen.
+
+Re-runnable afterwards with `voxctrl --setup` (also `--wizard`,
+`--setup-wizard`, `--first-run`), which works whether or not the app is already
+running, or from Settings → General. A re-run builds a fresh window and starts
+at step one.
 
 ---
 
@@ -192,6 +231,9 @@ Updated by `status-tick` Tauri events (emitted by backend every ~250ms) and an i
 | `status-tick` | `AppStatus` | Periodic state update (~250ms) |
 | `config-changed` | `AppConfig` | Config was modified (by any window or externally) |
 | `audio-level` | `f32` | RMS audio level for VU meter (while monitoring is active) |
+| `update-progress` | `{ downloaded, total }` | Bytes fetched so far while an update downloads |
+| `update-installed` | `String` (version) | The new version is in place; the app is about to restart |
+| `update-failed` | `String` | The update could not be installed; the running version is untouched |
 
 ---
 
