@@ -321,6 +321,7 @@ delivery = "file"
 file_path = "~/Documents/notes.md"
 file_prefix = "- "
 file_timestamp = true          # Default: true
+file_timestamp_format = "%Y-%m-%dT%H:%M:%SZ"   # strftime pattern, rendered in UTC
 file_mode = "append"           # "append" or "write"
 ```
 
@@ -448,7 +449,7 @@ target_ids = ["default"]
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `id` | string | Yes | | Unique identifier |
-| `label` | string | Yes | `""` | Display name |
+| `label` | string | Yes | `""` | The target's name; also the phrase that routes dictation here through a `command` target |
 | `keys` | string[] | Yes | | Key names (evdev format, on every platform). Any number of modifiers plus exactly one regular key — see [Hotkeys](hotkeys.md#what-can-be-a-shortcut) |
 | `gesture` | string | Yes | | `"hold"`, `"toggle"`, `"double_tap"`, or `"double_tap_hold"` |
 | `target_ids` | string[] | Yes | | Ordered list of target IDs to route to |

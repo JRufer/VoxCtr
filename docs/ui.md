@@ -56,7 +56,10 @@ The main configuration interface. Organized into a sidebar with ten tabs:
 
 ### Routing Tab
 - Visual editor for `targets.toml` — add/edit/delete output targets
-- Per-target fields: label, delivery type, type-specific options
+- Per-target fields: command name (the target's name, and the phrase that routes
+  dictation here through a Voice Command Router target), delivery type, and
+  type-specific options — including, for file targets, a timestamp format with a
+  live preview that flags an invalid pattern
 - Per-target processing override controls (filler removal, spoken punctuation, list formatting, code mode)
 - Single-line mode for `inject` and `command` targets
 - Hotkey binding management (add/edit/delete bindings, key combo recorder, gesture selector). Shows which mechanism is delivering shortcuts and, on the portal path, the keys your desktop actually bound for each binding — which may differ from what was requested, since your desktop gets the final say. The key recorder captures inside VoxCtrl's own focused window using ordinary browser key events; it is not a global listener. It refuses combinations no desktop can bind — modifiers with no regular key, or two regular keys — explains why while you are still recording, and leaves the existing shortcut in place.

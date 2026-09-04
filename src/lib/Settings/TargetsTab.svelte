@@ -45,6 +45,7 @@
       delivery: "inject",
       file_prefix: "- ",
       file_timestamp: true,
+      file_timestamp_format: "%Y-%m-%dT%H:%M:%SZ",
       file_mode: "append",
       http_method: "POST",
       http_json_template: { text: "{text}" },

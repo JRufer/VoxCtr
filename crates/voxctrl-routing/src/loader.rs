@@ -84,6 +84,8 @@ struct RawTarget {
     #[serde(default = "default_chat_reply_mode")]
     chat_reply_mode: String,
     chat_reset_phrase: Option<String>,
+    #[serde(default = "crate::timestamp::default_file_timestamp_format")]
+    file_timestamp_format: String,
     #[serde(default)]
     strip_newlines: bool,
     #[serde(default)]
@@ -227,6 +229,7 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         chat_timeout_secs: r.chat_timeout_secs,
         chat_reply_mode: r.chat_reply_mode,
         chat_reset_phrase: r.chat_reset_phrase,
+        file_timestamp_format: r.file_timestamp_format,
         strip_newlines: r.strip_newlines,
         processing,
         response_pipe: r.response_pipe,
@@ -306,6 +309,7 @@ fn target_to_raw(t: &OutputTarget) -> RawTarget {
         chat_timeout_secs: t.chat_timeout_secs,
         chat_reply_mode: t.chat_reply_mode.clone(),
         chat_reset_phrase: t.chat_reset_phrase.clone(),
+        file_timestamp_format: t.file_timestamp_format.clone(),
         strip_newlines: t.strip_newlines,
         processing: RawProcessing {
             remove_fillers: p.remove_fillers,

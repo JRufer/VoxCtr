@@ -18,6 +18,7 @@ fn test_mcp_config_roundtrip() {
         socket_unix: None,
         file_path: None,
         file_prefix: "".into(),
+        file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
         file_timestamp: false,
         file_mode: "append".into(),
         dbus_signal: None,
@@ -130,6 +131,7 @@ async fn test_mcp_delivery_handshake() {
         socket_unix: None,
         file_path: None,
         file_prefix: "".into(),
+        file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
         file_timestamp: false,
         file_mode: "append".into(),
         dbus_signal: None,
@@ -657,6 +659,56 @@ async fn test_file_target_success_timestamp_formatting() {
     let _ = std::fs::remove_file(&test_file);
 }
 
+/// A custom strftime pattern is what the file actually receives.
+#[tokio::test]
+async fn file_target_uses_the_configured_timestamp_format() {
+    let test_file = std::env::temp_dir().join(format!(
+        "voxctrl_ts_format_{}.log",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+
+    let mut config = OutputTarget::default_inject();
+    config.delivery = DeliveryType::File;
+    config.file_path = Some(test_file.to_string_lossy().to_string());
+    config.file_timestamp = true;
+    config.file_timestamp_format = "on %Y-%m-%d".into();
+    config.file_mode = "append".into();
+
+    assert!(build_target(config).deliver("note").await.success);
+    let content = std::fs::read_to_string(&test_file).unwrap();
+
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    assert_eq!(content, format!("[on {today}] note\n"));
+
+    let _ = std::fs::remove_file(&test_file);
+}
+
+/// A pattern that cannot be rendered must not cost the user the dictation —
+/// the line is still written, with the default timestamp.
+#[tokio::test]
+async fn file_target_falls_back_when_the_timestamp_format_is_unusable() {
+    let test_file = std::env::temp_dir().join(format!(
+        "voxctrl_ts_bad_{}.log",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+
+    let mut config = OutputTarget::default_inject();
+    config.delivery = DeliveryType::File;
+    config.file_path = Some(test_file.to_string_lossy().to_string());
+    config.file_timestamp = true;
+    config.file_timestamp_format = "%K".into();
+    config.file_mode = "append".into();
+
+    assert!(build_target(config).deliver("note").await.success);
+    let content = std::fs::read_to_string(&test_file).unwrap();
+
+    assert!(content.ends_with("note\n"), "unexpected content {content:?}");
+    assert!(content.starts_with('['), "unexpected content {content:?}");
+    assert!(content.contains("Z] note"), "expected the default format, got {content:?}");
+
+    let _ = std::fs::remove_file(&test_file);
+}
+
 #[tokio::test]
 async fn test_file_target_failure_no_path() {
     let mut config = OutputTarget::default_inject();
@@ -1111,6 +1163,7 @@ async fn test_mcp_delivery_failure_server_error() {
         socket_unix: None,
         file_path: None,
         file_prefix: "".into(),
+        file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
         file_timestamp: false,
         file_mode: "append".into(),
         dbus_signal: None,
@@ -1163,6 +1216,7 @@ fn test_strip_newlines_config_roundtrip() {
         socket_unix: None,
         file_path: None,
         file_prefix: "".into(),
+        file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
         file_timestamp: false,
         file_mode: "append".into(),
         dbus_signal: None,
@@ -1565,6 +1619,7 @@ fn test_parse_voice_command_no_keyword() {
             delivery: DeliveryType::File,
             file_path: Some("/tmp/notes.txt".into()),
             file_prefix: "".into(),
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             file_timestamp: false,
             file_mode: "append".into(),
             strip_newlines: false,
@@ -1611,6 +1666,7 @@ fn test_parse_voice_command_matched_target() {
             delivery: DeliveryType::File,
             file_path: Some("/tmp/notes.txt".into()),
             file_prefix: "".into(),
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             file_timestamp: false,
             file_mode: "append".into(),
             strip_newlines: false,
@@ -1696,6 +1752,7 @@ fn test_parse_voice_command_disambiguates_longest_target_name() {
             delivery: DeliveryType::File,
             file_path: Some("/tmp/notes.txt".into()),
             file_prefix: "".into(),
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             file_timestamp: false,
             file_mode: "append".into(),
             strip_newlines: false,
@@ -1732,6 +1789,7 @@ fn test_parse_voice_command_disambiguates_longest_target_name() {
             delivery: DeliveryType::File,
             file_path: Some("/tmp/personal.txt".into()),
             file_prefix: "".into(),
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             file_timestamp: false,
             file_mode: "append".into(),
             strip_newlines: false,
@@ -1784,6 +1842,7 @@ async fn test_voice_command_router_integration() {
             label: "Voice Command Router".into(),
             delivery: DeliveryType::Command,
             file_prefix: "".into(),
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             file_timestamp: false,
             file_mode: "append".into(),
             strip_newlines: false,
@@ -1821,6 +1880,7 @@ async fn test_voice_command_router_integration() {
             delivery: DeliveryType::File,
             file_path: Some(temp_path.clone()),
             file_prefix: "".into(),
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             file_timestamp: false,
             file_mode: "append".into(),
             strip_newlines: false,
@@ -1889,6 +1949,7 @@ async fn test_command_trigger_callback_notification() {
             socket_unix: None,
             file_path: None,
             file_prefix: String::new(),
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             file_timestamp: false,
             file_mode: "append".into(),
             dbus_signal: None,
@@ -1920,6 +1981,7 @@ async fn test_command_trigger_callback_notification() {
             delivery: DeliveryType::File,
             file_path: Some(temp_path.to_string_lossy().into()),
             file_prefix: String::new(),
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             file_timestamp: false,
             file_mode: "append".into(),
             strip_newlines: false,

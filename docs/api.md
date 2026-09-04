@@ -576,6 +576,7 @@ interface OutputTarget {
   file_path?: string;
   file_prefix: string;
   file_timestamp: boolean;
+  file_timestamp_format: string;  // strftime, UTC; default "%Y-%m-%dT%H:%M:%SZ"
   file_mode: string;        // "append" or "write"
 
   // dbus

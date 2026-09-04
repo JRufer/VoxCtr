@@ -22,7 +22,7 @@ Defined in `~/.config/voxctrl/targets.toml`. Each `[[target]]` block describes o
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `id` | string | required | Unique identifier, referenced by bindings |
-| `label` | string | required | Display name in the UI |
+| `label` | string | required | The target's name — shown in the UI, and spoken to route dictation here through a `command` target (see [Voice Command Router](#command--voice-command-router)) |
 | `delivery` | string | required | Delivery type (see below) |
 | `strip_newlines` | bool | `false` | Replace newlines (`\n`) with spaces and strip carriage returns (`\r`). Honored by the `inject` and `command` targets |
 | `processing` | object | (inherit) | Per-target post-processing overrides |
@@ -81,9 +81,21 @@ label = "Meeting Notes"
 delivery = "file"
 file_path = "~/Documents/notes.md"
 file_prefix = "- "        # Prepend to each entry
-file_timestamp = true     # Prepend ISO timestamp (default: true)
+file_timestamp = true     # Prepend a timestamp (default: true)
+file_timestamp_format = "%Y-%m-%dT%H:%M:%SZ"   # strftime pattern, UTC
 file_mode = "append"      # "append" or "write" (default: "append")
 ```
+
+With `file_timestamp` on, each line is prefixed with `[<timestamp>] `.
+`file_timestamp_format` is a chrono
+[strftime](https://docs.rs/chrono/latest/chrono/format/strftime/index.html)
+pattern rendered in UTC — `%Y` year, `%m` month, `%d` day, `%H` hour, `%M`
+minute, `%S` second, `%b` month name, `%a` weekday, `%p` AM/PM, `%Z` zone,
+`%%` a literal percent; anything else is written as typed. The target editor
+previews the pattern as you type and flags one it cannot render. A pattern that
+is unusable at delivery time falls back to the default,
+`%Y-%m-%dT%H:%M:%SZ`, with a warning — a bad format never costs you the
+dictation.
 
 ---
 

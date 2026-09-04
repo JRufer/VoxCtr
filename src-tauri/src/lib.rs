@@ -453,6 +453,7 @@ pub fn run() {
             check_voice_downloaded,
             download_voice,
             check_breeze_tts_2_ready,
+            preview_timestamp_format,
             download_breeze_tts_2,
             check_pocket_tts_ready,
             download_pocket_tts,

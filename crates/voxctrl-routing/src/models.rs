@@ -193,6 +193,12 @@ pub struct OutputTarget {
     /// being sent to the model. Case- and punctuation-insensitive.
     pub chat_reset_phrase: Option<String>,
 
+    /// strftime pattern for the timestamp the `file` target writes when
+    /// `file_timestamp` is on. An unusable pattern falls back to the default
+    /// rather than failing the delivery.
+    #[serde(default = "crate::timestamp::default_file_timestamp_format")]
+    pub file_timestamp_format: String,
+
     /// Flatten the transcript onto one line before delivering it. Honored by
     /// the `inject` and `command` targets.
     #[serde(default)]
@@ -261,6 +267,7 @@ impl OutputTarget {
             chat_timeout_secs: default_chat_timeout_secs(),
             chat_reply_mode: default_chat_reply_mode(),
             chat_reset_phrase: None,
+            file_timestamp_format: crate::timestamp::default_file_timestamp_format(),
             strip_newlines: false,
             processing: TargetProcessingConfig::default(),
             response_pipe: None,

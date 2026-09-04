@@ -407,6 +407,17 @@ pub async fn download_voice(voice_name: String, voice_dir: String) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
+/// Render a file target's timestamp format so the Settings UI can preview it
+/// and report a bad pattern before the target is saved.
+///
+/// chrono is the authority on what a `strftime` pattern means, so the preview
+/// comes from the same code the file target writes with rather than from a
+/// second implementation in TypeScript.
+#[tauri::command]
+pub async fn preview_timestamp_format(format: String) -> Result<String, String> {
+    voxctrl_routing::render_timestamp(&format, chrono::Utc::now())
+}
+
 #[tauri::command]
 pub async fn check_breeze_tts_2_ready(model_dir: String) -> Result<bool, String> {
     Ok(voxctrl_tts::is_breeze_tts_2_ready(&model_dir))

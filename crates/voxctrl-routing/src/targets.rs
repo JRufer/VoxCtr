@@ -462,7 +462,7 @@ impl DeliveryTarget for FileTarget {
         }
         let mut line = String::new();
         if self.0.file_timestamp {
-            let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ");
+            let ts = crate::timestamp::format_now(&self.0.file_timestamp_format);
             line.push_str(&format!("[{ts}] "));
         }
         line.push_str(&self.0.file_prefix);

@@ -714,8 +714,8 @@ describe("HotkeysTab.svelte Conflict Detection and Nested Modal", () => {
     // Verify Target Editor modal opens
     expect(await screen.findByText("Create Target")).not.toBeNull();
 
-    // Set Target display label
-    const labelInput = screen.getByPlaceholderText("e.g. Type directly into Obsidian");
+    // Set the target's command name
+    const labelInput = screen.getByPlaceholderText("e.g. Obsidian Notes");
     await fireEvent.input(labelInput, { target: { value: "My Nested Target" } });
 
     // Click Done to save target

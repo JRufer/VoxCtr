@@ -307,6 +307,7 @@ delivery = "file"
 file_path = "~/Documents/meeting_notes.md"
 file_prefix = "- "
 file_timestamp = true
+file_timestamp_format = "%Y-%m-%dT%H:%M:%SZ"
 
 [[target]]
 id = "cmd_router"
