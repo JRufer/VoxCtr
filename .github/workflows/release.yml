@@ -96,11 +96,21 @@ jobs:
             vulkan: true
 
           # ── Windows CPU ────────────────────────────────────────────────────
-          - name: windows-cpu
-            os: windows-2022
-            features: ""
-            artifact_label: windows-x86_64
-            cuda: false
+          # DISABLED: the Windows build is the slowest job in the matrix and
+          # nobody can test what it produces at the moment, so it is not worth
+          # the wait on every push to master.
+          #
+          # To re-enable: uncomment the five lines below, and put the Windows
+          # row back in the "## Downloads" table in the release body at the
+          # bottom of this file. Every Windows-specific *step* further down
+          # (`if: runner.os == 'Windows'`) is left in place and simply never
+          # runs while no Windows entry exists in this matrix — nothing else
+          # needs changing.
+          # - name: windows-cpu
+          #   os: windows-2022
+          #   features: ""
+          #   artifact_label: windows-x86_64
+          #   cuda: false
 
     steps:
       - uses: actions/checkout@v4
@@ -426,6 +436,15 @@ jobs:
           # release never ships the previous version's notes. Everything under
           # "## Downloads" is evergreen, and GitHub appends its own generated
           # "What's Changed" list of merged PRs beneath all of this.
+          #
+          # The Downloads table lists no Windows build because the Windows job
+          # is commented out of the build matrix above; a row for a file this
+          # workflow does not produce would send people looking for a download
+          # that is not there. Restore the row when the job comes back:
+          #   | Windows | `-windows-x86_64-setup.exe` | None |
+          # Note this is a literal YAML block scalar — a `#` inside `body:`
+          # would be published as text, which is why the row is removed rather
+          # than commented out.
           body: |
             ## What's new in 0.3.10
 
@@ -483,7 +502,6 @@ jobs:
             |---|---|---|
             | Linux | `-linux-x86_64.AppImage` | None |
             | Linux (GPU) | `-linux-x86_64-vulkan.AppImage` | Any Vulkan GPU |
-            | Windows | `-windows-x86_64-setup.exe` | None |
 
             **The Vulkan AppImage** is a portable GPU build: it accelerates any
             NVIDIA/AMD/Intel GPU via the host Vulkan driver, and falls back to
