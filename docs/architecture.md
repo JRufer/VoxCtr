@@ -157,6 +157,15 @@ App.svelte  (route switcher)
   │     ├── OpenAiTab  (labeled "OpenAI API")
   │     └── AboutTab
   │
+  ├── /wizard    → SetupWizard component (first-run setup, 7 steps)
+  │     ├── WelcomeStep
+  │     ├── EngineStep     (engine + model, downloads before continuing)
+  │     ├── HotkeyStep     (gesture + key capture, desktop registration)
+  │     ├── OverlayStep    (style + position, bundled webm previews)
+  │     ├── TestStep       (live end-to-end dictation)
+  │     ├── VoiceStep      (optional TTS engine, per-card download)
+  │     └── DoneStep       (summary + anything that failed)
+  │
   ├── /overlay   → Overlay component (web overlay layer; the on-screen HUD
   │     │          for built-in styles is the native voxctrl-overlay helper)
   │     ├── BlueWave       (default — "Ocean Wave" tide pool)
@@ -168,7 +177,7 @@ App.svelte  (route switcher)
 
 **State management:**
 - `src/stores/config.ts` — reactive `AppConfig` with 400ms debounced auto-save via `save_config` IPC; also listens for `config-changed` events
-- `src/stores/status.ts` — live state from `status-tick` events + derived stores (`recording`, `speaking`, `wordCount`, `activeTargetLabel`)
+- `src/stores/status.ts` — live state from `status-tick` events + derived stores (`recording`, `speaking`, `wordCount`, `activeTargetLabel`). Falls back to polling `get_status` once a second when ticks have been absent for two, so a window the events do not reach still shows live state; while ticks are arriving it does no IPC at all
 
 ---
 

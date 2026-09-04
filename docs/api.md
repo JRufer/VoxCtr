@@ -148,6 +148,50 @@ try {
 
 ---
 
+### Setup & First Run
+
+#### `open_setup_wizard() → void`
+Opens the first-run wizard, building its window if it has been closed. A
+re-opened wizard starts at step one.
+
+```typescript
+await invoke('open_setup_wizard');
+```
+
+---
+
+#### `finish_setup_wizard(openSettings: boolean) → void`
+Marks setup complete (`ui.setup_completed = true`), persists the config, and
+closes the wizard window. Pass `true` to open Settings afterwards.
+
+```typescript
+await invoke('finish_setup_wizard', { openSettings: false });
+```
+
+---
+
+#### `get_setup_status() → SetupStatusPayload`
+Everything first-run setup depends on, in one call: how global shortcuts are
+being delivered, whether text can be typed into other windows, and whether a
+speech model is on disk. The wizard's final screen uses it to report problems
+it did not itself cause.
+
+```typescript
+interface SetupStatusPayload {
+  hotkeys: HotkeyStatusPayload;
+  hotkeys_active: boolean;
+  model_ready: boolean;
+  model_size: string;
+  model_auto_downloads: boolean;    // small models fetch themselves in the background
+  missing_injection_tool: string | null;
+  pkexec_available: boolean;
+  manual_package_commands: string;
+  is_complete: boolean;
+}
+```
+
+---
+
 ### Text-to-Speech
 
 #### `speak_text(text: string, voice?: string) → void`
@@ -445,6 +489,7 @@ interface UiConfig {
   overlay_position: string;
   overlay_monitor: string;
   auto_show_settings: boolean;
+  setup_completed: boolean;
   show_notification: boolean;
 }
 

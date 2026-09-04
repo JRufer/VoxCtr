@@ -152,25 +152,51 @@ sudo pacman -S xdotool
 
 ## First Run
 
-On first launch, VoxCtrl will:
+On a machine with no `~/.config/voxctrl/config.json`, VoxCtrl will:
 1. Create `~/.config/voxctrl/` with default `config.json`, `targets.toml`, and `bindings.toml`
 2. Create `~/.local/share/voxctrl/` for model and voice storage
-3. Open the Settings window
+3. Open the **setup wizard**, and nothing else
 
-### Download a Whisper Model
-Before you can dictate, you need a speech recognition model:
-1. Go to Settings → Engine
-2. Choose a model size (recommendation: `small` for a good speed/accuracy balance; the default is `large-v3` for maximum accuracy)
-3. Click "Download" and wait for completion (~142 MB for `base`, ~466 MB for `small`, ~3 GB for `large-v3`)
+The wizard covers everything needed to dictate, in seven steps:
 
-### Configure a Hotkey
-A default binding (`Super + Space`, hold gesture → inject to focused window) is created automatically. Verify it in Settings → Hotkeys, or change the key combo if it conflicts with your desktop environment.
+1. **Welcome** — what the remaining steps will ask
+2. **Engine** — whisper.cpp or Moonshine, and a model size. Continuing downloads
+   the model and waits for it, so the later test has something to transcribe
+3. **Hotkey** — a gesture and a key combination, registered with your desktop.
+   Only gestures your shortcut backend can actually deliver are offered
+4. **Overlay** — which on-screen indicator to show while the mic is live, or none
+5. **Test** — a real dictation into a box on screen, using the hotkey you just bound
+6. **Voice** — optionally enable speech output and download an engine
+7. **Done** — a summary, plus anything that failed and the error behind it
 
-### Test Dictation
-1. Open any text editor
-2. Click into the text area
-3. Hold `Super + Space` and speak
-4. Release to transcribe
+Every choice is written to the config as it is made, so quitting the wizard
+halfway keeps what you picked. If something fails — a model that will not
+download, a shortcut your desktop refuses — the last screen says so with the
+underlying error and a copyable diagnostics report, rather than reporting the
+app as ready.
+
+The first hotkey is bound to a target named "Command", which types into the
+focused window exactly like `inject` until you add a second target, at which
+point voice command routing works without re-binding anything.
+
+### Running it again
+
+The wizard is not only for first launch:
+
+```bash
+voxctrl --setup
+```
+
+Works whether or not VoxCtrl is already running, and `--wizard`,
+`--setup-wizard` and `--first-run` do the same thing. Settings → General has an
+**Open setup wizard** button for the same purpose. A re-run always starts at
+step one.
+
+### Skipping it
+
+"Skip setup" on the first screen closes the wizard and leaves the app running
+with its defaults. Everything the wizard asks is also in Settings: Engine for
+the model, Hotkeys for bindings, Visual for the overlay, TTS for speech output.
 
 ---
 

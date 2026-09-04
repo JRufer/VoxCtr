@@ -19,6 +19,9 @@ Everything runs locally. No audio ever leaves your machine.
 - **GPU acceleration** — automatic CUDA or Vulkan selection when available; falls back to CPU
 - **Multiple model sizes** — tiny through large-v3, trading speed for accuracy
 
+### First-Run Setup
+A seven-step wizard runs the first time VoxCtrl starts on a machine with no config file, covering the choices the app cannot make for you: transcription engine and model size, hotkey gesture and key combination, on-screen overlay, a live end-to-end dictation test, and optional speech output. Choices are written to the config as they are made rather than at the end, so a wizard that is quit halfway still leaves the app configured as far as it got. The final screen reports anything that failed — a model that would not download, a shortcut the desktop refused — with the underlying error, rather than claiming the app is ready.
+
 ### Privacy & Offline Operation
 - Zero network requests during normal operation
 - No analytics, crash reporting, or telemetry

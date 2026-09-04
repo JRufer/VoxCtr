@@ -48,9 +48,13 @@ VoxCtrl/
 │   ├── stores/
 │   │   ├── config.ts
 │   │   └── status.ts
+│   ├── assets/
+│   │   └── overlays/       # Bundled .webm previews of each overlay style
 │   └── lib/
 │       ├── Settings/
 │       ├── Overlay/
+│       ├── Wizard/         # First-run setup wizard (shell + steps/)
+│       ├── Diagnostics/
 │
 ├── src-tauri/              # Tauri application shell
 │   ├── Cargo.toml

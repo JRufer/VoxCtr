@@ -226,6 +226,12 @@ label = "Voice Command Router"
 delivery = "command"
 ```
 
+On a new install the first-run wizard creates this target, named "Command", and
+binds the first hotkey to it. Until a second target exists it behaves exactly
+like `inject` — a transcription with no trigger keyword in it falls through to
+typing into the focused window — so voice command routing works the day another
+target is added, with no re-binding.
+
 **How Voice Command Routing Works:**
 - **Trigger Keyword**: Listens for the `"VoxCtrl"` keyword (case-insensitive, supporting `VoxCtrl`, `voxctrl`, `vox ctrl`, `vox-ctrl`, and optional punctuation like `VoxCtrl:`).
 - **Target Resolution**: Matches spoken target names against all configured target IDs and Labels (case-insensitively). Longest candidate target names take precedence (e.g. `"Personal Notes"` is matched before `"Notes"`).

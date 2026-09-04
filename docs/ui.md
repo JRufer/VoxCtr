@@ -8,18 +8,36 @@ VoxCtrl opens separate native windows managed by Tauri, plus a native overlay he
 
 | Window | Route / Process | Default Size | Properties |
 |---|---|---|---|
-| Settings | `/settings` | 840 × 640 (min 700 × 500) | Resizable, standard chrome |
+| Settings | `/settings` | 720 × 640 (min 600 × 450) | Resizable, standard chrome |
+| Setup Wizard | `/wizard` | Fitted to the display, 16:9 (min 1280 × 720) | Resizable, first run only |
+| Setup / Diagnostics | `/udev-warning` | 580 × 600 (min 480 × 420) | Always-on-top |
 | Overlay | `voxctrl-overlay` helper (Slint) | 560 × 190 | Transparent, always-on-top, no decorations, click-through |
 
 The Tauri windows are declared in `src-tauri/tauri.conf.json`, start hidden (`visible: false`), and are shown programmatically. The overlay is a separate native process (`src-tauri/src/overlay.rs`) spawned at startup and driven over stdin; the Svelte `/overlay` route hosts the web counterparts of the same visualizers (used for custom HTML overlays).
+
+### Window Lifecycle
+
+Windows close like any other window: the close button destroys them rather than
+hiding them. VoxCtrl is a tray application, so the last window closing must not
+end the process — the app refuses the resulting exit request (an explicit quit
+from the tray carries an exit code, and is honoured) and carries on listening
+for its hotkey with nothing on screen.
+
+Because a closed window no longer exists, every entry point rebuilds one on
+demand: the tray menu and its left click, a second launch of the binary, the
+startup auto-open, and the wizard's hand-off to Settings. Raising an existing
+window pins it above others briefly before focusing it — Linux desktops
+routinely ignore a bare focus request from a process that does not already own
+the focused window — and does not move it.
 
 ---
 
 ## Settings Window
 
-The main configuration interface. Organized into a sidebar with nine tabs:
+The main configuration interface. Organized into a sidebar with ten tabs:
 
 ### General Tab
+- "Open setup wizard" button — re-runs the first-run wizard
 - Overlay show/hide toggle
 - Overlay style selector
 - Auto-show settings on startup toggle
@@ -121,6 +139,39 @@ Overlay is disabled entirely.
 ### Speaking Pill
 
 While TTS is speaking, a green "SYSTEM RESPONDING" pill with a live mini-equalizer and the active target label slides up from the bottom of the overlay window (and a red pill is shown for MCP recording in the web overlay layer).
+
+---
+
+## Setup Wizard
+
+Opens once, on a machine whose config file does not exist yet, and is the only
+window shown on that first launch. Seven steps, each writing its choice to the
+config as it is made:
+
+| Step | Writes | Notes |
+|---|---|---|
+| Welcome | — | A read-only contents page; the cards preview the steps rather than linking to them |
+| Engine | `engine.backend`, model size, `whisper_cpp.device` | Continue downloads the chosen model and waits for it. A model already on disk needs no click; one that is not requires an explicit engine and size, so a multi-gigabyte default is never fetched unasked |
+| Hotkey | `bindings.toml` | Only gestures the running shortcut backend can deliver are offered, and the combination is validated by the same Rust rules the portal registration uses. Blocked until the desktop has accepted the shortcut, because the next step is a live test |
+| Overlay | `ui.show_overlay`, `ui.overlay_style`, `ui.overlay_position` | Each style previews a recording of the real overlay, bundled at `src/assets/overlays/<style id>.webm`, falling back to a CSS animation |
+| Test | — | A real dictation: the transcript is injected into the focused window, and the readout follows the pipeline's own recording and processing state |
+| Voice | `tts.enabled`, `tts.engine` | Each engine downloads from its own card; the play button unlocks once its assets are on disk |
+| Done | `ui.setup_completed` | Lists anything that failed, with the raw backend error and a copyable diagnostics report |
+
+The first hotkey is bound to a `command` delivery target named "Command",
+created by the wizard if it does not exist. Command delivery falls through to
+typing into the focused window when no "VoxCtrl &lt;target&gt;" phrase is present,
+so it behaves exactly like `inject` until a second target exists.
+
+The window opens at the largest 16:9 size that fits the display, capped at
+1600 × 900 and floored at 1280 × 720 — the size below which the layout starts
+to wrap. A fixed size is not safe: 1600 × 900 on a 1080p display at 125%
+scaling is 2000 × 1125 physical, and opens with its footer off-screen.
+
+Re-runnable afterwards with `voxctrl --setup` (also `--wizard`,
+`--setup-wizard`, `--first-run`), which works whether or not the app is already
+running, or from Settings → General. A re-run builds a fresh window and starts
+at step one.
 
 ---
 
