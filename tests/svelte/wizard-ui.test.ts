@@ -570,10 +570,11 @@ describe("OverlayStep", () => {
 });
 
 describe("OverlayPreview", () => {
-  // The clips are resolved from src/assets/overlays at build time. Until they
-  // are added the folder is empty, so every style must still render something
-  // — a black rectangle where a preview should be is worse than no preview.
-  test("falls back to an animation for a style with no clip bundled", async () => {
+  // The clips are resolved from src/assets/overlays at build time, so a style
+  // whose file is missing or renamed silently loses its clip. Every style must
+  // still render something — a black rectangle where a preview should be is
+  // worse than no preview at all.
+  test("every style renders a preview, clip or fallback", async () => {
     invoke.mockImplementation(async () => undefined);
     const { container } = render(OverlayStep);
 
