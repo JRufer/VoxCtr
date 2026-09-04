@@ -46,8 +46,7 @@ The main configuration interface. Organized into a sidebar with ten tabs:
 - Manual record/stop button
 
 ### Engine Tab
-- Backend selector (`auto`, `whisper-cpp`, `moonshine`)
-- Inference mode selector (`Balanced`, `Aggressive`)
+- Backend selector (`whisper-cpp`, `moonshine`)
 - Whisper model size selector with download status
 - Compute device selector (auto / CPU / CUDA / Vulkan)
 - Thread count control
@@ -73,14 +72,14 @@ The main configuration interface. Organized into a sidebar with ten tabs:
 - Input device selector (lists all CPAL devices)
 - Gain slider
 - VAD threshold slider
-- Noise suppression toggle
+- Noise suppression toggle (RNNoise; applies to the next recording)
 - Dynamic stream toggle
 - Live audio level meter (VU meter, updates from `audio-level` events during monitoring)
 - Evdev device path input
 
 ### TTS Tab
 - Enable/disable toggle
-- Engine selector (Piper / Espeak)
+- Engine selector (eSpeak-NG / Piper / Pocket-TTS / Inflect-Micro-v2 / Breeze-TTS-2)
 - Voice selector with download status per voice
 - "Download Voice" button per voice
 - Stop key configuration
@@ -90,7 +89,6 @@ The main configuration interface. Organized into a sidebar with ten tabs:
 - Filler removal toggle
 - Spoken punctuation toggle
 - Auto-format lists toggle
-- Quiet mode toggle
 - Custom vocabulary list editor
 - Snippet key-value editor
 

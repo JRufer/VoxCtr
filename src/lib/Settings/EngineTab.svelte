@@ -27,7 +27,6 @@
   ];
 
   const backendOptions = [
-    { value: "auto", label: "Auto-detect" },
     { value: "whisper-cpp", label: "Whisper.cpp" },
     { value: "moonshine", label: "Moonshine (CPU only)" }
   ];

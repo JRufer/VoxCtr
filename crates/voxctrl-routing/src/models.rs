@@ -110,8 +110,6 @@ pub enum DeliveryType {
 /// None = inherit global config; Some(x) = override for this target.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TargetProcessingConfig {
-    pub noise_suppression: Option<bool>,
-    pub quiet_mode: Option<bool>,
     pub remove_fillers: Option<bool>,
     pub spoken_punctuation: Option<bool>,
     pub auto_format_lists: Option<bool>,
@@ -121,9 +119,7 @@ pub struct TargetProcessingConfig {
 
 impl TargetProcessingConfig {
     pub fn has_any(&self) -> bool {
-        self.noise_suppression.is_some()
-            || self.quiet_mode.is_some()
-            || self.remove_fillers.is_some()
+        self.remove_fillers.is_some()
             || self.spoken_punctuation.is_some()
             || self.auto_format_lists.is_some()
             || self.apply_snippets.is_some()

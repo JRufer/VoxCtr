@@ -50,7 +50,7 @@ Records audio and returns the transcription. Blocks until recording ends or time
 }
 ```
 
-`timeout_seconds` defaults to `mcp.record_timeout` (15.0 seconds). Returns `"(no speech detected)"` if no audio was captured.
+`timeout_seconds` is optional; omitted, it defaults to `mcp.record_timeout` (Settings → General → Record timeout, `15.0` out of the box). The value is read per call, so changing it in Settings applies to the next `transcribe_voice` without restarting the server, and it is advertised as the default in the `tools/list` schema. Returns `"(no speech detected)"` if no audio was captured.
 
 Response:
 ```json

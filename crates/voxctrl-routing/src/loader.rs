@@ -100,8 +100,6 @@ struct RawTarget {
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 struct RawProcessing {
-    noise_suppression: Option<bool>,
-    quiet_mode: Option<bool>,
     remove_fillers: Option<bool>,
     spoken_punctuation: Option<bool>,
     auto_format_lists: Option<bool>,
@@ -175,9 +173,7 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         _ => DeliveryType::Inject,
     };
 
-    let has_any_override = r.processing.noise_suppression.is_some()
-        || r.processing.quiet_mode.is_some()
-        || r.processing.remove_fillers.is_some()
+    let has_any_override = r.processing.remove_fillers.is_some()
         || r.processing.spoken_punctuation.is_some()
         || r.processing.auto_format_lists.is_some()
         || r.processing.apply_snippets.is_some()
@@ -188,8 +184,6 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         migrate_legacy_pp(r.post_processing.as_deref().unwrap_or("default"))
     } else {
         TargetProcessingConfig {
-            noise_suppression: r.processing.noise_suppression,
-            quiet_mode: r.processing.quiet_mode,
             remove_fillers: r.processing.remove_fillers,
             spoken_punctuation: r.processing.spoken_punctuation,
             auto_format_lists: r.processing.auto_format_lists,
@@ -332,8 +326,6 @@ fn target_to_raw(t: &OutputTarget) -> RawTarget {
         strip_newlines: t.strip_newlines,
         initial_prompt: t.initial_prompt.clone(),
         processing: RawProcessing {
-            noise_suppression: p.noise_suppression,
-            quiet_mode: p.quiet_mode,
             remove_fillers: p.remove_fillers,
             spoken_punctuation: p.spoken_punctuation,
             auto_format_lists: p.auto_format_lists,

@@ -22,7 +22,7 @@ Key capabilities include **Voice Design**, which generates voices from natural-l
 - **Voice Design Prompts:** Set `speaker_prompt` in Settings to describe the desired voice characteristics.
 - **HuggingFace Access Token:** The gated model weights require a HuggingFace access token (`hf_token`). The token is shared between Pocket-TTS and Breeze-TTS-2.
 - **Prewarming:** Enables startup prewarming to load weights into VRAM so the first synthesis is instant.
-- **GPU Acceleration:** NVIDIA CUDA GPU acceleration can be enabled for near real-time response speeds.
+- **GPU Acceleration:** CUDA (NVIDIA) or Metal (macOS) offload can be enabled for near real-time response speeds, in a build that includes the matching feature. See [GPU Acceleration](#gpu-acceleration).
 
 ### Piper (Primary)
 [Piper](https://github.com/rhasspy/piper) is a fast, local neural TTS system using ONNX models. It produces high-quality natural-sounding speech entirely offline.
@@ -100,19 +100,38 @@ If Piper is unavailable or no voice is downloaded, VoxCtrl can use `espeak-ng`. 
 
 ## GPU Acceleration
 
-VoxCtrl supports **GPU Acceleration** for the **Piper** neural engine:
+Two engines can run on the GPU, each through its own mechanism:
 
-*   **Piper:** Appends the `--cuda` CLI flag to the spawned `piper` subprocess command dynamically at runtime.
+*   **Piper** (`tts.gpu`): appends the `--cuda` CLI flag to the spawned `piper`
+    subprocess at runtime. Needs the app built with the `cuda` feature.
+*   **Breeze-TTS-2** (`tts.breeze_tts_2.gpu`): loads the model onto a candle GPU
+    device instead of the CPU. Needs the app built with `breeze-cuda` (NVIDIA) or
+    `breeze-metal` (macOS) on `voxctrl-tts`.
 
-Pocket-TTS (Candle-based) does not currently expose a GPU toggle in this crate version, and Inflect-Micro-v2 runs on ONNX Runtime's CPU provider, so the `gpu` config flag and the GPU setting in Settings → TTS only apply to Piper. Inflect is small enough (9.4M parameters) that CPU synthesis is fast; the upstream export also supports CUDA and DirectML providers, which VoxCtrl does not currently select.
+Breeze-TTS-2 runs on candle (via `pocket-tts`), whose only GPU backends are CUDA
+and Metal — **there is no Vulkan path** to select, on any platform. A build
+without one of those features logs a warning when the setting is on and
+synthesizes on the CPU.
+
+Pocket-TTS shares Breeze's runtime but exposes no GPU toggle of its own, and
+Inflect-Micro-v2 runs on ONNX Runtime's CPU provider. Inflect is small enough
+(9.4M parameters) that CPU synthesis is fast; the upstream export also supports
+CUDA and DirectML providers, which VoxCtrl does not currently select.
 
 ### Requirements & Setup:
-1.  A CUDA-compatible NVIDIA GPU and drivers installed.
-2.  Run with the `--cuda` feature where applicable:
+1.  A CUDA-compatible NVIDIA GPU and drivers (or an Apple Silicon Mac, for Metal).
+2.  Build with the feature for the engine you want:
     ```bash
-    cargo tauri dev --features cuda
+    cargo tauri dev --features cuda           # Piper
+    cargo tauri dev --features breeze-cuda    # Breeze-TTS-2 on NVIDIA
+    cargo tauri dev --features breeze-metal   # Breeze-TTS-2 on macOS
     ```
-    If GPU initialization fails, Piper automatically and gracefully falls back to executing on the **CPU** without causing a crash.
+    If GPU initialization fails, both engines fall back to the **CPU** without
+    crashing — Breeze logs the reason and reloads on the CPU.
+
+Toggling the Breeze GPU setting reloads the model: the device is fixed when the
+weights are placed, so the next utterance after the change pays a load, and
+subsequent ones do not.
 
 ---
 
@@ -282,16 +301,25 @@ Under `tts` in `config.json`:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | bool | `false` | Enable TTS functionality |
-| `engine` | string | `"espeak"` | `"piper"`, `"pocket_tts"`, or `"espeak"`. eSpeak-NG is the default because it's a system package with no model download; Piper and Pocket-TTS need a voice/model download first. |
+| `engine` | string | `"espeak"` | `"piper"`, `"pocket_tts"`, `"inflect_micro"`, `"breeze_tts_2"`, or `"espeak"`. eSpeak-NG is the default because it's a system package with no model download; the others need a voice/model download first. |
 | `voice` | string | `"en-us-lessac-medium"` | Default voice for Piper (hyphen-delimited) |
 | `voice_dir` | string | `""` | Directory for Piper voice files; empty = `~/.local/share/voxctrl/piper-voices/` |
 | `stop_key` | string[] | `["KEY_ESCAPE"]` | Keys that interrupt playback |
 | `response_overlay` | bool | `true` | Show overlay indicator while TTS is speaking |
-| `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Piper |
+| `gpu` | bool | `false` | Enable GPU acceleration (CUDA) for Piper. Breeze-TTS-2 has its own `breeze_tts_2.gpu` |
 | `pocket_tts.voice` | string | `"alba"` | Default Pocket-TTS voice ID: `"alba"`, `"anna"`, `"vera"`, `"charles"`, `"michael"` |
 | `pocket_tts.prewarm` | bool | `false` | Pre-warm model on startup for faster first synthesis |
 | `pocket_tts.hf_token` | string or null | `null` | HuggingFace token used to download the gated model weights |
 | `pocket_tts.voice_dir` | string | `""` | Directory scanned for custom `.wav` voice clips; empty = `~/.local/share/voxctrl/pocket-tts-voices/` |
+| `breeze_tts_2.voice_mode` | string | `"prompt"` | `"prompt"` for Voice Design, `"clone"` to use a reference clip |
+| `breeze_tts_2.speaker_prompt` | string | *(a calm, clear female voice)* | Natural-language description of the speaker, used in `"prompt"` mode |
+| `breeze_tts_2.cloned_voice` | string | `""` | Voice id from the shared clip folder, used in `"clone"` mode |
+| `breeze_tts_2.voice_dir` | string | `""` | Shared with Pocket-TTS; empty = `~/.local/share/voxctrl/pocket-tts-voices/` |
+| `breeze_tts_2.model_dir` | string | `""` | Model weights & tokenizer; empty = `~/.local/share/voxctrl/models/breeze-tts-2/` |
+| `breeze_tts_2.hf_token` | string or null | `null` | HuggingFace token for the gated weights (shared with Pocket-TTS) |
+| `breeze_tts_2.prewarm` | bool | `false` | Pre-warm the model on startup for faster first synthesis |
+| `breeze_tts_2.gpu` | bool | `false` | Run synthesis on the GPU; needs a `breeze-cuda` / `breeze-metal` build, CPU otherwise |
+| `snippets` | object | *(VoxCtrl pronunciations)* | Word → spoken expansion map, applied to speech only |
 
 **Example Pocket-TTS config:**
 

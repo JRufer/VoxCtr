@@ -1,5 +1,5 @@
 import { describe, test, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, fireEvent, within } from "@testing-library/svelte";
 import EngineTab from "../../src/lib/Settings/EngineTab.svelte";
 
 // Mock tauri invoke & event
@@ -56,5 +56,32 @@ describe("EngineTab.svelte Warning Banner", () => {
     // Warning banner should NOT be in the document
     const title = screen.queryByText("Voice Model Not Downloaded");
     expect(title).toBeNull();
+  });
+});
+
+describe("EngineTab.svelte Backend selector", () => {
+  /** Open the first CustomSelect (Backend) and read its option labels. */
+  async function backendOptionLabels(cfg: any) {
+    const { container } = render(EngineTab, { cfg });
+    const trigger = container.querySelector(".custom-select-trigger") as HTMLElement;
+    await fireEvent.click(trigger);
+    const menu = trigger.parentElement as HTMLElement;
+    return within(menu)
+      .getAllByRole("button")
+      .map(b => b.textContent?.trim())
+      .filter(Boolean);
+  }
+
+  test("offers only the concrete backends, with no auto-detect entry", async () => {
+    const labels = await backendOptionLabels({ ...mockConfig });
+
+    expect(labels).toContain("Whisper.cpp");
+    expect(labels.some(l => /auto/i.test(l!))).toBe(false);
+  });
+
+  test("shows the selected backend in the trigger", async () => {
+    const { container } = render(EngineTab, { cfg: { ...mockConfig } });
+    const trigger = container.querySelector(".custom-select-trigger") as HTMLElement;
+    expect(trigger.textContent).toContain("Whisper.cpp");
   });
 });

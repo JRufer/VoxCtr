@@ -13,7 +13,7 @@ export interface AppConfig {
 }
 
 export interface EngineConfig {
-  backend: "auto" | "whisper-cpp" | "moonshine";
+  backend: "whisper-cpp" | "moonshine";
   whisper_cpp: WhisperCppConfig;
   moonshine: MoonshineConfig;
 }
@@ -55,7 +55,6 @@ export interface FeaturesConfig {
   custom_vocabulary: string[];
   spoken_punctuation: boolean;
   auto_format_lists: boolean;
-  quiet_mode: boolean;
   snippets: Record<string, string>;
 }
 
@@ -91,7 +90,6 @@ export interface BreezeTts2Config {
   hf_token: string | null;
   prewarm: boolean;
   gpu: boolean;
-  temperature: number;
 }
 
 export interface TtsConfig {
@@ -107,7 +105,6 @@ export interface TtsConfig {
   inflect_micro: InflectMicroConfig;
   breeze_tts_2: BreezeTts2Config;
   snippets: Record<string, string>;
-  custom_vocabulary: string[];
 }
 
 export interface McpConfig {
@@ -118,7 +115,7 @@ export interface McpConfig {
 
 const defaultConfig: AppConfig = {
   engine: {
-    backend: "auto",
+    backend: "whisper-cpp",
     whisper_cpp: {
       model_dir: "",
       model_size: "tiny",
@@ -150,7 +147,6 @@ const defaultConfig: AppConfig = {
     custom_vocabulary: ["VoxCtrl"],
     spoken_punctuation: true,
     auto_format_lists: true,
-    quiet_mode: false,
     snippets: {},
   },
   openai: {
@@ -191,12 +187,10 @@ const defaultConfig: AppConfig = {
       hf_token: null,
       prewarm: false,
       gpu: false,
-      temperature: 0.7,
     },
     snippets: {
       "VoxCtrl": "Vox Control"
     },
-    custom_vocabulary: ["VoxCtrl"],
   },
   mcp: { server_enabled: false, record_timeout: 15.0, visual_feedback: true },
 };

@@ -174,6 +174,33 @@ npm run tauri build -- --no-default-features --features custom-protocol
 In such a build, selecting Moonshine falls back to whisper-cpp, and the Inflect
 TTS engine still downloads its model but leaves Test TTS disabled — only
 synthesis is gated.
+
+### Breeze-TTS-2 on the GPU (opt-in)
+
+Breeze-TTS-2 runs on candle, whose GPU backends are CUDA and Metal — there is no
+Vulkan backend to select. Neither is on by default, because each needs its
+toolchain at build time:
+
+```bash
+npm run tauri build -- --features breeze-cuda    # NVIDIA
+npm run tauri build -- --features breeze-metal   # macOS
+```
+
+Without one of these, `tts.breeze_tts_2.gpu` has nothing to switch to: the
+setting is saved, a warning is logged, and synthesis stays on the CPU. The same
+fallback covers a GPU that fails to open at runtime.
+
+### Noise suppression
+
+RNNoise sits behind `noisereduce` on `voxctrl-audio`, and `src-tauri` enables it,
+so a normal build can honor the Audio tab's noise-suppression toggle. Building
+`voxctrl-audio` on its own (or with `--no-default-features` on that crate) leaves
+it out, and the toggle then logs a warning and passes audio through unchanged.
+Its tests need the feature:
+
+```bash
+cargo test -p voxctrl-audio --features noisereduce
+```
 # Or use the helper script:
 .\scripts\build_windows.ps1 -Cuda
 ```

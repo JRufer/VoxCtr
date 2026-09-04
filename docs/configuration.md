@@ -19,7 +19,7 @@ Full schema with defaults:
 ```json
 {
   "engine": {
-    "backend": "auto",
+    "backend": "whisper-cpp",
     "whisper_cpp": {
       "model_dir": "",
       "model_size": "tiny",
@@ -55,7 +55,6 @@ Full schema with defaults:
     "custom_vocabulary": [],
     "spoken_punctuation": true,
     "auto_format_lists": true,
-    "quiet_mode": false,
     "snippets": {}
   },
   "openai": {
@@ -107,7 +106,7 @@ The engine config is nested into two backend sub-objects.
 
 | Key | Type | Values | Description |
 |---|---|---|---|
-| `backend` | string | `"auto"`, `"whisper-cpp"`, `"moonshine"` | Which backend to use; `auto` selects based on GPU availability |
+| `backend` | string | `"whisper-cpp"` (default), `"moonshine"` | Which speech-recognition backend to use. A config still holding the retired `"auto"` value loads as `"whisper-cpp"` |
 
 **`whisper_cpp` sub-object:**
 
@@ -149,7 +148,7 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | `vad_threshold` | float | `0.5` | Voice Activity Detection sensitivity (0.0–1.0); **higher = more sensitive** (lower RMS gate) |
 | `input_device_index` | integer or null | `null` | CPAL device index; null = auto-detect |
 | `evdev_device` | string or null | `null` | Linux evdev keyboard device path for hotkeys, e.g. `"/dev/input/event4"` |
-| `noise_suppression` | bool | `false` | Enable basic noise suppression pre-processing |
+| `noise_suppression` | bool | `false` | Run captured audio through RNNoise before transcription. Needs a build with the `noisereduce` feature (the shipped app has it); see [audio.md](audio.md#noise-suppression) |
 | `gain` | float | `1.0` | Microphone amplification multiplier |
 | `dynamic_stream` | bool | `true` | Open mic on-demand (true) vs. always-on (false) |
 
@@ -176,7 +175,6 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | `remove_fillers` | bool | `true` | Strip filler words (`uh`, `um`, `hmm`, `er`, `ah`, etc.) |
 | `spoken_punctuation` | bool | `true` | Convert spoken punctuation words to symbols (e.g. "period" → ".") |
 | `auto_format_lists` | bool | `true` | Detect "first/second/third" patterns and reformat as a numbered list |
-| `quiet_mode` | bool | `false` | Suppress overlay notifications during transcription |
 | `custom_vocabulary` | string[] | `[]` | Custom words; VoxCtrl uses fuzzy Levenshtein matching to correct near-matches post-transcription |
 | `snippets` | object | `{}` | Short code → expansion map |
 
@@ -244,8 +242,7 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 | `model_dir` | string | `""` | Directory holding model weights & tokenizer; empty = `~/.local/share/voxctrl/models/breeze-tts-2/` |
 | `hf_token` | string or null | `null` | HuggingFace access token used to download gated model weights (shared with Pocket-TTS) |
 | `prewarm` | bool | `false` | Pre-warm model weights and tensors on startup so first speech is instantaneous |
-| `gpu` | bool | `false` | Enable CUDA GPU acceleration for maximum performance |
-| `temperature` | float | `0.7` | Sampling temperature controlling voice expressiveness (0.1 – 1.0) |
+| `gpu` | bool | `false` | Run synthesis on the GPU. Needs a build with the `breeze-cuda` or `breeze-metal` feature; falls back to the CPU otherwise, or when no GPU can be opened. Changing it reloads the model |
 
 **`pocket_tts` sub-object:**
 
@@ -281,7 +278,7 @@ shared `tts.speed`. See [tts.md](tts.md) for the full engine notes.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `server_enabled` | bool | `false` | Start the MCP socket server on launch |
-| `record_timeout` | float | `15.0` | Max seconds for `transcribe_voice` to wait for speech |
+| `record_timeout` | float | `15.0` | How long `transcribe_voice` listens when the MCP client passes no `timeout_seconds`. Read per call, so a change applies without restarting the server; a non-positive value falls back to `15.0` |
 | `visual_feedback` | bool | `true` | Show overlay indicator while MCP server is listening to microphone |
 
 ---
@@ -318,8 +315,6 @@ spoken_punctuation = true
 auto_format_lists = true
 apply_snippets = true
 code_mode = false
-quiet_mode = false
-noise_suppression = false
 ```
 
 ### Delivery-specific fields

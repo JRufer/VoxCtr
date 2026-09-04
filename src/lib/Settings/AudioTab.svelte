@@ -165,6 +165,10 @@
       <span>Noise suppression (RNNoise)</span>
       <input type="checkbox" bind:checked={cfg.audio.noise_suppression} onchange={markDirty} />
     </label>
+    <p class="hint">
+      Removes steady background noise (fans, hiss, hum) from the microphone before
+      transcription, keeping speech intact. Takes effect on the next recording — no restart needed.
+    </p>
     <label class="field">
       <span>Input gain</span>
       <input type="range" min="0.5" max="4.0" step="0.1"

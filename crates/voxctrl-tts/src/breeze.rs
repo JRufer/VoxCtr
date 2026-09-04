@@ -12,7 +12,7 @@ use voxctrl_config::TtsConfig;
 
 use crate::engine::{PlaybackCallback, Utterance};
 use crate::piper::expand_tilde;
-use crate::pocket::{load_pocket_tts_model, POCKET_TTS_VARIANT};
+use crate::pocket::{load_pocket_tts_model_on_gpu, POCKET_TTS_VARIANT};
 
 pub const BREEZE_TTS_2_SAMPLE_RATE: u32 = 24_000;
 const BREEZE_TTS_2_REPO: &str = "BreezeBlue/Breeze-TTS-2";
@@ -82,7 +82,14 @@ pub async fn download_breeze_tts_2_assets(model_dir: &str, hf_token: Option<Stri
 }
 
 /// Cached model session slot for Breeze-TTS-2 worker thread
-pub type BreezeModelSlot = Option<pocket_tts::TTSModel>;
+/// The loaded model, plus the GPU setting it was loaded under — flipping that
+/// setting has to reload, since the device is fixed when the weights are placed.
+pub struct LoadedBreezeModel {
+    gpu: bool,
+    model: pocket_tts::TTSModel,
+}
+
+pub type BreezeModelSlot = Option<LoadedBreezeModel>;
 
 fn prompt_contains_word(prompt_lower: &str, target_words: &[&str]) -> bool {
     let words: Vec<&str> = prompt_lower
@@ -131,13 +138,15 @@ pub(crate) fn speak_breeze_tts_2(
         }
     }
 
-    if model.is_none() {
+    if model.as_ref().is_none_or(|m| m.gpu != cfg.gpu) {
         info!("Loading Breeze-TTS-2 neural speech model session in pure Rust...");
-        *model = Some(
-            load_pocket_tts_model(POCKET_TTS_VARIANT).context("load Breeze-TTS-2 neural model")?,
-        );
+        *model = Some(LoadedBreezeModel {
+            gpu: cfg.gpu,
+            model: load_pocket_tts_model_on_gpu(POCKET_TTS_VARIANT, cfg.gpu)
+                .context("load Breeze-TTS-2 neural model")?,
+        });
     }
-    let tts_model = model.as_ref().unwrap();
+    let tts_model = &model.as_ref().unwrap().model;
 
     // Determine reference audio clip and transcript based on voice_mode
     let is_clone_mode = cfg.voice_mode == "clone" || (!cfg.cloned_voice.trim().is_empty() && cfg.voice_mode != "prompt");

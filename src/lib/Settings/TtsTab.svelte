@@ -657,38 +657,6 @@
     ttsSnippetList = ttsSnippetList.filter((_, i) => i !== index);
   }
 
-  let ttsCustomVocabString = $derived(
-    cfg.tts.custom_vocabulary ? cfg.tts.custom_vocabulary.join(", ") : ""
-  );
-
-  function onTtsCustomVocabChange(e: Event) {
-    const target = e.target as HTMLTextAreaElement;
-    cfg.tts.custom_vocabulary = target.value
-      .split(",")
-      .map(w => w.trim())
-      .filter(w => w.length > 0);
-    markDirty();
-  }
-
-  function autoResize(node: HTMLTextAreaElement) {
-    function resize() {
-      node.style.height = "auto";
-      node.style.height = `${node.scrollHeight}px`;
-    }
-    node.addEventListener("input", resize);
-    const timer = setTimeout(resize, 0);
-
-    return {
-      update() {
-        resize();
-      },
-      destroy() {
-        clearTimeout(timer);
-        node.removeEventListener("input", resize);
-      }
-    };
-  }
-
 </script>
 
 <section>
@@ -908,27 +876,20 @@
     </p>
 
     <label class="field">
-      <span>GPU Acceleration (CUDA)</span>
+      <span>GPU Acceleration</span>
       <input type="checkbox" bind:checked={cfg.tts.breeze_tts_2.gpu} onchange={markDirty} />
     </label>
-    <p class="hint" style="margin-top: -6px;">Use NVIDIA CUDA GPU acceleration for fastest inference speed.</p>
+    <p class="hint" style="margin-top: -6px;">
+      Runs synthesis on the GPU for fastest inference speed. Needs a build with the
+      <code>breeze-cuda</code> (NVIDIA) or <code>breeze-metal</code> (macOS) feature; otherwise, and
+      whenever no GPU can be opened, synthesis stays on the CPU. The model reloads when you change this.
+    </p>
 
     <label class="field">
       <span>Pre-warm Model on Startup</span>
       <input type="checkbox" bind:checked={cfg.tts.breeze_tts_2.prewarm} onchange={markDirty} />
     </label>
     <p class="hint" style="margin-top: -6px;">Pre-loads model tensors into GPU VRAM on startup so the first speech generation is instant.</p>
-
-    <label class="field">
-      <span>Sampling Temperature ({cfg.tts.breeze_tts_2.temperature.toFixed(2)})</span>
-      <input
-        type="range" min="0.1" max="1.0" step="0.05"
-        bind:value={cfg.tts.breeze_tts_2.temperature}
-        onchange={markDirty}
-        class="range-input"
-      />
-    </label>
-    <p class="hint" style="margin-top: -6px;">Controls voice expressiveness and variation. Default is 0.70.</p>
 
     <div class="field">
       <span>Model directory (leave blank for default)</span>
@@ -1171,18 +1132,6 @@
   </div>
 
   <div class="field-group mt-6">
-    <h3>TTS Custom Dictionary</h3>
-    <p class="hint">Provide a comma-separated list of words (e.g. jargon or names) that the TTS engine should try to correct phonetic spellings for when speaking.</p>
-    <textarea 
-      class="custom-vocab-input"
-      placeholder="e.g. Waylin, Rufer, Enola, Kenz"
-      value={ttsCustomVocabString}
-      oninput={onTtsCustomVocabChange}
-      use:autoResize
-    ></textarea>
-  </div>
-
-  <div class="field-group mt-6">
     <div class="field-label-row">
       <div style="display: flex; flex-direction: column;">
         <h3 style="margin-bottom: 0;">TTS Snippets (Pronunciation Guide)</h3>
@@ -1311,18 +1260,6 @@
   .run-speed-value.counting {
     color: var(--accent2);
     text-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
-  }
-
-  .custom-vocab-input {
-    @apply w-full min-h-[80px] bg-[var(--bg)] text-[var(--text)] border border-[var(--border)] rounded-[var(--radius)] p-2 px-3 text-[13px] resize-y mt-2 outline-none box-border transition-all duration-200 ease-out;
-  }
-
-  .custom-vocab-input:focus {
-    @apply border-[var(--accent2)] shadow-[0_0_0_2px_rgba(79,195,247,0.2)];
-  }
-
-  .custom-vocab-input::placeholder {
-    @apply text-[var(--text-muted)] opacity-50;
   }
 
   .non-commercial-warning {

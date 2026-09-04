@@ -68,7 +68,6 @@ describe("Settings.svelte Startup Redirect", () => {
         custom_vocabulary: [],
         spoken_punctuation: true,
         auto_format_lists: true,
-        quiet_mode: false,
         snippets: {},
       },
       openai: {

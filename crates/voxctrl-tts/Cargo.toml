@@ -32,9 +32,27 @@ hf-hub = { workspace = true }
 # build, switch to `default-features = false, features = ["load-dynamic", "std",
 # "api-24"]` and ship a libonnxruntime alongside the app.
 ort = { version = "2.0.0-rc.12", optional = true }
+# Only pulled in by the `breeze-cuda` / `breeze-metal` features, to name a
+# candle `Device` for Breeze-TTS-2. pocket-tts builds on the same candle, so
+# turning a backend on here turns it on for the model it loads.
+candle-core = { version = "0.9", optional = true }
+candle-nn = { version = "0.9", optional = true }
 
 [features]
 default = []
+# GPU offload for Breeze-TTS-2. Opt-in because each backend needs its toolchain
+# at build time (CUDA needs nvcc and the CUDA libraries; Metal is macOS-only),
+# and candle — which pocket-tts runs on — offers no other GPU backend: there is
+# no Vulkan path to select. Without one of these the Breeze GPU setting has
+# nothing to switch to and synthesis stays on the CPU.
+breeze-cuda = ["dep:candle-core", "dep:candle-nn", "candle-core/cuda", "candle-nn/cuda"]
+breeze-metal = [
+    "dep:candle-core",
+    "dep:candle-nn",
+    "candle-core/metal",
+    "candle-nn/metal",
+    "pocket-tts/metal",
+]
 # Inflect-Micro-v2 neural TTS via ONNX Runtime. Opt-in like `moonshine` on
 # voxctrl-inference, and for the same reason: it pulls in ONNX Runtime. The
 # eSpeak-NG phoneme frontend is a runtime dependency, checked for before

@@ -1,6 +1,4 @@
 export interface TargetProcessingConfig {
-  noise_suppression?: boolean;
-  quiet_mode?: boolean;
   remove_fillers?: boolean;
   spoken_punctuation?: boolean;
   auto_format_lists?: boolean;

@@ -79,6 +79,20 @@ impl McpCallbacks for AppState {
     fn get_status(&self) -> impl std::future::Future<Output = (bool, bool)> + Send {
         async move { (self.is_recording(), self.is_speaking()) }
     }
+
+    fn default_record_timeout(&self) -> impl std::future::Future<Output = f64> + Send {
+        async move {
+            let configured = self.config.lock().await.data.mcp.record_timeout;
+            // A zero or negative timeout would stop the recording before the
+            // user could say anything, so fall back to the config default
+            // rather than trusting a hand-edited config.json.
+            if configured.is_finite() && configured > 0.0 {
+                configured
+            } else {
+                voxctrl_config::McpConfig::default().record_timeout
+            }
+        }
+    }
 }
 
 pub fn start_mcp_server(callbacks: Arc<AppState>) {

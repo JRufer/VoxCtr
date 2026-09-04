@@ -34,12 +34,12 @@ Change the active model via `engine.whisper_cpp.model_size` in config. Changing 
 
 | Value | Description |
 |---|---|
-| `auto` | Auto-detect: tries CUDA (nvidia-smi / /dev/nvidia0), then Vulkan (vulkaninfo / ICD dirs), then CPU |
+| `auto` | Let whisper.cpp use whatever GPU support the build has, falling back to CPU |
 | `cuda` | NVIDIA GPU via CUDA *(requires CUDA build — see below)* |
 | `vulkan` | Any GPU via Vulkan (AMD/Intel/NVIDIA) |
 | `cpu` | Force CPU |
 
-On startup, VoxCtrl probes for CUDA (via `nvidia-smi`, `/proc/driver/nvidia/version`, `/dev/nvidia0`) and Vulkan (via `vulkaninfo`, `/usr/share/vulkan/icd.d`) to select the best backend.
+Anything other than `cpu` turns whisper.cpp's GPU path on (`use_gpu`), and whisper.cpp then uses whichever accelerator the binary was built with — CUDA in a `--features cuda` build, Vulkan in the standard one. `auto` and an explicit `cuda`/`vulkan` therefore behave the same; only `cpu` differs.
 
 > **CUDA is opt-in at compile time.** The default build runs on any machine without a GPU. To enable NVIDIA GPU acceleration, build with the `cuda` cargo feature:
 > ```bash

@@ -454,7 +454,7 @@ interface AppConfig {
 }
 
 interface EngineConfig {
-  backend: "auto" | "whisper-cpp" | "moonshine";
+  backend: "whisper-cpp" | "moonshine";  // a legacy "auto" loads as whisper-cpp
   whisper_cpp: WhisperCppConfig;
   moonshine: MoonshineConfig;
 }
@@ -495,7 +495,6 @@ interface FeaturesConfig {
   custom_vocabulary: string[];
   spoken_punctuation: boolean;
   auto_format_lists: boolean;
-  quiet_mode: boolean;
   snippets: Record<string, string>;
 }
 
@@ -525,22 +524,35 @@ interface InflectMicroConfig {
   prewarm: boolean;
 }
 
+interface BreezeTts2Config {
+  voice_mode: "prompt" | "clone";
+  cloned_voice: string;     // voice id from the shared clip folder
+  voice_dir: string;        // shared with pocket_tts; empty = default directory
+  speaker_prompt: string;   // Voice Design description
+  model_dir: string;        // empty = default directory
+  hf_token: string | null;  // shared with pocket_tts
+  prewarm: boolean;
+  gpu: boolean;             // needs a breeze-cuda / breeze-metal build
+}
+
 interface TtsConfig {
   enabled: boolean;
-  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro";
+  engine: "piper" | "espeak" | "pocket_tts" | "inflect_micro" | "breeze_tts_2";
   voice: string;
   voice_dir: string;
   stop_key: string[];       // singular field name, plural value
   response_overlay: boolean;
   speed: number;            // not used by pocket_tts
-  gpu: boolean;             // only applies to piper
+  gpu: boolean;             // only applies to piper; Breeze has its own flag
   pocket_tts: PocketTtsConfig;
   inflect_micro: InflectMicroConfig;  // fixed-voice, so no voice field
+  breeze_tts_2: BreezeTts2Config;
+  snippets: Record<string, string>;   // pronunciation guide, speech only
 }
 
 interface McpConfig {
   server_enabled: boolean;  // not "enabled"
-  record_timeout: number;
+  record_timeout: number;   // default for transcribe_voice, read per call
   visual_feedback: boolean;
 }
 
@@ -602,8 +614,6 @@ interface OutputTarget {
 }
 
 interface TargetProcessingConfig {
-  noise_suppression?: boolean;
-  quiet_mode?: boolean;
   remove_fillers?: boolean;
   spoken_punctuation?: boolean;
   auto_format_lists?: boolean;

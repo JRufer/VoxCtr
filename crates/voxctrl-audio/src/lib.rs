@@ -15,6 +15,9 @@ use crossbeam_channel::Sender;
 use tracing::{info, warn};
 use voxctrl_config::AudioConfig;
 
+mod denoise;
+use denoise::make_denoiser;
+
 pub const TARGET_SAMPLE_RATE: u32 = 16_000;
 
 /// A chunk of mono f32 audio at TARGET_SAMPLE_RATE Hz.
@@ -32,6 +35,8 @@ pub struct AudioRecorder {
     input_device_index: Arc<AtomicU32>,
     /// Live gain value, stored as f32 bits
     gain: Arc<AtomicU32>,
+    /// Live noise-suppression preference
+    noise_suppression: Arc<AtomicBool>,
 }
 
 impl AudioRecorder {
@@ -42,6 +47,7 @@ impl AudioRecorder {
         dynamic_stream: Arc<AtomicBool>,
         input_device_index: Arc<AtomicU32>,
         gain: Arc<AtomicU32>,
+        noise_suppression: Arc<AtomicBool>,
     ) -> Self {
         Self {
             config,
@@ -50,6 +56,7 @@ impl AudioRecorder {
             dynamic_stream,
             input_device_index,
             gain,
+            noise_suppression,
         }
     }
 
@@ -80,12 +87,13 @@ impl AudioRecorder {
         let dynamic_stream = self.dynamic_stream.clone();
         let input_device_index = self.input_device_index.clone();
         let gain = self.gain.clone();
+        let noise_suppression = self.noise_suppression.clone();
         let cfg = self.config.clone();
 
         let handle = std::thread::Builder::new()
             .name("voxctrl-audio".into())
             .spawn(move || {
-                if let Err(e) = capture_loop(cfg, gain, recording, monitoring, dynamic_stream, input_device_index, audio_ready, tx, level_tx) {
+                if let Err(e) = capture_loop(cfg, gain, noise_suppression, recording, monitoring, dynamic_stream, input_device_index, audio_ready, tx, level_tx) {
                     warn!("Audio capture error: {e}");
                 }
             })
@@ -166,12 +174,68 @@ pub fn test_and_detect_active_device(idx_opt: Option<u32>) -> Result<cpal::Devic
     host.default_input_device().context("no active or functional input device found at startup")
 }
 
+// ── Capture callback ──────────────────────────────────────────────────────────
+
+/// Build the data callback cpal invokes for each captured buffer.
+///
+/// Every stream the capture loop opens — always-on, dynamic, and the one
+/// rebuilt after a device change — needs the same processing chain, and a
+/// denoiser of its own, so they all come from here rather than being written
+/// out three times.
+#[allow(clippy::too_many_arguments)]
+fn make_input_callback(
+    gain: Arc<AtomicU32>,
+    recording: Arc<AtomicBool>,
+    level_tx: Option<Sender<f32>>,
+    tx: Sender<AudioChunk>,
+    noise_suppression: Arc<AtomicBool>,
+    hw_rate: u32,
+    needs_resample: bool,
+) -> impl FnMut(&[f32], &cpal::InputCallbackInfo) + Send + 'static {
+    // Built on the first buffer that actually needs it, so a stream that runs
+    // with noise suppression off never pays for the model, and a mid-session
+    // toggle still takes effect without rebuilding the stream.
+    let mut denoiser = None;
+    let mut denoising = false;
+
+    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+        let current_gain = f32::from_bits(gain.load(Ordering::SeqCst));
+        let gained: Vec<f32> = data.iter().map(|&s| s * current_gain).collect();
+        if let Some(ref ltx) = level_tx {
+            let rms = rms(&gained);
+            let _ = ltx.send(rms);
+        }
+        if !recording.load(Ordering::SeqCst) {
+            return;
+        }
+
+        // Drop the denoiser when the setting goes off so its next run starts
+        // from a clean spectral estimate rather than one built minutes ago.
+        let wants_denoise = noise_suppression.load(Ordering::SeqCst);
+        if wants_denoise != denoising {
+            denoiser = make_denoiser(wants_denoise, hw_rate);
+            denoising = wants_denoise;
+        }
+
+        let processed = match denoiser {
+            Some(ref mut d) => d.process(&gained),
+            None if needs_resample => resample_chunk(&gained, hw_rate, TARGET_SAMPLE_RATE),
+            None => gained,
+        };
+        if processed.is_empty() {
+            return;
+        }
+        let _ = tx.send(processed);
+    }
+}
+
 // ── Capture loop ──────────────────────────────────────────────────────────────
 
 #[allow(unused_assignments, unused_variables)]
 fn capture_loop(
     cfg: AudioConfig,
     gain: Arc<AtomicU32>,
+    noise_suppression: Arc<AtomicBool>,
     recording: Arc<AtomicBool>,
     monitoring: Arc<AtomicBool>,
     dynamic_stream: Arc<AtomicBool>,
@@ -222,23 +286,15 @@ fn capture_loop(
         let gain_inner = gain.clone();
         match device.build_input_stream(
             &hw_config,
-            move |data: &[f32], _| {
-                let current_gain = f32::from_bits(gain_inner.load(Ordering::SeqCst));
-                let gained: Vec<f32> = data.iter().map(|&s| s * current_gain).collect();
-                if let Some(ref ltx) = level_tx_inner {
-                    let rms = rms(&gained);
-                    let _ = ltx.send(rms);
-                }
-                if !recording_inner.load(Ordering::SeqCst) {
-                    return;
-                }
-                let resampled = if needs_resample {
-                    resample_chunk(&gained, hw_rate, TARGET_SAMPLE_RATE)
-                } else {
-                    gained
-                };
-                let _ = tx_inner.send(resampled);
-            },
+            make_input_callback(
+                gain_inner,
+                recording_inner,
+                level_tx_inner,
+                tx_inner,
+                noise_suppression.clone(),
+                hw_rate,
+                needs_resample,
+            ),
             |e| warn!("Audio stream error: {e}"),
             None,
         ) {
@@ -304,23 +360,15 @@ fn capture_loop(
                     let gain_inner = gain.clone();
                     match device.build_input_stream(
                         &hw_config,
-                        move |data: &[f32], _| {
-                            let current_gain = f32::from_bits(gain_inner.load(Ordering::SeqCst));
-                            let gained: Vec<f32> = data.iter().map(|&s| s * current_gain).collect();
-                            if let Some(ref ltx) = level_tx_inner {
-                                let rms = rms(&gained);
-                                let _ = ltx.send(rms);
-                            }
-                            if !recording_inner.load(Ordering::SeqCst) {
-                                return;
-                            }
-                            let resampled = if needs_resample {
-                                resample_chunk(&gained, hw_rate, TARGET_SAMPLE_RATE)
-                            } else {
-                                gained
-                            };
-                            let _ = tx_inner.send(resampled);
-                        },
+                        make_input_callback(
+                            gain_inner,
+                            recording_inner,
+                            level_tx_inner,
+                            tx_inner,
+                            noise_suppression.clone(),
+                            hw_rate,
+                            needs_resample,
+                        ),
                         |e| warn!("Audio stream error: {e}"),
                         None,
                     ) {
@@ -351,23 +399,15 @@ fn capture_loop(
 
                 match device.build_input_stream(
                     &hw_config,
-                    move |data: &[f32], _| {
-                        let current_gain = f32::from_bits(gain_inner.load(Ordering::SeqCst));
-                        let gained: Vec<f32> = data.iter().map(|&s| s * current_gain).collect();
-                        if let Some(ref ltx) = level_tx_inner {
-                            let rms = rms(&gained);
-                            let _ = ltx.send(rms);
-                        }
-                        if !recording_inner.load(Ordering::SeqCst) {
-                            return;
-                        }
-                        let resampled = if needs_resample {
-                            resample_chunk(&gained, hw_rate, TARGET_SAMPLE_RATE)
-                        } else {
-                            gained
-                        };
-                        let _ = tx_inner.send(resampled);
-                    },
+                    make_input_callback(
+                        gain_inner,
+                        recording_inner,
+                        level_tx_inner,
+                        tx_inner,
+                        noise_suppression.clone(),
+                        hw_rate,
+                        needs_resample,
+                    ),
                     |e| warn!("Audio stream error: {e}"),
                     None,
                 ) {

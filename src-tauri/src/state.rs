@@ -36,6 +36,8 @@ pub struct AppState {
     pub input_device_index: Arc<AtomicU32>,
     /// Live gain value, stored as f32 bits
     pub gain: Arc<AtomicU32>,
+    /// Live noise-suppression preference, read by the capture callback
+    pub noise_suppression: Arc<AtomicBool>,
 
     /// Total words injected this session
     pub word_count: Arc<std::sync::atomic::AtomicU32>,
@@ -125,6 +127,10 @@ impl AppState {
 
     pub fn set_input_device_index(&self, v: Option<u32>) {
         self.input_device_index.store(v.unwrap_or(u32::MAX), Ordering::SeqCst);
+    }
+
+    pub fn set_noise_suppression(&self, v: bool) {
+        self.noise_suppression.store(v, Ordering::SeqCst);
     }
 
     pub fn set_gain(&self, v: f32) {

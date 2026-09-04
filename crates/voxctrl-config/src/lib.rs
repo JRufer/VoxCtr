@@ -62,14 +62,17 @@ impl Default for MoonshineConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendChoice {
-    Auto,
+    /// `alias = "auto"` migrates configs written when the backend could be
+    /// left unset: auto-selection always resolved to whisper.cpp anyway, so
+    /// those installs keep the backend they were already running.
+    #[serde(alias = "auto")]
     WhisperCpp,
     Moonshine,
 }
 
 impl Default for BackendChoice {
     fn default() -> Self {
-        Self::Auto
+        Self::WhisperCpp
     }
 }
 
@@ -197,7 +200,6 @@ pub struct FeaturesConfig {
     pub custom_vocabulary: Vec<String>,
     pub spoken_punctuation: bool,
     pub auto_format_lists: bool,
-    pub quiet_mode: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_notification: Option<bool>,
     /// Map of trigger → expansion, e.g. {"addr" → "123 Main St"}
@@ -211,7 +213,6 @@ impl Default for FeaturesConfig {
             custom_vocabulary: vec!["VoxCtrl".into()],
             spoken_punctuation: true,
             auto_format_lists: true,
-            quiet_mode: false,
             show_notification: None,
             snippets: std::collections::HashMap::new(),
         }
@@ -316,10 +317,6 @@ fn default_breeze_tts_2_speaker_prompt() -> String {
     "A calm and clear female voice speaking at a natural pace".into()
 }
 
-fn default_breeze_temperature() -> f32 {
-    0.7
-}
-
 fn default_tts_speed() -> f32 {
     1.0
 }
@@ -383,9 +380,6 @@ pub struct BreezeTts2Config {
     /// Enable GPU acceleration (CUDA)
     #[serde(default)]
     pub gpu: bool,
-    /// Sampling temperature / noise scale for speech generation
-    #[serde(default = "default_breeze_temperature")]
-    pub temperature: f32,
 }
 
 fn default_breeze_voice_mode() -> String {
@@ -403,7 +397,6 @@ impl Default for BreezeTts2Config {
             hf_token: None,
             prewarm: false,
             gpu: false,
-            temperature: default_breeze_temperature(),
         }
     }
 }
@@ -731,6 +724,29 @@ pub fn validate(cfg: &AppConfig) -> Vec<String> {
 mod tests {
     use super::*;
 
+    /// Configs written before the Backend dropdown lost its "Auto-detect"
+    /// entry still say `"auto"`. They must keep loading, on whisper.cpp —
+    /// which is what auto-selection resolved to in every case — rather than
+    /// failing the whole config back to defaults.
+    #[test]
+    fn legacy_auto_backend_loads_as_whisper_cpp() {
+        let parsed: BackendChoice = serde_json::from_str(r#""auto""#).unwrap();
+        assert_eq!(parsed, BackendChoice::WhisperCpp);
+        assert_eq!(BackendChoice::default(), BackendChoice::WhisperCpp);
+    }
+
+    #[test]
+    fn backend_choice_serializes_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&BackendChoice::WhisperCpp).unwrap(),
+            r#""whisper-cpp""#
+        );
+        assert_eq!(
+            serde_json::to_string(&BackendChoice::Moonshine).unwrap(),
+            r#""moonshine""#
+        );
+    }
+
     #[test]
     fn test_default_config_values() {
         let cfg = AppConfig::default();
@@ -775,7 +791,6 @@ mod tests {
                 "custom_vocabulary": [],
                 "spoken_punctuation": true,
                 "auto_format_lists": true,
-                "quiet_mode": false,
                 "show_notification": true,
                 "snippets": {}
             },
@@ -839,7 +854,6 @@ mod tests {
     "custom_vocabulary": [],
     "spoken_punctuation": true,
     "auto_format_lists": true,
-    "quiet_mode": false,
     "show_notification": true"#));
     }
 

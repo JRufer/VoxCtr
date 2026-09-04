@@ -190,6 +190,7 @@ pub fn run() {
             cfg_data.audio.input_device_index.unwrap_or(u32::MAX),
         )),
         gain: Arc::new(AtomicU32::new(cfg_data.audio.gain.to_bits())),
+        noise_suppression: Arc::new(AtomicBool::new(cfg_data.audio.noise_suppression)),
         word_count: Arc::new(AtomicU32::new(0)),
         last_text: Arc::new(Mutex::new(String::new())),
         last_text_version: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -217,6 +218,7 @@ pub fn run() {
             app_state.dynamic_stream.clone(),
             app_state.input_device_index.clone(),
             app_state.gain.clone(),
+            app_state.noise_suppression.clone(),
         );
         let _ = recorder.run(
             audio_tx,

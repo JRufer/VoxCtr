@@ -88,9 +88,8 @@ pipe_path = "/tmp/agent.in"
 append_newline = true
 send_on_release = true
 file_timestamp = false
-# Quiet mode: extra gain for soft speech in a noisy environment
-# Noise suppression enabled if globally on; no LLM post-processing (agent handles it)
-processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, openai_enabled = false, quiet_mode = true}
+# No LLM post-processing (the agent handles it)
+processing = {remove_fillers = true, spoken_punctuation = false, apply_snippets = false, openai_enabled = false}
 
 # ── 9. TCP socket to remote service ──────────────────────────────────────────
 [[target]]
@@ -147,6 +146,4 @@ delivery = "inject"
 append_newline = false
 send_on_release = true
 file_timestamp = true
-# noise_suppression and quiet_mode both override global — will be ignored if
-# global noise_suppression toggle is off (target will be flagged in UI)
-processing = {noise_suppression = true, quiet_mode = true, remove_fillers = true, spoken_punctuation = true}
+processing = {remove_fillers = true, spoken_punctuation = true}
