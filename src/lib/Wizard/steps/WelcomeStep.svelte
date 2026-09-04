@@ -1,7 +1,14 @@
 <script lang="ts">
   import appIcon from "../../../assets/app_icon.png";
-  import { wizard } from "../wizard-state.svelte";
 
+  /**
+   * A read-only contents page for what is coming, not a menu.
+   *
+   * These were clickable and jumped straight to a step, which is the one thing
+   * a wizard exists to prevent: the steps build on each other — the live test
+   * has nothing to test without an engine and a hotkey — so skipping ahead
+   * lands the user on a screen that cannot work yet.
+   */
   const cards = [
     { glyph: "∇", n: "01", title: "Transcription engine", desc: "whisper.cpp or Moonshine, sized to your hardware." },
     { glyph: "⌁", n: "02", title: "Hotkey", desc: "A gesture and a key combo to start talking." },
@@ -30,15 +37,15 @@
   </div>
 
   <div class="cards">
-    {#each cards as c, i}
-      <button class="vx-card step-card" onclick={() => wizard.goTo(i + 1)}>
+    {#each cards as c}
+      <div class="vx-card step-card">
         <div class="head">
           <span class="glyph">{c.glyph}</span>
           <span class="num">{c.n}</span>
         </div>
         <div class="title">{c.title}</div>
         <div class="desc">{c.desc}</div>
-      </button>
+      </div>
     {/each}
   </div>
 </div>
@@ -130,10 +137,7 @@
   .step-card {
     padding: 16px 18px;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
-  }
-
-  .step-card:hover {
-    border-color: rgba(34, 212, 239, 0.4);
+    cursor: default;
   }
 
   .head {

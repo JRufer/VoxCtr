@@ -140,6 +140,22 @@ describe("SetupWizard shell", () => {
     });
   });
 
+  test("the welcome cards preview the steps without jumping to them", async () => {
+    // A wizard whose contents page is also a menu is not a wizard: the live
+    // test has nothing to test until an engine and a hotkey exist, so landing
+    // there directly lands on a screen that cannot work.
+    render(SetupWizard);
+
+    const card = (await screen.findByText("Live test")).closest(".step-card") as HTMLElement;
+    expect(card).toBeTruthy();
+    expect(card.tagName).toBe("DIV");
+    expect(card.querySelector("button")).toBeNull();
+
+    await fireEvent.click(card);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(wizard.step).toBe(0);
+  });
+
   test("Back returns to the previous step", async () => {
     wizard.step = 3;
     wizard.visited = 3;
