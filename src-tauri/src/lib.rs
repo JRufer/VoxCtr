@@ -49,6 +49,20 @@ pub mod test_utils {
 // ── Tauri app entry point ─────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Whether these command-line arguments ask for the setup wizard.
+///
+/// Accepted in a few spellings because this is the flag someone reaches for
+/// when the app is already configured and they want to see setup again; making
+/// them guess the exact word would defeat the point.
+pub fn wants_setup_wizard(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "--setup" | "--wizard" | "--setup-wizard" | "--first-run"
+        )
+    })
+}
+
 pub fn run() {
     #[cfg(target_os = "linux")]
     {
@@ -315,6 +329,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             tracing::info!("Single instance trigger: argv={:?}, cwd={:?}", argv, cwd);
+            // `voxctrl --setup` while the app is already running is a request
+            // to see the wizard, not to raise Settings. Without this the flag
+            // would appear to do nothing at all on the second launch, which is
+            // the launch a user testing it is most likely to make.
+            if wants_setup_wizard(&argv) {
+                if let Err(e) = crate::window::open_wizard_window(app) {
+                    tracing::error!("Could not open the setup wizard: {e}");
+                }
+                return;
+            }
             if let Some(window) = app.get_webview_window("settings") {
                 show_and_focus_window(&window);
             }
@@ -399,8 +423,18 @@ pub fn run() {
             // Spawn the Slint overlay helper process
             overlay_sidecar::spawn_overlay_process(overlay_rx);
 
-            // Auto download speech model if needed
-            services::auto_download_speech_model_if_needed(app, &cfg_data);
+            // Auto download speech model if needed. Skipped entirely when the
+            // wizard was asked for: it is about to ask which model the user
+            // wants, and fetching a different one behind its back would waste
+            // the download and confuse the step.
+            let forced_wizard = wants_setup_wizard(&std::env::args().collect::<Vec<_>>());
+            if forced_wizard {
+                if let Err(e) = crate::window::open_wizard_window(&app.handle().clone()) {
+                    tracing::error!("Could not open the setup wizard: {e}");
+                }
+            } else {
+                services::auto_download_speech_model_if_needed(app, &cfg_data);
+            }
 
             // Emit periodic status updates to all windows and animate tray
             tray::spawn_status_ticker(
@@ -463,6 +497,7 @@ pub fn run() {
             install_system_integration,
             get_setup_status,
             finish_setup_wizard,
+            open_setup_wizard,
             download_configured_model,
             open_settings_tab,
             stop_tts,

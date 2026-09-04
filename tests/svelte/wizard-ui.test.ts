@@ -125,6 +125,23 @@ describe("SetupWizard shell", () => {
     });
   });
 
+  test("Back returns to the previous step", async () => {
+    wizard.step = 3;
+    wizard.visited = 3;
+    render(SetupWizard);
+
+    await fireEvent.click(await screen.findByText("← Back"));
+
+    await waitFor(() => expect(wizard.step).toBe(2), { timeout: 2000 });
+  });
+
+  test("Back is offered on every step after the first, and never on it", async () => {
+    wizard.step = 0;
+    render(SetupWizard);
+    expect(await screen.findByText("Skip setup")).toBeTruthy();
+    expect(screen.queryByText("← Back")).toBeNull();
+  });
+
   test("says 'Finish anyway' when problems were logged along the way", async () => {
     wizard.step = 6;
     wizard.visited = 6;
@@ -144,6 +161,8 @@ describe("EngineStep", () => {
       return undefined;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+    await fireEvent.click((await screen.findAllByRole("radio"))[0]);
+    await fireEvent.click((await screen.findAllByText("small"))[0].closest("button")!);
     expect(await screen.findByText(/small will download when you continue/)).toBeTruthy();
   });
 
@@ -156,7 +175,104 @@ describe("EngineStep", () => {
       return undefined;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+    await fireEvent.click((await screen.findAllByRole("radio"))[0]);
+    await fireEvent.click((await screen.findAllByText("small"))[0].closest("button")!);
     expect(await screen.findByText(/small is on disk and ready/)).toBeTruthy();
+  });
+
+  test("picking an engine marks that card selected on screen", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+
+    const cards = await screen.findAllByRole("radio");
+    const [whisper, moonshine] = cards;
+    expect(whisper.getAttribute("aria-checked")).toBe("true");
+
+    await fireEvent.click(moonshine);
+
+    // The card has to visibly change, not just the config underneath it.
+    await waitFor(() => expect(moonshine.getAttribute("aria-checked")).toBe("true"));
+    expect(whisper.getAttribute("aria-checked")).toBe("false");
+  });
+
+  test("picking a model size highlights that size on screen", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+
+    const button = (await screen.findByText("medium")).closest("button") as HTMLElement;
+    await fireEvent.click(button);
+
+    await waitFor(() => expect(button.classList.contains("on")).toBe(true));
+  });
+
+  test("the GPU toggle flips, and says which path it will use", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return true;
+      return false;
+    });
+    render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+
+    const toggle = (await screen.findByText("GPU offloading")).closest("button") as HTMLElement;
+    await waitFor(() => expect(toggle.textContent).toContain("ON · CUDA"));
+
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.textContent).toContain("OFF · CPU"));
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.engine.whisper_cpp.device).toBe("cpu");
+
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(toggle.textContent).toContain("ON · CUDA"));
+  });
+
+  test("will not move on until an engine and a model size are actually chosen", async () => {
+    const blockers: (string | null)[] = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, {
+      registerGate: noopGate,
+      setBlocker: (_s: number, r: string | null) => blockers.push(r),
+    });
+
+    // The config ships with a backend and a size already set, so an untouched
+    // screen must still count as "nothing chosen".
+    await waitFor(() => expect(blockers.at(-1)).toMatch(/Choose a transcription engine/));
+
+    await fireEvent.click((await screen.findAllByRole("radio"))[0]);
+    await waitFor(() => expect(blockers.at(-1)).toMatch(/Choose a model size/));
+
+    await fireEvent.click((await screen.findAllByText("small"))[0].closest("button") as HTMLElement);
+    await waitFor(() => expect(blockers.at(-1)).toBeNull());
+  });
+
+  test("picking a size counts as picking its engine too", async () => {
+    const blockers: (string | null)[] = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, {
+      registerGate: noopGate,
+      setBlocker: (_s: number, r: string | null) => blockers.push(r),
+    });
+
+    const whisperCard = (await screen.findAllByRole("radio"))[0];
+    await fireEvent.click(within(whisperCard).getByText("tiny").closest("button") as HTMLElement);
+    await waitFor(() => expect(blockers.at(-1)).toBeNull());
   });
 
   test("picking a model size writes it straight into the config", async () => {

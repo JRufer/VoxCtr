@@ -400,6 +400,7 @@
 
   .copy {
     max-width: 820px;
+    min-width: 0;
   }
 
   .body {

@@ -108,6 +108,15 @@ class WizardState {
   /** Everything that failed along the way, newest wins per id. */
   issues = $state<WizardIssue[]>([]);
 
+  /** Whether the user has explicitly chosen a transcription backend and a
+   *  model size. The config always holds *some* value for both, so without
+   *  these the engine step would let someone walk past it having decided
+   *  nothing — and the model that then downloads is one they never picked.
+   *  Kept here rather than in the step so going back and forth does not forget
+   *  a choice already made. */
+  engineChosen = $state(false);
+  modelChosen = $state(false);
+
   get gestureInfo() {
     return GESTURES.find((g) => g.id === this.gesture) ?? GESTURES[2];
   }
@@ -237,6 +246,8 @@ class WizardState {
     this.held = [];
     this.captureHint = null;
     this.issues = [];
+    this.engineChosen = false;
+    this.modelChosen = false;
   }
 }
 
@@ -250,7 +261,11 @@ export const wizard = new WizardState();
  * goes through here rather than assigning into `$config` from a dozen places.
  */
 export function patchConfig(mutate: (cfg: AppConfig) => void): void {
-  const cfg = get(config);
+  // A fresh top-level object rather than the same reference mutated in place:
+  // the store is read by this window and re-published to every other one after
+  // a save, and handing round a single shared object makes it far too easy for
+  // one of those paths to be looking at the very object another is editing.
+  const cfg = { ...get(config) };
   mutate(cfg);
   config.set(cfg);
 }

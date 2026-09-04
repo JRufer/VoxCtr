@@ -1546,6 +1546,17 @@ pub async fn download_configured_model(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// Re-open the first-run wizard on demand.
+///
+/// Setup is not a one-time event in practice: a user changes microphone, moves
+/// to a machine with a GPU, or wants to redo a hotkey they regret — and, more
+/// immediately, whoever is developing the wizard needs to see it without
+/// hand-editing `setup_completed` out of their config file.
+#[tauri::command]
+pub async fn open_setup_wizard(app: tauri::AppHandle) -> Result<(), String> {
+    crate::window::open_wizard_window(&app)
+}
+
 /// Mark the first-run wizard finished and get out of the way.
 ///
 /// The flag is written here rather than through `save_config` so that closing

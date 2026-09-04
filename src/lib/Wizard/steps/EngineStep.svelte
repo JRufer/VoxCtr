@@ -70,6 +70,7 @@
     patchConfig((cfg) => {
       cfg.engine.backend = id;
     });
+    wizard.engineChosen = true;
   }
 
   function pickModel(engine: SttEngineId, model: ModelOption) {
@@ -79,6 +80,8 @@
       else cfg.engine.whisper_cpp.model_size = model.id;
     });
     downloadError = null;
+    wizard.engineChosen = true;
+    wizard.modelChosen = true;
   }
 
   function toggleGpu() {
@@ -160,10 +163,22 @@
     }
   }
 
-  // The Continue button stays live while a model is missing — pressing it is
-  // what starts the download — and is only blocked while one is in flight.
+  // Continue stays live while a model is merely missing — pressing it is what
+  // starts the download. It is blocked while one is in flight, and until the
+  // user has actually chosen: the config ships with a backend and a size
+  // already set, so "did not touch this screen" and "picked the default on
+  // purpose" are otherwise indistinguishable, and the wrong multi-gigabyte
+  // download is an expensive way to find out.
   $effect(() => {
-    setBlocker(STEP, downloading ? `Downloading ${downloading}…` : null);
+    if (downloading) {
+      setBlocker(STEP, `Downloading ${downloading}…`);
+    } else if (!wizard.engineChosen) {
+      setBlocker(STEP, "Choose a transcription engine to continue.");
+    } else if (!wizard.modelChosen) {
+      setBlocker(STEP, "Choose a model size to continue.");
+    } else {
+      setBlocker(STEP, null);
+    }
   });
 
   onMount(() => {
@@ -332,7 +347,11 @@
   </div>
 
   <div class="status-row">
-    {#if downloading}
+    {#if !wizard.engineChosen || !wizard.modelChosen}
+      <span class="vx-pill">
+        ◇ Pick an engine and a model size — they download before the next step
+      </span>
+    {:else if downloading}
       <span class="vx-pill vx-busy"><span class="vx-spinner"></span> Downloading {downloading} — this can take a few minutes</span>
     {:else if downloadError}
       <span class="vx-pill vx-err">✕ Download failed: {downloadError}</span>
@@ -358,10 +377,13 @@
     gap: 28px;
     align-items: flex-end;
     justify-content: space-between;
+    flex: none;
+    min-width: 0;
   }
 
   .copy {
     max-width: 760px;
+    min-width: 0;
   }
 
   .gpu-toggle {

@@ -27,8 +27,15 @@
 
   // A step can also veto the button outright (nothing recorded yet, a model
   // still downloading) and say why, so a dead button is never a mystery.
+  //
+  // Steps report their blocker from an $effect, so this must be a no-op when
+  // the reason has not actually changed. Assigning a fresh object every call
+  // makes the parent re-render, which re-runs the step's effect, which calls
+  // this again — an update loop that never settles and leaves the whole window
+  // looking frozen: clicks land, state changes, and nothing ever repaints.
   let blockers = $state<Record<number, string | null>>({});
   function setBlocker(step: number, reason: string | null) {
+    if ((blockers[step] ?? null) === reason) return;
     blockers = { ...blockers, [step]: reason };
   }
 

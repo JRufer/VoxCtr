@@ -168,10 +168,13 @@
     gap: 24px;
     align-items: flex-end;
     justify-content: space-between;
+    flex: none;
+    min-width: 0;
   }
 
   .copy {
     max-width: 640px;
+    min-width: 0;
   }
 
   .combo {

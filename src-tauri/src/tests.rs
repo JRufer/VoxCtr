@@ -633,3 +633,54 @@ async fn test_speak_target_delivery() {
         assert_eq!(*spoken_text, "Test Speak Target from Tauri");
     }
 }
+
+// ── Setup wizard re-entry ────────────────────────────────────────────────────
+
+#[test]
+fn test_setup_flag_recognised_in_its_common_spellings() {
+    // The flag exists so someone whose app is already configured can see the
+    // wizard again. Making them guess the exact word would defeat that, so
+    // every spelling anyone would reasonably reach for is accepted.
+    for flag in ["--setup", "--wizard", "--setup-wizard", "--first-run"] {
+        let args = vec!["voxctrl".to_string(), flag.to_string()];
+        assert!(
+            crate::wants_setup_wizard(&args),
+            "expected {flag} to open the setup wizard"
+        );
+    }
+}
+
+#[test]
+fn test_setup_flag_found_after_other_arguments() {
+    let args = vec![
+        "voxctrl".to_string(),
+        "--some-other-flag".to_string(),
+        "--setup".to_string(),
+    ];
+    assert!(crate::wants_setup_wizard(&args));
+}
+
+#[test]
+fn test_normal_launch_does_not_open_the_wizard() {
+    // A plain launch, and the installer path, must both leave the wizard alone
+    // — otherwise every start would reopen setup on a configured machine.
+    assert!(!crate::wants_setup_wizard(&["voxctrl".to_string()]));
+    assert!(!crate::wants_setup_wizard(&[
+        "voxctrl".to_string(),
+        "--install".to_string()
+    ]));
+    assert!(!crate::wants_setup_wizard(&[]));
+}
+
+#[test]
+fn test_setup_flag_is_not_matched_by_lookalike_arguments() {
+    // Substring matching here would turn unrelated flags into a surprise
+    // wizard on startup.
+    for flag in ["--setup-something", "setup", "--no-setup", "--wizardry"] {
+        let args = vec!["voxctrl".to_string(), flag.to_string()];
+        assert!(
+            !crate::wants_setup_wizard(&args),
+            "{flag} must not be mistaken for the setup flag"
+        );
+    }
+}

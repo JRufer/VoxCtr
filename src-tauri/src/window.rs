@@ -14,6 +14,17 @@ pub const SETUP_WINDOW: &str = "udev-warning";
 /// Label of the first-launch setup wizard window.
 pub const WIZARD_WINDOW: &str = "wizard";
 
+/// The wizard's screens are laid out on a 16:9 stage — two engine cards side by
+/// side, eight overlay thumbnails in a row, five voice cards in a row. Below
+/// roughly 1280 logical pixels those rows wrap and the layout stops reading as
+/// designed, so the window opens at 16:9 and refuses to be resized under a 16:9
+/// floor. These must stay in step with the `wizard` entry in tauri.conf.json,
+/// which is what a fresh install's first launch uses.
+pub const WIZARD_WIDTH: f64 = 1600.0;
+pub const WIZARD_HEIGHT: f64 = 900.0;
+pub const WIZARD_MIN_WIDTH: f64 = 1280.0;
+pub const WIZARD_MIN_HEIGHT: f64 = 720.0;
+
 /// Minimum gap between "finish the setup" notifications, so holding a
 /// push-to-talk key does not produce a wall of toasts.
 pub const SETUP_NOTICE_INTERVAL: Duration = Duration::from_secs(60);
@@ -35,6 +46,38 @@ pub fn set_app_handle(handle: tauri::AppHandle) {
 
 pub fn get_app_handle() -> Option<tauri::AppHandle> {
     APP_HANDLE.get().cloned()
+}
+
+/// Show the first-run wizard, building its window if it is no longer there.
+///
+/// The wizard closes itself when the user finishes, and a closed Tauri window
+/// cannot be shown again — so re-opening it has to construct a new one. That is
+/// the right behaviour anyway: a re-run should start at step one with a fresh
+/// webview, not resume on whatever screen the last run ended on.
+///
+/// Geometry is kept in step with the `wizard` entry in `tauri.conf.json`, which
+/// is what the first launch of a fresh install uses.
+pub fn open_wizard_window(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window(WIZARD_WINDOW) {
+        show_and_focus_window(&existing);
+        return Ok(());
+    }
+
+    tauri::WebviewWindowBuilder::new(
+        app,
+        WIZARD_WINDOW,
+        tauri::WebviewUrl::App("/wizard".into()),
+    )
+    .title("VoxCtrl — First-Run Setup")
+    .inner_size(WIZARD_WIDTH, WIZARD_HEIGHT)
+    .min_inner_size(WIZARD_MIN_WIDTH, WIZARD_MIN_HEIGHT)
+    .center()
+    .resizable(true)
+    .decorations(true)
+    .build()
+    .map_err(|e| format!("Could not open the setup wizard: {e}"))?;
+
+    Ok(())
 }
 
 /// Bring the setup window to the front.
