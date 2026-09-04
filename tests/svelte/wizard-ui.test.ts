@@ -692,30 +692,69 @@ describe("VoiceStep", () => {
     await waitFor(() => expect(within(piper).getByText("play sample")).toBeTruthy());
   });
 
-  test("a card stuck playing recovers from the status tick alone", async () => {
-    // The end event is a single broadcast and the wizard is not the window it
-    // was written for. The status tick carries `speaking` to every window on a
-    // timer, so a missed event costs a moment, not the rest of the step.
-    invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "inflect_micro_available") return true;
-      if (cmd === "check_voice_downloaded") return true;
-      return false;
-    });
-    const speakingStatus = (speaking: boolean) => status.set(baseStatus({ speaking }));
+  test("recovers with no events at all, by asking the backend", async () => {
+    // The window this runs in receives neither tts-playback-end nor the status
+    // tick, so the only channel left is the one that plays the sample.
+    vi.useFakeTimers();
+    try {
+      let speaking = false;
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "inflect_micro_available") return true;
+        if (cmd === "check_voice_downloaded") return true;
+        if (cmd === "get_status") return { speaking };
+        return false;
+      });
+      render(VoiceStep, { setBlocker: noopBlocker });
+      await vi.advanceTimersByTimeAsync(60);
 
-    speakingStatus(false);
-    render(VoiceStep, { setBlocker: noopBlocker });
+      const piper = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
+      await fireEvent.click(within(piper).getByTitle("Play a sample"));
+      await vi.advanceTimersByTimeAsync(60);
+      expect(within(piper).queryByText("play sample")).toBeNull();
 
-    const piper = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
-    await fireEvent.click(await waitFor(() => within(piper).getByTitle("Play a sample")));
-    await waitFor(() => expect(within(piper).queryByText("play sample")).toBeNull());
+      // The engine starts speaking, and keeps the card busy while it does.
+      speaking = true;
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(within(piper).queryByText("play sample")).toBeNull();
 
-    // The engine starts, then finishes — with no end event at all.
-    speakingStatus(true);
-    await waitFor(() => expect(within(piper).queryByText("play sample")).toBeNull());
-    speakingStatus(false);
+      // It finishes. No event says so — the next poll finds out.
+      speaking = false;
+      await vi.advanceTimersByTimeAsync(600);
 
-    await waitFor(() => expect(within(piper).getByText("play sample")).toBeTruthy());
+      expect(within(piper).getByText("play sample")).toBeTruthy();
+      expect(screen.queryByText(/never finished playing/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("a sample too short to catch between polls still ends", async () => {
+    // Never observed speaking: without a settle window this would hang until
+    // the watchdog, which is a 30-second stall for a sample that worked.
+    vi.useFakeTimers();
+    try {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "inflect_micro_available") return true;
+        if (cmd === "check_voice_downloaded") return true;
+        if (cmd === "get_status") return { speaking: false };
+        return false;
+      });
+      render(VoiceStep, { setBlocker: noopBlocker });
+      await vi.advanceTimersByTimeAsync(60);
+
+      const piper = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
+      await fireEvent.click(within(piper).getByTitle("Play a sample"));
+      await vi.advanceTimersByTimeAsync(60);
+
+      // Held through the settle window rather than snapping back instantly.
+      await vi.advanceTimersByTimeAsync(900);
+      expect(within(piper).queryByText("play sample")).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(1200);
+      expect(within(piper).getByText("play sample")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("one card playing does not strand the others", async () => {
@@ -763,6 +802,8 @@ describe("VoiceStep", () => {
       invoke.mockImplementation(async (cmd: string) => {
         if (cmd === "inflect_micro_available") return true;
         if (cmd === "check_voice_downloaded") return true;
+        // Status calls hang forever: the one case the poll cannot resolve.
+        if (cmd === "get_status") return new Promise(() => {});
         return false;
       });
       render(VoiceStep, { setBlocker: noopBlocker });
@@ -773,7 +814,7 @@ describe("VoiceStep", () => {
       await vi.advanceTimersByTimeAsync(50);
       expect(within(piper).queryByText("play sample")).toBeNull();
 
-      // No end event, no status tick, no error — just silence.
+      // No end event, no usable status, no error — just silence.
       await vi.advanceTimersByTimeAsync(31_000);
 
       expect(within(piper).getByText("play sample")).toBeTruthy();

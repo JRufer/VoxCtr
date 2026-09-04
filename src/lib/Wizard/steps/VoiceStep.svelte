@@ -40,44 +40,78 @@
   const bars = waveBars(14);
 
   /**
-   * Getting back out of the "playing" state, by three routes.
+   * Getting back out of the "playing" state.
    *
-   * The obvious one — the `tts-playback-end` event — is a single fire-and-forget
-   * broadcast, and a card stuck mid-playback is not a cosmetic problem: it
-   * disables every other engine, so one missed event costs the user the whole
-   * step. So the event is treated as the fast path, not the only path.
+   * A card left mid-playback disables every other engine, so this must not
+   * depend on anything that can go missing — and in this window, pushed events
+   * do. Neither `tts-playback-end` nor the 150ms status tick arrives here,
+   * while `invoke` plainly works: the sample itself is played through it. So
+   * the state is settled by asking, not by waiting to be told.
    *
-   * The reliable path is the app's own status tick, which carries `speaking`
-   * and is re-broadcast to every window on a timer — a dropped tick is simply
-   * followed by another. The watchdog covers the rest: an engine that fails
-   * without ever reporting playback at all.
+   * The event stays wired as the fast path for windows where it does arrive.
    */
   let playWatchdog: ReturnType<typeof setTimeout> | null = null;
+  let playPoll: ReturnType<typeof setInterval> | null = null;
+  let playStartedAt = 0;
+  /** Whether the engine has been observed actually speaking this run. */
+  let sawSpeaking = false;
 
-  /** No engine takes this long to say one sentence; if nothing has reported
-   *  back by now, something went wrong silently. */
+  /** How often to ask the backend whether it is still speaking. */
+  const PLAY_POLL_MS = 300;
+
+  /** Synthesis takes a moment before the first sample reaches the speakers, so
+   *  "not speaking" is only meaningful once this has passed — otherwise every
+   *  play would end the instant it began. */
+  const PLAY_SETTLE_MS = 1500;
+
+  /** Last resort, for an IPC call that never comes back at all. */
   const PLAY_TIMEOUT_MS = 30_000;
 
-  function stopPlaying() {
-    playing = null;
+  function clearPlayTimers() {
     if (playWatchdog) {
       clearTimeout(playWatchdog);
       playWatchdog = null;
     }
+    if (playPoll) {
+      clearInterval(playPoll);
+      playPoll = null;
+    }
   }
 
-  // The status tick's speaking flag, watched for its falling edge. An edge
-  // rather than the level, because `playing` is set the moment the button is
-  // pressed — before synthesis has produced a single sample — and the flag is
-  // still false through all of that.
-  let wasSpeaking = false;
-  $effect(() => {
-    // Guarded: a status payload that has not arrived yet must not take the
-    // step down with it.
-    const speaking = $status?.speaking ?? false;
-    if (!speaking && wasSpeaking && playing) stopPlaying();
-    wasSpeaking = speaking;
-  });
+  function stopPlaying() {
+    playing = null;
+    clearPlayTimers();
+  }
+
+  /**
+   * Ask the backend whether it is still speaking, and finish when it is not.
+   *
+   * Two ways to be finished: the engine was heard speaking and has now stopped,
+   * or it never started and the settle window has passed — which covers a
+   * sample too short to catch between polls as well as an engine that failed
+   * without saying so.
+   */
+  async function pollSpeaking() {
+    if (!playing) return;
+    let payload: { speaking?: boolean } | undefined;
+    try {
+      payload = await invoke<{ speaking?: boolean }>("get_status");
+    } catch (e) {
+      // A failed status call is not evidence of anything; the watchdog is the
+      // backstop if they keep failing.
+      console.error("Wizard: status poll failed:", e);
+      return;
+    }
+    // Everything else in the window reads the same store, so keep it current
+    // rather than holding a private copy of the answer.
+    if (payload) status.set(payload as any);
+
+    if (payload?.speaking) {
+      sawSpeaking = true;
+      return;
+    }
+    if (sawSpeaking || Date.now() - playStartedAt > PLAY_SETTLE_MS) stopPlaying();
+  }
 
   function setErr(id: string, msg: string | null) {
     const next = { ...errors };
@@ -209,11 +243,12 @@
     pick(id);
     playError = null;
     playing = id;
-    wasSpeaking = false;
-    if (playWatchdog) clearTimeout(playWatchdog);
+    playStartedAt = Date.now();
+    sawSpeaking = false;
+    clearPlayTimers();
+    playPoll = setInterval(() => void pollSpeaking(), PLAY_POLL_MS);
     playWatchdog = setTimeout(() => {
-      playing = null;
-      playWatchdog = null;
+      stopPlaying();
       playError =
         "The sample never finished playing. The engine may have failed silently — " +
         "check Settings → TTS, or try another voice.";
@@ -281,7 +316,7 @@
     ];
     return () => {
       setBlocker(STEP, null);
-      if (playWatchdog) clearTimeout(playWatchdog);
+      clearPlayTimers();
       for (const s of subs) void s.then((off) => off()).catch(() => {});
       void invoke("stop_tts").catch(() => {});
     };
