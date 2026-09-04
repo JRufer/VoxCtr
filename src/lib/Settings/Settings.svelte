@@ -216,8 +216,16 @@
   }
 
   /* Redesigned Sidebar Base */
+  /* Sized to its contents rather than to a fixed width. The longest label
+     ("Output Commands") is 87px in Cantarell/Noto and 110px in DejaVu Sans at
+     this size, and the app renders in whichever sans the system provides —
+     neither Outfit nor Inter is bundled, and the CSP cannot fetch them. The old
+     fixed 135px left 86px for the label, which clipped "Output Commands" by a
+     hair on the narrow fonts and badly on the wide ones. `w-fit` fits whatever
+     the machine actually renders; the floor keeps the old width as a minimum so
+     nothing else in the panel gets narrower than it was. */
   .sidebar {
-    @apply flex flex-col w-[135px] bg-[var(--color-obsidian-900)] border-r border-[var(--border)] shrink-0 px-1.5 py-5 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.25)];
+    @apply flex flex-col w-fit min-w-[135px] bg-[var(--color-obsidian-900)] border-r border-[var(--border)] shrink-0 px-1.5 py-5 z-10 shadow-[4px_0_24px_rgba(0,0,0,0.25)];
   }
 
   .brand {
@@ -251,7 +259,7 @@
 
   /* Nav Links with Snappy Elastic Springs */
   .nav-btn {
-    @apply relative flex items-center gap-2 px-1.5 py-2 rounded-[var(--radius)] text-[var(--color-obsidian-300)] text-xs font-semibold text-left transition-all duration-150 ease-out whitespace-nowrap;
+    @apply relative flex items-center gap-2 px-2 py-2 rounded-[var(--radius)] text-[var(--color-obsidian-300)] text-xs font-semibold text-left transition-all duration-150 ease-out whitespace-nowrap;
   }
 
   .nav-btn:hover {
