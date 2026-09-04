@@ -72,8 +72,9 @@
         {#each OVERLAY_STYLES as o, i}
           <button class="vx-card style-card" class:vx-on={o.id === style} onclick={() => pickStyle(o.id)}>
             <div class="thumb">
-              <!-- Only the chosen style gets the real recording here; see
-                   OverlayPreview for why nine at once is not an option. -->
+              <!-- Every style shows a still of its own clip; only the chosen
+                   one plays. See OverlayPreview for why nine playing at once
+                   is not an option. -->
               <OverlayPreview seed={i + 1} styleId={o.id} showClip={o.id === style} />
             </div>
             <div class="style-meta">

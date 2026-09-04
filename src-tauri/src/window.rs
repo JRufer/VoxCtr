@@ -23,10 +23,11 @@ pub const UPDATE_WINDOW: &str = "update";
 /// (the overlay grid over the position preview) needs a shade under 1000px of
 /// height before its footer is pushed off the bottom. So the floor is the size
 /// at which every step is known to render at its intended breakpoint, and the
-/// window opens comfortably above it. These must stay in step with the `wizard`
+/// window opens a little above it — enough slack for the layout to breathe
+/// without the dead space a much bigger window leaves behind. These must stay in step with the `wizard`
 /// entry in tauri.conf.json, which is what a fresh install's first launch uses.
-pub const WIZARD_WIDTH: f64 = 1600.0;
-pub const WIZARD_HEIGHT: f64 = 1000.0;
+pub const WIZARD_WIDTH: f64 = 1500.0;
+pub const WIZARD_HEIGHT: f64 = 1040.0;
 pub const WIZARD_MIN_WIDTH: f64 = 1374.0;
 pub const WIZARD_MIN_HEIGHT: f64 = 1000.0;
 

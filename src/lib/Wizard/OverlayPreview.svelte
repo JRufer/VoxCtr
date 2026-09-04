@@ -18,7 +18,13 @@
    * it decodes in software; the overlay step used to mount nine of them at
    * once, which pinned the CPU and took the web process down with it — the
    * step hung and then went white. Callers now say which previews get a real
-   * clip, and every other one renders the CSS fallback, which costs nothing.
+   * clip; the rest show a still lifted from the middle of that same clip, so
+   * every style is still visible at a glance for the cost of an image decode.
+   *
+   * The three layers stack: the CSS animation underneath, the still over it,
+   * the clip over that once it can play. They are framed identically — the
+   * still is a frame of the clip at its own display aspect, cropped by the same
+   * `object-fit: cover` — so a card that starts playing does not visibly jump.
    */
   let {
     styleId,
@@ -33,6 +39,19 @@
     query: "?url",
     import: "default",
   }) as Record<string, string>;
+
+  // Stills are generated from the clips by scripts/overlay_stills.py and live
+  // beside them, so a style has one exactly when someone has run it.
+  const STILLS = import.meta.glob("../../assets/overlays/*.webp", {
+    eager: true,
+    query: "?url",
+    import: "default",
+  }) as Record<string, string>;
+
+  function assetFor(assets: Record<string, string>, name: string): string | null {
+    const match = Object.entries(assets).find(([path]) => path.endsWith(`/${name}`));
+    return match?.[1] ?? null;
+  }
 
   /**
    * Whether this webview can decode the bundled clips at all.
@@ -51,16 +70,17 @@
     );
   })();
 
-  const clip = $derived.by(() => {
-    if (!showClip || !CAN_DECODE) return null;
-    const match = Object.entries(CLIPS).find(([path]) =>
-      path.endsWith(`/${styleId}.webm`),
-    );
-    return match?.[1] ?? null;
-  });
+  const clip = $derived(
+    showClip && CAN_DECODE ? assetFor(CLIPS, `${styleId}.webm`) : null,
+  );
 
-  /** Flipped once the clip has enough data to show a frame, so it fades in
-   *  over the fallback instead of flashing a black box. */
+  const still = $derived(assetFor(STILLS, `${styleId}.webp`));
+
+  /** Flipped once the clip is actually running, so it fades in over the still
+   *  instead of flashing the blank frame it opens on. The clips start on an
+   *  empty desktop and fade the overlay up over the first half-second — that
+   *  is the story they tell — but an element that has merely buffered has not
+   *  started telling it yet. */
   let playable = $state(false);
 
   // A different style means a different clip: hide the video again until the
@@ -137,6 +157,10 @@
   {/if}
 </div>
 
+{#if still}
+  <img class="still" src={still} alt="" />
+{/if}
+
 {#if clip}
   <!-- A silent UI animation, so there is nothing to caption. -->
   <!-- svelte-ignore a11y_media_has_caption -->
@@ -144,12 +168,13 @@
     class="clip"
     class:ready={playable}
     src={clip}
+    poster={still ?? undefined}
     autoplay
     muted
     loop
     playsinline
     preload="metadata"
-    oncanplay={() => (playable = true)}
+    onplaying={() => (playable = true)}
     onerror={() => (playable = false)}
   ></video>
 {/if}
@@ -169,6 +194,7 @@
     background: none;
   }
 
+  .still,
   .clip {
     position: absolute;
     inset: 0;
@@ -176,9 +202,12 @@
     height: 100%;
     object-fit: cover;
     display: block;
+    pointer-events: none;
+  }
+
+  .clip {
     opacity: 0;
     transition: opacity 0.35s ease;
-    pointer-events: none;
   }
 
   .clip.ready {
