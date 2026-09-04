@@ -7,7 +7,7 @@ use tauri::Emitter;
 use tokio::sync::Mutex;
 use voxctrl_hotkeys::GestureKind;
 
-use crate::state::{AppState, HistoryEntry};
+use crate::state::AppState;
 use crate::tray::update_tray_for_setup;
 use crate::window::{
     setup_blocker, show_setup_window, BLIND_ALERT_INTERVAL, SETUP_NOTICE_INTERVAL,
@@ -110,31 +110,12 @@ pub fn spawn_text_delivery_worker(
                 }
             });
 
-            let (show_notif, history_enabled) = {
+            let show_notif = {
                 let cfg_lock = state.config.blocking_lock();
-                (
-                    cfg_lock.data.ui.show_notification,
-                    cfg_lock.data.ui.history_enabled,
-                )
+                cfg_lock.data.ui.show_notification
             };
             if show_notif {
                 voxctrl_inject::show_notification("VoxCtrl", &output.text);
-            }
-            if history_enabled {
-                let state2 = state.clone();
-                let entry = HistoryEntry {
-                    text: output.text,
-                    target_id: output.target_id,
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                    inference_ms: output.inference_ms,
-                };
-                rt_handle.spawn(async move {
-                    let mut hist = state2.history.lock().await;
-                    hist.insert(0, entry);
-                    if hist.len() > 500 {
-                        hist.truncate(500);
-                    }
-                });
             }
         }
     });

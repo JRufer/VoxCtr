@@ -320,8 +320,8 @@ pub fn auto_download_speech_model_if_needed(
     }
 
     if show_settings {
-        if let Some(window) = app.get_webview_window("settings") {
-            show_and_focus_window(&window);
+        if let Err(e) = crate::window::open_settings_window(&app.handle().clone()) {
+            tracing::error!("Could not open Settings at startup: {e}");
         }
     }
 }

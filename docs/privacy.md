@@ -94,7 +94,6 @@ Windows offers no portal equivalent; a low-level keyboard hook (`WH_KEYBOARD_LL`
 
 - The microphone is opened when a gesture starts recording and closed when it stops. It is not held open in between.
 - Audio is transcribed on your machine by `whisper.cpp` (or Moonshine). No audio is uploaded anywhere.
-- Transcription history is stored locally under `~/.local/share/voxctrl/`, and can be cleared from the History panel.
 
 The one exception is one you configure: `http`, `webhook`, `chat` and `mcp` targets send **transcribed text** to wherever you point them, and LLM post-processing sends text to the endpoint you configure. Those are opt-in, per-target, and visible in `targets.toml`. Audio itself is never sent by any target.
 

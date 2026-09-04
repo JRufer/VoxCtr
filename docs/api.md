@@ -148,35 +148,6 @@ try {
 
 ---
 
-### History
-
-#### `get_history() → HistoryEntry[]`
-Returns the transcription history (in-memory, current session only).
-
-```typescript
-const history = await invoke<HistoryEntry[]>('get_history');
-```
-
-```typescript
-interface HistoryEntry {
-  text: string;
-  target_id: string;
-  timestamp: string;    // ISO 8601
-  inference_ms: number;
-}
-```
-
----
-
-#### `clear_history() → void`
-Clears the in-memory history log and resets the word count.
-
-```typescript
-await invoke('clear_history');
-```
-
----
-
 ### Text-to-Speech
 
 #### `speak_text(text: string, voice?: string) → void`
@@ -475,7 +446,6 @@ interface UiConfig {
   overlay_monitor: string;
   auto_show_settings: boolean;
   show_notification: boolean;
-  history_enabled: boolean;
 }
 
 interface FeaturesConfig {
@@ -632,12 +602,5 @@ interface AppStatus {
   word_count: number;
   active_target_id?: string;
   active_target_label?: string;
-}
-
-interface HistoryEntry {
-  text: string;
-  target_id: string;
-  timestamp: string;
-  inference_ms: number;
 }
 ```

@@ -51,7 +51,6 @@ VoxCtrl/
 │   └── lib/
 │       ├── Settings/
 │       ├── Overlay/
-│       └── History/
 │
 ├── src-tauri/              # Tauri application shell
 │   ├── Cargo.toml

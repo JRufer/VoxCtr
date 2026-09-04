@@ -30,17 +30,6 @@
         "url": "/settings"
       },
       {
-        "label": "history",
-        "title": "VoxCtrl — Transcript History",
-        "width": 600,
-        "height": 500,
-        "center": true,
-        "visible": false,
-        "resizable": true,
-        "decorations": true,
-        "url": "/history"
-      },
-      {
         "label": "wizard",
         "title": "VoxCtrl — First-Run Setup",
         "width": 1600,

@@ -202,7 +202,6 @@ pub fn run() {
         active_binding_label: Arc::new(Mutex::new("Focused Window".to_string())),
         active_binding_id: Arc::new(Mutex::new(String::new())),
         targets: Arc::new(Mutex::new(targets.clone())),
-        history: Arc::new(Mutex::new(Vec::new())),
         audio_tx: audio_tx.clone(),
         tts_handle: Arc::new(Mutex::new(None)),
         active_fifos: Arc::new(Mutex::new(std::collections::HashSet::new())),
@@ -339,8 +338,8 @@ pub fn run() {
                 }
                 return;
             }
-            if let Some(window) = app.get_webview_window("settings") {
-                show_and_focus_window(&window);
+            if let Err(e) = crate::window::open_settings_window(app) {
+                tracing::error!("Could not open Settings: {e}");
             }
         }))
         .plugin(tauri_plugin_shell::init())
@@ -348,19 +347,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(app_state.clone())
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                let label = window.label();
-                if label == "settings" || label == "history" {
-                    api.prevent_close();
-                    let w = window.clone();
-                    let _ = w.hide();
-                    tauri::async_runtime::spawn(async move {
-                        let _ = w.hide();
-                    });
-                }
-            }
-        })
         .setup(move |app| {
             set_app_handle(app.handle().clone());
 
@@ -460,8 +446,6 @@ pub fn run() {
             save_targets,
             get_bindings,
             save_bindings,
-            get_history,
-            clear_history,
             speak_text,
             show_overlay,
             hide_overlay,
@@ -505,6 +489,19 @@ pub fn run() {
             test_chat_target,
             set_hotkeys_inhibited,
         ])
-        .run(tauri::generate_context!())
-        .expect("error running Tauri application");
+        .build(tauri::generate_context!())
+        .expect("error building Tauri application")
+        .run(|_app, event| {
+            // Windows are ordinary windows: the close button closes them, and
+            // every entry point rebuilds one when it is gone. That makes the
+            // last window closing look to Tauri like the app should exit, which
+            // for a tray app it must not — dictation carries on with nothing on
+            // screen. An explicit quit carries an exit code, so the tray's Quit
+            // item still works.
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

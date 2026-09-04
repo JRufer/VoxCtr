@@ -10,7 +10,6 @@ VoxCtrl opens separate native windows managed by Tauri, plus a native overlay he
 |---|---|---|---|
 | Settings | `/settings` | 840 × 640 (min 700 × 500) | Resizable, standard chrome |
 | Overlay | `voxctrl-overlay` helper (Slint) | 560 × 190 | Transparent, always-on-top, no decorations, click-through |
-| History | `/history` | 600 × 500 | Resizable, standard chrome |
 
 The Tauri windows are declared in `src-tauri/tauri.conf.json`, start hidden (`visible: false`), and are shown programmatically. The overlay is a separate native process (`src-tauri/src/overlay.rs`) spawned at startup and driven over stdin; the Svelte `/overlay` route hosts the web counterparts of the same visualizers (used for custom HTML overlays).
 
@@ -25,7 +24,6 @@ The main configuration interface. Organized into a sidebar with nine tabs:
 - Overlay style selector
 - Auto-show settings on startup toggle
 - Desktop notification toggle
-- History tracking toggle
 - Recording status indicator and word count
 - Manual record/stop button
 
@@ -123,24 +121,6 @@ Overlay is disabled entirely.
 ### Speaking Pill
 
 While TTS is speaking, a green "SYSTEM RESPONDING" pill with a live mini-equalizer and the active target label slides up from the bottom of the overlay window (and a red pill is shown for MCP recording in the web overlay layer).
-
----
-
-## History Window
-
-Displays a log of all transcription sessions in reverse-chronological order.
-
-Each entry shows:
-- Timestamp
-- Transcribed text
-- Target that received the text
-- Inference time (ms)
-
-Features:
-- "Clear History" button (also resets word count)
-- History persists in memory until the app is closed (not written to disk)
-
-Enabled via `ui.history_enabled = true` in config.
 
 ---
 

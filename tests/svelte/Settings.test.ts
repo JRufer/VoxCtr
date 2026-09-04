@@ -64,7 +64,6 @@ describe("Settings.svelte Startup Redirect", () => {
         overlay_style: "mono_bars",
         auto_show_settings: true,
         show_notification: false,
-        history_enabled: false,
       },
       features: {
         remove_fillers: true,

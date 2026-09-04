@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import Settings from "./lib/Settings/Settings.svelte";
   import Overlay from "./lib/Overlay/Overlay.svelte";
-  import History from "./lib/History/History.svelte";
   import UdevWarning from "./lib/Diagnostics/UdevWarning.svelte";
   import SetupWizard from "./lib/Wizard/SetupWizard.svelte";
 
@@ -11,7 +10,6 @@
 
   function getView() {
     if (path.startsWith("/overlay")) return "overlay";
-    if (path.startsWith("/history")) return "history";
     if (path.startsWith("/udev-warning")) return "udev-warning";
     if (path.startsWith("/wizard")) return "wizard";
     return "settings";
@@ -26,8 +24,6 @@
 
 {#if view === "overlay"}
   <Overlay />
-{:else if view === "history"}
-  <History />
 {:else if view === "udev-warning"}
   <UdevWarning />
 {:else if view === "wizard"}

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use tokio::sync::Mutex;
 use voxctrl_config::Config;
 use voxctrl_routing::OutputTargetRouter;
-use crate::state::{AppState, HistoryEntry};
+use crate::state::AppState;
 use crate::window::setup_blocker;
 
 #[test]
@@ -80,7 +80,6 @@ fn make_test_state() -> AppState {
         active_binding_label: Arc::new(Mutex::new("Focused Window".to_string())),
         active_binding_id: Arc::new(Mutex::new(String::new())),
         targets: Arc::new(Mutex::new(Vec::new())),
-        history: Arc::new(Mutex::new(Vec::new())),
         audio_tx,
         overlay_tx,
         tts_handle: Arc::new(Mutex::new(None)),
@@ -109,24 +108,6 @@ async fn test_app_state_words_increment() {
     assert_eq!(state.total_words(), 25);
 }
 
-#[tokio::test]
-async fn test_history_entries() {
-    let state = make_test_state();
-    {
-        let mut hist = state.history.lock().await;
-        hist.push(HistoryEntry {
-            text: "hello world".to_string(),
-            target_id: "default".to_string(),
-            timestamp: "2026-05-20T22:00:00Z".to_string(),
-            inference_ms: 120,
-        });
-    }
-    let hist = state.history.lock().await;
-    assert_eq!(hist.len(), 1);
-    assert_eq!(hist[0].text, "hello world");
-    assert_eq!(hist[0].target_id, "default");
-    assert_eq!(hist[0].inference_ms, 120);
-}
 
 #[tokio::test]
 async fn test_sequential_multi_target_delivery() {

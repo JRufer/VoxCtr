@@ -5,7 +5,7 @@ use tracing::info;
 use voxctrl_config::AppConfig;
 use voxctrl_routing::{HotkeyBinding, OutputTarget};
 
-use crate::state::{AppState, HistoryEntry};
+use crate::state::AppState;
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
@@ -374,23 +374,6 @@ pub async fn test_chat_target(target: OutputTarget) -> Result<OpenAiTestResult, 
             models: Vec::new(),
         }),
     }
-}
-
-// ── History ───────────────────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn get_history(
-    state: State<'_, Arc<AppState>>,
-) -> Result<Vec<HistoryEntry>, String> {
-    let guard = state.history.lock().await;
-    Ok(guard.clone())
-}
-
-#[tauri::command]
-pub async fn clear_history(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    state.history.lock().await.clear();
-    state.word_count.store(0, std::sync::atomic::Ordering::SeqCst);
-    Ok(())
 }
 
 #[tauri::command]
@@ -1583,8 +1566,8 @@ pub async fn finish_setup_wizard(
         let _ = window.close();
     }
     if open_settings {
-        if let Some(window) = app.get_webview_window("settings") {
-            crate::window::show_and_focus_window(&window);
+        if let Err(e) = crate::window::open_settings_window(&app) {
+            tracing::error!("Could not open Settings after setup: {e}");
         }
     }
     Ok(())
@@ -1595,11 +1578,20 @@ pub async fn finish_setup_wizard(
 /// making them find it.
 #[tauri::command]
 pub async fn open_settings_tab(app: tauri::AppHandle, tab: String) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("settings") {
-        let _ = window.unminimize();
-        let _ = window.show();
-        let _ = window.set_focus();
-        let _ = window.emit("focus-settings-tab", tab);
+    let existed = app.get_webview_window("settings").is_some();
+    let window = crate::window::open_settings_window(&app)?;
+    let _ = window.emit("focus-settings-tab", tab.clone());
+
+    // A window built just now has no listener registered yet, so the first
+    // emit lands before anything is listening. Repeating it once the frontend
+    // has had a moment to mount costs nothing — selecting the same tab twice
+    // is idempotent — and is the difference between landing on the right tab
+    // and landing on the default one.
+    if !existed {
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            let _ = window.emit("focus-settings-tab", tab);
+        });
     }
     Ok(())
 }

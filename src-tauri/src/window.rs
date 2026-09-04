@@ -48,6 +48,28 @@ pub fn get_app_handle() -> Option<tauri::AppHandle> {
     APP_HANDLE.get().cloned()
 }
 
+/// Show the Settings window, building it if the user has closed it.
+///
+/// Closing a window destroys it, so every entry point into Settings — the tray,
+/// a second launch, the wizard's "Open Settings" — has to be able to make a new
+/// one. Geometry is kept in step with the `settings` entry in tauri.conf.json.
+pub fn open_settings_window(app: &tauri::AppHandle) -> Result<tauri::WebviewWindow, String> {
+    if let Some(existing) = app.get_webview_window("settings") {
+        show_and_focus_window(&existing);
+        return Ok(existing);
+    }
+
+    tauri::WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::App("/settings".into()))
+        .title("VoxCtrl Settings")
+        .inner_size(720.0, 640.0)
+        .min_inner_size(600.0, 450.0)
+        .center()
+        .resizable(true)
+        .decorations(true)
+        .build()
+        .map_err(|e| format!("Could not open Settings: {e}"))
+}
+
 /// Show the first-run wizard, building its window if it is no longer there.
 ///
 /// The wizard closes itself when the user finishes, and a closed Tauri window
@@ -80,15 +102,33 @@ pub fn open_wizard_window(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Bring the setup window to the front.
+/// Bring the setup window to the front, building it if it has been closed.
 pub fn show_setup_window() {
-    if let Some(handle) = APP_HANDLE.get() {
-        if let Some(w) = handle.get_webview_window(SETUP_WINDOW) {
-            let _ = w.unminimize();
-            let _ = w.show();
-            let _ = w.set_always_on_top(true);
-            let _ = w.set_focus();
-        }
+    let Some(handle) = APP_HANDLE.get() else {
+        return;
+    };
+    if let Some(w) = handle.get_webview_window(SETUP_WINDOW) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_always_on_top(true);
+        let _ = w.set_focus();
+        return;
+    }
+
+    let built = tauri::WebviewWindowBuilder::new(
+        handle,
+        SETUP_WINDOW,
+        tauri::WebviewUrl::App("/udev-warning".into()),
+    )
+    .title("VoxCtrl Setup")
+    .inner_size(580.0, 600.0)
+    .min_inner_size(480.0, 420.0)
+    .center()
+    .always_on_top(true)
+    .resizable(true)
+    .build();
+    if let Err(e) = built {
+        tracing::error!("Could not open the setup window: {e}");
     }
 }
 

@@ -19,7 +19,7 @@ Global shortcuts are registered with your desktop through the XDG `GlobalShortcu
 | [Hotkeys](./hotkeys.md) | Global shortcuts via the desktop portal, gestures, platform support |
 | [Text-to-Speech](./tts.md) | TTS engines, voice packs, playback |
 | [Integrations](./integrations.md) | MCP server, DBus service, OpenAI-compatible LLM API, webhooks |
-| [UI & Windows](./ui.md) | Svelte frontend, overlay, history viewer, settings |
+| [UI & Windows](./ui.md) | Svelte frontend, overlay, settings |
 | [API Reference](./api.md) | Tauri IPC commands and frontend events |
 | [Configuration](./configuration.md) | All config files, schemas, and options |
 | [Installation & Setup](./installation.md) | Dependencies, building, running |

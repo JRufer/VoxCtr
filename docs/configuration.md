@@ -49,8 +49,7 @@ Full schema with defaults:
     "overlay_position": "center",
     "overlay_monitor": "primary",
     "auto_show_settings": true,
-    "show_notification": false,
-    "history_enabled": false
+    "show_notification": false
   },
   "features": {
     "remove_fillers": true,
@@ -176,7 +175,6 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | `overlay_monitor` | string | `"primary"` or monitor name | `"primary"` | Specific display screen for visual overlay |
 | `auto_show_settings` | bool | | `true` | Auto-show Settings window on startup |
 | `show_notification` | bool | | `false` | Desktop toast notification after text delivery |
-| `history_enabled` | bool | | `false` | Enable transcription history tracking |
 
 ### `features` section
 

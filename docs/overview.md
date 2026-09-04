@@ -70,9 +70,6 @@ VoxCtrl exposes a Model Context Protocol server so LLM agents (Claude Desktop, C
 ### DBus Service (Linux)
 Exposes `ai.voxctrl.Dictation` on the session bus for shell scripts and desktop integrations to start/stop recording and receive text output as signals.
 
-### History
-Maintains an in-memory transcript log with word count, timestamps, and source target. Viewable in a dedicated history window.
-
 ---
 
 ## Design Principles

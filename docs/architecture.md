@@ -14,7 +14,7 @@ VoxCtrl is a **Tauri 2** application: a compiled Rust backend that spawns a WebV
 │  └───────────────────┘      └──────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
          │                              │
-   Settings/History              Audio devices,
+   Settings                      Audio devices,
    windows                       Filesystem, DBus,
                                  Network (OpenAI API/HTTP)
 ```
@@ -106,7 +106,7 @@ voxctrl-hotkeys ──gesture_tx──► lib.rs coordinator
                     └── pipe → named FIFO
                          │
                     Tauri event → frontend
-                    (status-tick, history update)
+                    (status-tick)
 ```
 
 ---
@@ -128,7 +128,7 @@ VoxCtrl uses Tokio for async I/O plus dedicated OS threads for latency-sensitive
 | DBus service | Tokio task | Session bus method handler |
 | TTS FIFO watcher | Tokio task | Named pipe reader for TTS input |
 
-**Shared state** is an `Arc<AppState>` with `AtomicBool`/`AtomicU32` for hot-path flags and `Mutex` for heavier data (targets, history, TTS handle).
+**Shared state** is an `Arc<AppState>` with `AtomicBool`/`AtomicU32` for hot-path flags and `Mutex` for heavier data (targets, TTS handle).
 
 **Channels** (crossbeam/tokio):
 - `audio_tx` / `audio_rx` — `Vec<f32>` chunks
@@ -164,7 +164,6 @@ App.svelte  (route switcher)
   │     ├── Waveform       (green-phosphor oscilloscope)
   │     └── Pulse          ("Pulse Ring" sonar dial)
   │
-  └── /history   → History component
 ```
 
 **State management:**

@@ -40,7 +40,7 @@ pub struct AppState {
     /// Total words injected this session
     pub word_count: Arc<std::sync::atomic::AtomicU32>,
 
-    /// Most recent transcription result (shown in history + overlay)
+    /// Most recent transcription result (shown in the overlay)
     pub last_text: Arc<Mutex<String>>,
 
     /// Monotonic counter — incremented each time last_text is written.
@@ -58,9 +58,6 @@ pub struct AppState {
 
     /// Currently configured target definitions (in-memory cache for fast lookups)
     pub targets: Arc<Mutex<Vec<voxctrl_routing::OutputTarget>>>,
-
-    /// Transcript history — most recent first
-    pub history: Arc<Mutex<Vec<HistoryEntry>>>,
 
     /// Channel sender to send empty audio chunks as sentinels to unblock the coordinator thread
     pub audio_tx: crossbeam_channel::Sender<Vec<f32>>,
@@ -84,14 +81,6 @@ pub struct AppState {
 
     /// Channel sender to forward stdin messages to the native Slint overlay process
     pub overlay_tx: crossbeam_channel::Sender<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct HistoryEntry {
-    pub text: String,
-    pub target_id: String,
-    pub timestamp: String,
-    pub inference_ms: u32,
 }
 
 impl AppState {

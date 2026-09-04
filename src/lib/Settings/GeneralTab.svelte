@@ -42,15 +42,6 @@
 
 
   <div class="field-group">
-    <h3>History</h3>
-    <label class="field">
-      <span>Enable transcript history</span>
-      <input type="checkbox" bind:checked={cfg.ui.history_enabled} onchange={markDirty} />
-    </label>
-    <p class="hint">When enabled, completed transcripts are saved to the History log. Disabled by default.</p>
-  </div>
-
-  <div class="field-group">
     <h3>MCP Server</h3>
     <label class="field">
       <span>Enable MCP JSON-RPC server</span>

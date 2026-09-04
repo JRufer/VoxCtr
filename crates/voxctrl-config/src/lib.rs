@@ -173,8 +173,6 @@ pub struct UiConfig {
     pub auto_show_settings: bool,
     #[serde(default = "default_show_notification")]
     pub show_notification: bool,
-    #[serde(default)]
-    pub history_enabled: bool,
     #[serde(default = "default_show_command_overlay")]
     pub show_command_overlay: bool,
     #[serde(default = "default_command_overlay_duration_secs")]
@@ -199,7 +197,6 @@ impl Default for UiConfig {
             overlay_monitor: "primary".into(),
             auto_show_settings: true,
             show_notification: false,
-            history_enabled: false,
             show_command_overlay: true,
             command_overlay_duration_secs: 3,
             setup_completed: false,
@@ -909,8 +906,7 @@ mod tests {
             "show_overlay": true,
             "overlay_style": "waveform",
             "auto_show_settings": true,
-            "show_notification": false,
-            "history_enabled": false
+            "show_notification": false
         }"#;
 
         let parsed: UiConfig = serde_json::from_str(legacy_json).unwrap();
@@ -943,8 +939,7 @@ mod tests {
             "show_overlay": true,
             "overlay_style": "waveform",
             "auto_show_settings": true,
-            "show_notification": false,
-            "history_enabled": false
+            "show_notification": false
         }"#;
 
         let parsed: UiConfig = serde_json::from_str(partial_json).unwrap();
