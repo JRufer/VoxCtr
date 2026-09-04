@@ -84,7 +84,7 @@ The main configuration interface. Organized into a sidebar with ten tabs:
 ### TTS Tab
 - Enable/disable toggle
 - Engine selector (eSpeak-NG / Piper / Pocket-TTS / Inflect-Micro-v2 / Breeze-TTS-2)
-- HuggingFace access token — one field, shared by every gated model
+- HuggingFace access token — one field, shared by every gated model; read-only, showing the value, when `HF_TOKEN` is exported
 - Voice selector with download status per voice
 - "Download Voice" button per voice
 - Stop key configuration
@@ -158,7 +158,7 @@ config as it is made:
 | Hotkey | `bindings.toml` | Only gestures the running shortcut backend can deliver are offered, and the combination is validated by the same Rust rules the portal registration uses. Blocked until the desktop has accepted the shortcut, because the next step is a live test |
 | Overlay | `ui.show_overlay`, `ui.overlay_style`, `ui.overlay_position` | Each style previews a recording of the real overlay, bundled at `src/assets/overlays/<style id>.webm`, falling back to a CSS animation |
 | Test | — | A real dictation: the transcript is injected into the focused window, and the readout follows the pipeline's own recording and processing state |
-| Voice | `tts.enabled`, `tts.engine`, `tts.hf_token` | Each engine downloads from its own card; the play button unlocks once its assets are on disk. Pocket-TTS and Breeze-TTS-2 are gated downloads, so the step asks for a HuggingFace access token and keeps those two cards locked — unselectable, undownloadable — until one is entered. The token is saved to `tts.hf_token`, the same field Settings → TTS writes |
+| Voice | `tts.enabled`, `tts.engine`, `tts.hf_token` | Each engine downloads from its own card; the play button unlocks once its assets are on disk. Pocket-TTS and Breeze-TTS-2 are gated downloads, so the step asks for a HuggingFace access token and keeps those two cards locked — unselectable, undownloadable — until one is entered. The token is saved to `tts.hf_token`, the same field Settings → TTS writes. An exported `HF_TOKEN` is shown instead, read-only, and left out of the config |
 | Done | `ui.setup_completed` | Lists anything that failed, with the raw backend error and a copyable diagnostics report |
 
 The first hotkey is bound to a `command` delivery target named "Command",

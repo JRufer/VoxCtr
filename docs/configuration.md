@@ -234,7 +234,7 @@ text) and the **user prompt** (the message itself). The user prompt must contain
 
 **`breeze_tts_2` sub-object:**
 
-[Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is a bilingual speech generation model with natural-language voice design speaker prompts. The model weights are gated on HuggingFace under the **BreezeBlue Research and Non-Commercial License** — supply your access token via `tts.hf_token`, the single token shared by every gated model.
+[Breeze-TTS-2](https://huggingface.co/BreezeBlue/Breeze-TTS-2) is a bilingual speech generation model with natural-language voice design speaker prompts. The model weights are gated on HuggingFace under the **BreezeBlue Research and Non-Commercial License** — supply your access token via `tts.hf_token`, the single token shared by every gated model, or export it as `HF_TOKEN`, which takes precedence and is never written to the config.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

@@ -40,12 +40,7 @@ pub fn is_breeze_tts_2_ready(model_dir: &str) -> bool {
 
 /// Download Breeze-TTS-2 assets from HuggingFace into model_dir
 pub async fn download_breeze_tts_2_assets(model_dir: &str, hf_token: Option<String>) -> Result<()> {
-    if let Some(token) = hf_token {
-        if !token.trim().is_empty() {
-            // SAFETY: Called during explicit download task before worker thread starts
-            unsafe { std::env::set_var("HF_TOKEN", token.trim()) };
-        }
-    }
+    crate::hf::apply_hf_token(hf_token.as_deref());
 
     let dir = resolve_breeze_tts_2_dir(model_dir);
     tokio::fs::create_dir_all(&dir)
@@ -132,11 +127,7 @@ pub(crate) fn speak_breeze_tts_2(
     let cfg = &config.breeze_tts_2;
     let is_prewarm = u.source_label.as_deref() == Some("prewarm");
 
-    if let Some(ref tok) = config.hf_token {
-        if !tok.trim().is_empty() {
-            unsafe { std::env::set_var("HF_TOKEN", tok.trim()) };
-        }
-    }
+    crate::hf::apply_hf_token(config.hf_token.as_deref());
 
     if model.as_ref().is_none_or(|m| m.gpu != cfg.gpu) {
         info!("Loading Breeze-TTS-2 neural speech model session in pure Rust...");

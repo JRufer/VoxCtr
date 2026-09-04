@@ -542,7 +542,8 @@ interface TtsConfig {
   response_overlay: boolean;
   speed: number;            // not used by pocket_tts
   gpu: boolean;             // only applies to piper; Breeze has its own flag
-  hf_token: string | null;  // one token for every gated model download
+  hf_token: string | null;  // one token for every gated model download;
+                            // an exported HF_TOKEN wins and is never saved here
   pocket_tts: PocketTtsConfig;
   inflect_micro: InflectMicroConfig;  // fixed-voice, so no voice field
   breeze_tts_2: BreezeTts2Config;

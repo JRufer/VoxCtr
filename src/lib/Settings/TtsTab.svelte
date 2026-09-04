@@ -441,9 +441,21 @@
     }
   }
 
-  /// One token serves every gated model, so both engine panels edit the same
-  /// field rather than keeping a copy each.
+  /**
+   * The HuggingFace token, shown by both gated-engine panels.
+   *
+   * One token serves every gated model, so the panels edit the same field
+   * rather than keeping a copy each. A token exported as `HF_TOKEN` wins at
+   * download time, so when the session has one it is displayed here read-only
+   * and never written to the config — a value typed over it would be saved and
+   * then ignored.
+   */
+  let envHfToken = $state<string | null>(null);
+  const hfFromEnv = $derived(!!envHfToken);
+  const hfTokenShown = $derived(envHfToken ?? cfg.tts.hf_token ?? "");
+
   function onHfTokenChanged(e: Event) {
+    if (hfFromEnv) return;
     const val = (e.target as HTMLInputElement).value;
     cfg.tts.hf_token = val.trim() ? val.trim() : null;
     markDirty();
@@ -480,6 +492,10 @@
   }
 
   onMount(async () => {
+    invoke<string | null>("hf_token_env")
+      .then((t) => (envHfToken = t && t.trim() ? t.trim() : null))
+      .catch(() => (envHfToken = null));
+
     if (cfg.tts.voice_dir) {
       validateVoiceDir();
     } else {
@@ -863,10 +879,18 @@
       <span>HuggingFace access token</span>
       <input
         type="password"
-        value={cfg.tts.hf_token || ""}
+        value={hfTokenShown}
+        readonly={hfFromEnv}
+        title={hfFromEnv ? "Set by the HF_TOKEN environment variable" : undefined}
         oninput={onHfTokenChanged}
       />
     </div>
+    {#if hfFromEnv}
+      <p class="hint">
+        Using the <code>HF_TOKEN</code> environment variable. It takes precedence over a saved
+        token and is not written to your config.
+      </p>
+    {/if}
     <p class="hint">
       Breeze-TTS-2 model weights are hosted on HuggingFace. Create a token at
       <code>huggingface.co/settings/tokens</code> and accept the license at
@@ -931,10 +955,18 @@
       <span>HuggingFace access token</span>
       <input
         type="password"
-        value={cfg.tts.hf_token || ""}
+        value={hfTokenShown}
+        readonly={hfFromEnv}
+        title={hfFromEnv ? "Set by the HF_TOKEN environment variable" : undefined}
         oninput={onHfTokenChanged}
       />
     </div>
+    {#if hfFromEnv}
+      <p class="hint">
+        Using the <code>HF_TOKEN</code> environment variable. It takes precedence over a saved
+        token and is not written to your config.
+      </p>
+    {/if}
     <p class="hint">
       Pocket-TTS model weights are hosted on a gated HuggingFace repo. Create a token at
       <code>huggingface.co/settings/tokens</code> and accept the license at

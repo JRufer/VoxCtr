@@ -39,12 +39,21 @@
    * The single HuggingFace access token, shared by every gated model. Without
    * it those engines cannot be downloaded at all, which is why the wizard asks
    * for it here rather than leaving the user to discover the failure.
+   *
+   * A token exported as `HF_TOKEN` belongs to the session and wins at download
+   * time, so it is shown here and the field goes read-only: it is never copied
+   * into the config, and a value typed over it would be saved and then ignored.
    */
-  const hfToken = $derived(($config.tts.hf_token ?? "").trim());
+  let envToken = $state<string | null>(null);
+  const fromEnv = $derived(!!envToken);
+  const hfToken = $derived(envToken ?? ($config.tts.hf_token ?? "").trim());
   const hasHfToken = $derived(hfToken.length > 0);
   const gatedEngines = TTS_ENGINES.filter((e) => e.needsHfToken);
 
   function setHfToken(value: string) {
+    // The environment's token is displayed, never stored: saving it would put a
+    // copy in the config that the app ignores anyway.
+    if (fromEnv) return;
     patchConfig((cfg) => {
       cfg.tts.hf_token = value.trim() ? value.trim() : null;
     });
@@ -322,6 +331,9 @@
 
   onMount(() => {
     void refreshAll();
+    invoke<string | null>("hf_token_env")
+      .then((t) => (envToken = t && t.trim() ? t.trim() : null))
+      .catch(() => (envToken = null));
     invoke<boolean>("inflect_micro_available")
       .then((v) => (inflectAvailable = v))
       .catch(() => (inflectAvailable = false));
@@ -387,7 +399,8 @@
         <code>huggingface.co/settings/tokens</code>, accept the licence at
         {#each gatedEngines as engine, i}<code>{engine.licenceUrl}</code>{#if i < gatedEngines.length - 1}{" and "}{/if}{/each}, then paste the
         token here. One token covers both, and it is saved with your settings — the same place
-        Settings → TTS keeps it.
+        Settings → TTS keeps it. Export <code>HF_TOKEN</code> instead and VoxCtrl uses that: it is
+        shown here, kept out of your config, and takes precedence over a saved token.
       </span>
     </div>
     <input
@@ -396,11 +409,19 @@
       autocomplete="off"
       spellcheck="false"
       placeholder="hf_…"
+      readonly={fromEnv}
+      title={fromEnv ? "Set by the HF_TOKEN environment variable" : undefined}
       value={hfToken}
       oninput={(e) => setHfToken((e.currentTarget as HTMLInputElement).value)}
     />
     <span class="hf-state" class:ok={hasHfToken}>
-      {hasHfToken ? "✓ token saved" : "no token — gated voices are locked"}
+      {#if fromEnv}
+        ✓ using the HF_TOKEN environment variable — not saved to your config
+      {:else if hasHfToken}
+        ✓ token saved
+      {:else}
+        no token — gated voices are locked
+      {/if}
     </span>
   </div>
 
@@ -667,6 +688,11 @@
 
   .hf-input:focus {
     border-color: var(--vx-cyan-0);
+  }
+
+  .hf-input[readonly] {
+    color: var(--vx-txt-2);
+    cursor: not-allowed;
   }
 
   .hf-state {

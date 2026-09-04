@@ -335,13 +335,11 @@ fn hf_cache_file_present(hf_path: &str) -> bool {
 }
 
 /// Download the pocket-tts model weights, tokenizer, and the selected voice's reference
-/// clip into the local HuggingFace cache. Requires `HF_TOKEN` to be set (the default
-/// weights repo is gated and requires accepting the model license on huggingface.co).
+/// clip into the local HuggingFace cache. The weights repo is gated, so this
+/// needs a token: an exported `HF_TOKEN` if the session has one, otherwise the
+/// configured token passed in here.
 pub async fn download_pocket_tts_assets(voice: &str, voice_dir: &str, hf_token: Option<String>) -> Result<()> {
-    if let Some(token) = hf_token {
-        // SAFETY: single-threaded at startup/download time; no concurrent env access.
-        unsafe { std::env::set_var("HF_TOKEN", token) };
-    }
+    crate::hf::apply_hf_token(hf_token.as_deref());
 
     let reference_clip = resolve_pocket_tts_voice_clip(voice, voice_dir)
         .ok_or_else(|| anyhow::anyhow!("unknown pocket-tts voice: {voice}"))?;

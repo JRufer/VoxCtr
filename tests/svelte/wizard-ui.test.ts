@@ -727,6 +727,54 @@ describe("VoiceStep", () => {
     expect(current.tts.engine).toBe("pocket_tts");
   });
 
+  test("an exported HF_TOKEN fills the field, unlocks the voices, and stays out of the config", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "hf_token_env") return "hf_from_env";
+      return false;
+    });
+    const { container } = render(VoiceStep, { setBlocker: noopBlocker });
+    await fireEvent.click(await screen.findByText("Enable speech output"));
+
+    const field = await waitFor(() => {
+      const el = container.querySelector(".hf-input") as HTMLInputElement;
+      expect(el.value).toBe("hf_from_env");
+      return el;
+    });
+    // Read-only: HF_TOKEN wins at download time, so typing over it would only
+    // save a value the app then ignores.
+    expect(field.readOnly).toBe(true);
+    expect(container.textContent).toContain("HF_TOKEN environment variable");
+
+    const breeze = (await screen.findByText("Breeze-TTS-2")).closest(".card") as HTMLElement;
+    expect(breeze.classList.contains("locked")).toBe(false);
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.tts.hf_token, "the environment token must not be saved").toBeNull();
+  });
+
+  test("typing is ignored while the environment supplies the token", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "hf_token_env") return "hf_from_env";
+      return false;
+    });
+    const { container } = render(VoiceStep, { setBlocker: noopBlocker });
+    await fireEvent.click(await screen.findByText("Enable speech output"));
+
+    const field = await waitFor(() => {
+      const el = container.querySelector(".hf-input") as HTMLInputElement;
+      expect(el.value).toBe("hf_from_env");
+      return el;
+    });
+    await fireEvent.input(field, { target: { value: "hf_typed_over" } });
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.tts.hf_token).toBeNull();
+  });
+
   test("a gated download sends the one saved token", async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "inflect_micro_available") return true;

@@ -418,6 +418,16 @@ pub async fn preview_timestamp_format(format: String) -> Result<String, String> 
     voxctrl_routing::render_timestamp(&format, chrono::Utc::now())
 }
 
+/// The HuggingFace token exported into the environment, if any.
+///
+/// The UI shows it in place of the configured one and stops editing, because
+/// `HF_TOKEN` wins at download time — a value typed over it would be saved and
+/// then ignored, which is worse than not offering the field.
+#[tauri::command]
+pub async fn hf_token_env() -> Option<String> {
+    voxctrl_tts::hf_token_from_env()
+}
+
 #[tauri::command]
 pub async fn check_breeze_tts_2_ready(model_dir: String) -> Result<bool, String> {
     Ok(voxctrl_tts::is_breeze_tts_2_ready(&model_dir))

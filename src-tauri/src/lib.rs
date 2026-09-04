@@ -151,7 +151,16 @@ pub fn run() {
     tracing::info!("TTS GPU: {}", config.data.tts.gpu);
     tracing::info!("Pocket-TTS voice: {}", config.data.tts.pocket_tts.voice);
     tracing::info!("Pocket-TTS prewarm: {}", config.data.tts.pocket_tts.prewarm);
-    tracing::info!("HuggingFace token set: {}", config.data.tts.hf_token.is_some());
+    tracing::info!(
+        "HuggingFace token: {}",
+        if voxctrl_tts::hf_token_from_env().is_some() {
+            "from HF_TOKEN"
+        } else if config.data.tts.hf_token.is_some() {
+            "from config"
+        } else {
+            "not set"
+        }
+    );
     tracing::info!("MCP enabled: {}", config.data.mcp.server_enabled);
     tracing::info!("MCP record timeout: {}", config.data.mcp.record_timeout);
     tracing::info!("=============================");
@@ -454,6 +463,7 @@ pub fn run() {
             download_voice,
             check_breeze_tts_2_ready,
             preview_timestamp_format,
+            hf_token_env,
             download_breeze_tts_2,
             check_pocket_tts_ready,
             download_pocket_tts,

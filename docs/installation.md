@@ -241,7 +241,7 @@ Pocket-TTS is a pure-Rust voice-cloning TTS engine (no system packages required)
 1. Create a free [HuggingFace](https://huggingface.co/) account if you don't have one.
 2. Visit [`kyutai/pocket-tts`](https://huggingface.co/kyutai/pocket-tts) and accept the model license.
 3. Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (read access is sufficient).
-4. Paste the token into **Settings → TTS → Pocket-TTS → HuggingFace Token**, or set it via the `HF_TOKEN` environment variable before launching VoxCtrl.
+4. Paste the token into **Settings → TTS → HuggingFace access token** (or the setup wizard's voice step — it is one token for every gated model), or export `HF_TOKEN` before launching VoxCtrl. An exported token wins over the saved one and is never written to the config; the fields show it read-only when it is set.
 5. Pick a voice and click **Download** in Settings → TTS. The model weights, tokenizer, and the selected voice's reference clip are downloaded once and cached locally under `~/.cache/huggingface/hub/`.
 
 ### MCP Server (Claude Desktop / Cursor)
