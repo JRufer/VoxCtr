@@ -21,7 +21,6 @@ vi.mock("@tauri-apps/api/event", () => ({
 const mockConfig = {
   engine: {
     backend: "whisper-cpp",
-    inference_mode: "Balanced",
     whisper_cpp: {
       model_dir: "",
       model_size: "large-v3", // missing

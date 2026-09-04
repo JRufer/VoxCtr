@@ -134,14 +134,12 @@ pub fn run() {
     // Log the sanitized configuration parameters at startup
     tracing::info!("=== System Startup Config ===");
     tracing::info!("Backend choice: {:?}", config.data.engine.backend);
-    tracing::info!("Inference mode: {:?}", config.data.engine.inference_mode);
     tracing::info!("Whisper model size: {}", config.data.engine.whisper_cpp.model_size);
     tracing::info!("Whisper device: {}", config.data.engine.whisper_cpp.device);
     tracing::info!("Whisper threads: {}", config.data.engine.whisper_cpp.threads);
     tracing::info!("Moonshine model size: {}", config.data.engine.moonshine.model_size);
     tracing::info!("Moonshine language: {}", config.data.engine.moonshine.language);
     tracing::info!("VAD threshold: {}", config.data.audio.vad_threshold);
-    tracing::info!("Min silence duration ms: {}", config.data.audio.min_silence_duration_ms);
     tracing::info!("Noise suppression: {}", config.data.audio.noise_suppression);
     tracing::info!("Input device index: {:?}", config.data.audio.input_device_index);
     tracing::info!("Gain: {}", config.data.audio.gain);

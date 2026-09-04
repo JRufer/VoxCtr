@@ -14,7 +14,6 @@ export interface AppConfig {
 
 export interface EngineConfig {
   backend: "auto" | "whisper-cpp" | "moonshine";
-  inference_mode: "Balanced" | "Aggressive";
   whisper_cpp: WhisperCppConfig;
   moonshine: MoonshineConfig;
 }
@@ -33,7 +32,6 @@ export interface MoonshineConfig {
 
 export interface AudioConfig {
   vad_threshold: number;
-  min_silence_duration_ms: number;
   input_device_index: number | null;
   evdev_device: string | null;
   noise_suppression: boolean;
@@ -121,7 +119,6 @@ export interface McpConfig {
 const defaultConfig: AppConfig = {
   engine: {
     backend: "auto",
-    inference_mode: "Balanced",
     whisper_cpp: {
       model_dir: "",
       model_size: "tiny",
@@ -132,7 +129,6 @@ const defaultConfig: AppConfig = {
   },
   audio: {
     vad_threshold: 0.5,
-    min_silence_duration_ms: 500,
     input_device_index: null,
     evdev_device: null,
     noise_suppression: false,

@@ -157,11 +157,6 @@
       />
       <span class="val">{cfg.audio.vad_threshold.toFixed(2)}</span>
     </label>
-    <label class="field">
-      <span>Silence duration (ms)</span>
-      <input type="number" min="100" max="5000" step="50"
-        bind:value={cfg.audio.min_silence_duration_ms} onchange={markDirty} />
-    </label>
   </div>
 
   <div class="field-group">

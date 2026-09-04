@@ -73,22 +73,9 @@ impl Default for BackendChoice {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum InferenceMode {
-    Balanced,
-    Aggressive,
-}
-
-impl Default for InferenceMode {
-    fn default() -> Self {
-        Self::Balanced
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EngineConfig {
     pub backend: BackendChoice,
-    pub inference_mode: InferenceMode,
     pub whisper_cpp: WhisperCppConfig,
     pub moonshine: MoonshineConfig,
 }
@@ -106,7 +93,6 @@ fn default_dynamic_stream() -> bool {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioConfig {
     pub vad_threshold: f32,
-    pub min_silence_duration_ms: u32,
     /// None = use default system device
     pub input_device_index: Option<u32>,
     /// Saved evdev device path, e.g. "/dev/input/event4" (Linux only)
@@ -123,7 +109,6 @@ impl Default for AudioConfig {
     fn default() -> Self {
         Self {
             vad_threshold: 0.5,
-            min_silence_duration_ms: 500,
             input_device_index: None,
             evdev_device: None,
             noise_suppression: false,
@@ -762,7 +747,6 @@ mod tests {
         let legacy_json = r#"{
             "engine": {
                 "backend": "auto",
-                "inference_mode": "Balanced",
                 "whisper_cpp": {
                     "model_dir": "",
                     "model_size": "large-v3",
@@ -776,7 +760,6 @@ mod tests {
             },
             "audio": {
                 "vad_threshold": 0.5,
-                "min_silence_duration_ms": 500,
                 "input_device_index": null,
                 "evdev_device": null,
                 "noise_suppression": false,

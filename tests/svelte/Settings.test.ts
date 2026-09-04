@@ -38,7 +38,6 @@ describe("Settings.svelte Startup Redirect", () => {
     config.set({
       engine: {
         backend: "whisper-cpp",
-        inference_mode: "Balanced",
         whisper_cpp: {
           model_dir: "",
           model_size: "large-v3", // missing model triggers redirect
@@ -52,7 +51,6 @@ describe("Settings.svelte Startup Redirect", () => {
       },
       audio: {
         vad_threshold: 0.5,
-        min_silence_duration_ms: 500,
         input_device_index: null,
         evdev_device: null,
         noise_suppression: false,

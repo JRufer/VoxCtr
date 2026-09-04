@@ -455,7 +455,6 @@ interface AppConfig {
 
 interface EngineConfig {
   backend: "auto" | "whisper-cpp" | "moonshine";
-  inference_mode: "Balanced" | "Aggressive";
   whisper_cpp: WhisperCppConfig;
   moonshine: MoonshineConfig;
 }
@@ -474,7 +473,6 @@ interface MoonshineConfig {
 
 interface AudioConfig {
   vad_threshold: number;
-  min_silence_duration_ms: number;
   input_device_index: number | null;
   evdev_device: string | null;
   noise_suppression: boolean;

@@ -32,11 +32,6 @@
     { value: "moonshine", label: "Moonshine (CPU only)" }
   ];
 
-  const inferenceModeOptions = [
-    { value: "Balanced", label: "Balanced" },
-    { value: "Aggressive", label: "Aggressive (shorter silence)" }
-  ];
-
   let whisperModelSizeOptions = $derived(
     MODEL_SIZES.map(s => ({
       value: s,
@@ -223,10 +218,6 @@
     <label class="field">
       <span>Backend</span>
       <CustomSelect bind:value={cfg.engine.backend} options={backendOptions} onchange={markDirty} />
-    </label>
-    <label class="field">
-      <span>Inference mode</span>
-      <CustomSelect bind:value={cfg.engine.inference_mode} options={inferenceModeOptions} onchange={markDirty} />
     </label>
   </div>
 

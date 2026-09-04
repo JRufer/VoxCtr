@@ -38,7 +38,6 @@ function baseConfig(): any {
   return {
     engine: {
       backend: "whisper-cpp",
-      inference_mode: "Balanced",
       whisper_cpp: { model_dir: "", model_size: "small", device: "auto", threads: 0 },
       moonshine: { model_size: "base", language: "en" },
     },

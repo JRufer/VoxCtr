@@ -106,7 +106,6 @@ All under `audio` in `config.json`:
 | `evdev_device` | string or null | `null` | Linux evdev keyboard path, e.g. `"/dev/input/event4"`. Only used by the evdev hotkey fallback; ignored when the desktop portal is available (the normal case) |
 | `gain` | float | `1.0` | Microphone amplification multiplier |
 | `vad_threshold` | float | `0.5` | Sensitivity 0.0–1.0; higher = more sensitive (0.0 RMS gate at 1.0) |
-| `min_silence_duration_ms` | integer | `500` | Milliseconds of silence to trigger recording stop |
 | `noise_suppression` | bool | `false` | Enable basic noise suppression |
 | `dynamic_stream` | bool | `true` | Open/close mic on demand vs. always-on |
 

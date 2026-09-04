@@ -20,7 +20,6 @@ Full schema with defaults:
 {
   "engine": {
     "backend": "auto",
-    "inference_mode": "Balanced",
     "whisper_cpp": {
       "model_dir": "",
       "model_size": "tiny",
@@ -34,7 +33,6 @@ Full schema with defaults:
   },
   "audio": {
     "vad_threshold": 0.5,
-    "min_silence_duration_ms": 500,
     "input_device_index": null,
     "evdev_device": null,
     "noise_suppression": false,
@@ -110,7 +108,6 @@ The engine config is nested into two backend sub-objects.
 | Key | Type | Values | Description |
 |---|---|---|---|
 | `backend` | string | `"auto"`, `"whisper-cpp"`, `"moonshine"` | Which backend to use; `auto` selects based on GPU availability |
-| `inference_mode` | string | `"Balanced"`, `"Aggressive"` | Inference aggressiveness; `Balanced` is recommended |
 
 **`whisper_cpp` sub-object:**
 
@@ -150,7 +147,6 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `vad_threshold` | float | `0.5` | Voice Activity Detection sensitivity (0.0–1.0); **higher = more sensitive** (lower RMS gate) |
-| `min_silence_duration_ms` | integer | `500` | Milliseconds of silence before stopping a recording session |
 | `input_device_index` | integer or null | `null` | CPAL device index; null = auto-detect |
 | `evdev_device` | string or null | `null` | Linux evdev keyboard device path for hotkeys, e.g. `"/dev/input/event4"` |
 | `noise_suppression` | bool | `false` | Enable basic noise suppression pre-processing |
