@@ -108,10 +108,7 @@ pub fn show_setup_window() {
         return;
     };
     if let Some(w) = handle.get_webview_window(SETUP_WINDOW) {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_always_on_top(true);
-        let _ = w.set_focus();
+        raise_window(&w, true);
         return;
     }
 
@@ -178,8 +175,39 @@ pub async fn setup_blocker(state: &Arc<AppState>) -> Option<String> {
 
 /// Helper to robustly show, unminimize, and focus a window
 pub fn show_and_focus_window(window: &tauri::WebviewWindow) {
-    let _ = window.center();
+    raise_window(window, false);
+}
+
+/// Bring a window to the front and give it keyboard focus.
+///
+/// `set_focus` on its own is not enough on Linux. Every mainstream desktop
+/// implements focus-stealing prevention: a process that does not already own
+/// the focused window has its focus requests demoted to "urgent" — the taskbar
+/// entry blinks and the window stays exactly where it was, behind whatever the
+/// user is looking at. A tray click is precisely that case, since the tray is
+/// not the app's own window.
+///
+/// Pinning the window above others is honoured where a bare focus request is
+/// not, so the raise is done by pinning, focusing, then unpinning a moment
+/// later — long enough for the compositor to restack, short enough that the
+/// window does not linger above everything else.
+///
+/// `keep_on_top` leaves the pin in place, for windows that are meant to stay
+/// above other applications.
+pub fn raise_window(window: &tauri::WebviewWindow, keep_on_top: bool) {
+    // Deliberately no `center()`: this is also the path for a window that is
+    // already open, and moving a window the user has placed is not what
+    // "bring it to the front" means.
     let _ = window.unminimize();
     let _ = window.show();
+    let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
+
+    if !keep_on_top {
+        let w = window.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let _ = w.set_always_on_top(false);
+        });
+    }
 }
