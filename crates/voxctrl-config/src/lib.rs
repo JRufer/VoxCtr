@@ -534,6 +534,38 @@ impl Default for McpConfig {
     }
 }
 
+// ── Updates ───────────────────────────────────────────────────────────────────
+
+fn default_auto_check() -> bool {
+    true
+}
+
+/// Automatic update checking.
+///
+/// This is the only thing in VoxCtrl that reaches the network without being
+/// asked to: on launch it fetches the public GitHub releases API to see whether
+/// a newer version has been published. The request carries no identifier of any
+/// kind, and `auto_check = false` stops it entirely — see `docs/privacy.md`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConfig {
+    /// Check GitHub for a newer release when the app starts.
+    #[serde(default = "default_auto_check")]
+    pub auto_check: bool,
+    /// A version the user chose to skip, so the same release is not raised
+    /// with them at every launch. A newer one still is.
+    #[serde(default)]
+    pub skipped_version: Option<String>,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            skipped_version: None,
+        }
+    }
+}
+
 // ── Root config ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -547,6 +579,11 @@ pub struct AppConfig {
     pub openai: OpenAiConfig,
     pub tts: TtsConfig,
     pub mcp: McpConfig,
+    /// Added after 0.3.10, so it must default rather than fail configs written
+    /// before it existed — every one of which would otherwise fall back to
+    /// defaults wholesale and lose the user's settings.
+    #[serde(default)]
+    pub updates: UpdateConfig,
 }
 
 /// Lift a HuggingFace token stored per engine onto the single `tts.hf_token`,
@@ -1093,5 +1130,37 @@ mod tests {
         let parsed2: TtsEngine = serde_json::from_str(r#""breeze_tts2""#).unwrap();
         assert_eq!(parsed2, TtsEngine::BreezeTts2);
     }
-}
 
+    #[test]
+    fn update_checking_is_on_by_default_and_skips_nothing() {
+        let cfg = AppConfig::default();
+        assert!(cfg.updates.auto_check);
+        assert!(cfg.updates.skipped_version.is_none());
+    }
+
+    /// A config written before the updates section existed must keep every
+    /// setting in it. Without `#[serde(default)]` the whole file fails to parse
+    /// and the user silently gets defaults for everything they ever chose.
+    #[test]
+    fn a_config_without_an_updates_section_still_loads() {
+        let json = serde_json::to_string(&AppConfig::default()).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value.as_object_mut().unwrap().remove("updates");
+        let stripped = serde_json::to_string(&value).unwrap();
+
+        let parsed: AppConfig = serde_json::from_str(&stripped).expect("older configs must load");
+        assert!(parsed.updates.auto_check);
+    }
+
+    #[test]
+    fn turning_auto_check_off_survives_a_round_trip() {
+        let mut cfg = AppConfig::default();
+        cfg.updates.auto_check = false;
+        cfg.updates.skipped_version = Some("0.4.0".to_string());
+
+        let json = serde_json::to_string(&cfg).unwrap();
+        let parsed: AppConfig = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.updates.auto_check);
+        assert_eq!(parsed.updates.skipped_version.as_deref(), Some("0.4.0"));
+    }
+}

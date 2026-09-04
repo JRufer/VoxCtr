@@ -93,6 +93,10 @@ Full schema with defaults:
     "server_enabled": false,
     "record_timeout": 15.0,
     "visual_feedback": true
+  },
+  "updates": {
+    "auto_check": true,
+    "skipped_version": null
   }
 }
 ```
@@ -278,6 +282,23 @@ shared `tts.speed`. See [tts.md](tts.md) for the full engine notes.
 | `server_enabled` | bool | `false` | Start the MCP socket server on launch |
 | `record_timeout` | float | `15.0` | How long `transcribe_voice` listens when the MCP client passes no `timeout_seconds`. Read per call, so a change applies without restarting the server; a non-positive value falls back to `15.0` |
 | `visual_feedback` | bool | `true` | Show overlay indicator while MCP server is listening to microphone |
+
+### `updates` section
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `auto_check` | bool | `true` | Ask GitHub for the latest release ~10s after launch, and offer it if it is newer |
+| `skipped_version` | string \| null | `null` | A version the user pressed "Skip this version" on; a newer release is still offered |
+
+This is the only part of VoxCtrl that reaches the network without being asked
+to. The request is an unauthenticated `GET` to
+`api.github.com/repos/JRufer/VoxCtrl/releases/latest`, sending a `User-Agent` of
+`VoxCtrl/<version>` and nothing else — no machine, user or install identifier.
+Set `auto_check` to `false` (or untick Settings → General → "Check for a new
+version on launch") and VoxCtrl never contacts GitHub unless you press "Check
+now". See [privacy.md](privacy.md#network).
+
+Missing from an older `config.json`, both keys take the defaults above.
 
 ---
 

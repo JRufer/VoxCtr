@@ -192,6 +192,77 @@ interface SetupStatusPayload {
 
 ---
 
+### Updates
+
+#### `check_for_update() → UpdateCheckPayload`
+Asks GitHub for the latest published release and compares it with the running
+version. Also resolves which release file matches this installation, so
+`install_update` does not have to fetch anything twice.
+
+```typescript
+interface UpdateInfo {
+  version: string;              // "0.4.0"
+  tag: string;                  // "v0.4.0"
+  current_version: string;      // the version running now
+  notes: string;                // release notes, trimmed for a dialog
+  release_url: string;
+  asset_name: string | null;    // the file that would be installed
+  download_size: number;        // bytes
+  can_self_update: boolean;     // false for .deb / source / unwritable installs
+  unsupported_reason: string | null;
+}
+
+interface UpdateCheckPayload {
+  current_version: string;
+  update: UpdateInfo | null;    // null when this is the latest release
+  skipped: boolean;             // the user pressed "Skip this version" on it
+}
+
+const result = await invoke<UpdateCheckPayload>('check_for_update');
+```
+
+---
+
+#### `get_pending_update() → UpdateCheckPayload`
+What the last check found, without contacting GitHub. Returns `update: null`
+if no check has run yet.
+
+---
+
+#### `install_update() → void`
+Downloads the pending update, verifies it against the SHA-256 digest GitHub
+published, replaces the running application file and restarts into it. Emits
+`update-progress` while downloading and `update-installed` just before the app
+exits; on any failure it emits `update-failed` and leaves the running version
+untouched. Rejects if no update is pending, if this installation cannot update
+itself, or if an install is already running.
+
+```typescript
+await invoke('install_update');
+```
+
+---
+
+#### `skip_update_version(version: string) → void`
+Records `updates.skipped_version`, so this release is not raised again. A newer
+one still is.
+
+```typescript
+await invoke('skip_update_version', { version: '0.4.0' });
+```
+
+---
+
+#### `set_update_auto_check(enabled: boolean) → void`
+Turns the launch-time check on or off and persists it (`updates.auto_check`).
+
+---
+
+#### `open_update_window() → void` / `dismiss_update() → void`
+Opens the update window (building it if needed), and closes it.
+
+---
+
 ### Text-to-Speech
 
 #### `speak_text(text: string, voice?: string) → void`
@@ -435,6 +506,23 @@ await listen<number>('audio-level', (event) => {
   updateVuMeter(event.payload);
 });
 ```
+
+### `update-progress`
+Emitted while an update downloads, at most once per megabyte.
+
+```typescript
+await listen<{ downloaded: number; total: number }>('update-progress', (event) => {
+  // total is 0 when the server sent no content length
+});
+```
+
+### `update-installed`
+Emitted with the new version once it is in place. The app exits shortly after
+and the new build starts itself.
+
+### `update-failed`
+Emitted with a message when an update could not be installed. The running
+version is unchanged.
 
 ---
 

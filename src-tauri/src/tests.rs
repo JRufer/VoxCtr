@@ -70,6 +70,7 @@ fn make_test_state() -> AppState {
         hotkeys_inhibited: Arc::new(AtomicBool::new(false)),
         audio_ready: Arc::new(AtomicBool::new(false)),
         dynamic_stream: Arc::new(AtomicBool::new(false)),
+        noise_suppression: Arc::new(AtomicBool::new(false)),
         monitoring: Arc::new(AtomicBool::new(false)),
         input_device_index: Arc::new(AtomicU32::new(u32::MAX)),
         gain: Arc::new(AtomicU32::new(1.0f32.to_bits())),
@@ -87,6 +88,8 @@ fn make_test_state() -> AppState {
         hotkey_reloader: Arc::new(Mutex::new(None)),
         hotkey_gesture_tx: Arc::new(Mutex::new(None)),
         hotkey_health: Arc::new(voxctrl_hotkeys::ListenerHealth::default()),
+        pending_update: Arc::new(Mutex::new(None)),
+        updating: Arc::new(AtomicBool::new(false)),
     }
 }
 
@@ -97,6 +100,23 @@ async fn test_app_state_initial_values() {
     assert!(!state.is_speaking());
     assert_eq!(state.total_words(), 0);
     assert_eq!(*state.active_target.lock().await, "default");
+}
+
+/// Two "Update and restart" clicks must not start two downloads over the same
+/// file. The guard is a compare-and-swap, so the second caller is turned away
+/// rather than joining in.
+#[tokio::test]
+async fn only_one_update_can_run_at_a_time() {
+    let state = make_test_state();
+    assert!(!state.is_updating());
+
+    assert!(state.begin_update(), "the first caller takes the update");
+    assert!(state.is_updating());
+    assert!(!state.begin_update(), "a second caller must be refused");
+
+    state.end_update();
+    assert!(!state.is_updating());
+    assert!(state.begin_update(), "a finished update frees the guard");
 }
 
 #[tokio::test]

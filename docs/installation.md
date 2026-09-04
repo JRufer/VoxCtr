@@ -250,6 +250,42 @@ Pocket-TTS is a pure-Rust voice-cloning TTS engine (no system packages required)
 
 ---
 
+## Updating
+
+VoxCtrl checks GitHub for a newer release about ten seconds after it starts. If
+there is one, a window opens with the release notes and three choices: **Update
+and restart**, **Skip this version** (never asked about that release again; a
+later one still gets offered), or **Not now** (asked again next launch).
+
+Choosing to update downloads the release file that matches this installation —
+the CPU AppImage, the Vulkan AppImage, or the Windows installer — checks it
+against the SHA-256 checksum GitHub published for it, replaces the running
+application file, and restarts into the new version. Your config, models and
+voices live elsewhere and are untouched. If anything fails at any point, the
+version you are running is left exactly as it was.
+
+The application file keeps its exact path, so desktop entries, dock pins and
+shell aliases go on working — which does mean an AppImage whose file name
+carries a version number keeps the old number in its name while containing the
+new build. Settings → About reports the version that is actually running.
+
+A few installations cannot update themselves, and say so instead of offering a
+button that would not work:
+
+- **A `.deb` or distro package** — the package manager owns those files. Update
+  it the way you installed it.
+- **A build from source** — nothing to replace; rebuild.
+- **An AppImage in a directory you cannot write to** (`/opt`, a read-only mount)
+  — move it somewhere you own, or download the new release by hand. This is
+  detected *before* the download starts, not after.
+
+To check on demand, or to turn the automatic check off entirely: **Settings →
+General → Updates**. With it off, VoxCtrl makes no network request unless you
+press "Check now". What the check sends — nothing that identifies you — is
+spelled out in [privacy.md](privacy.md#network).
+
+---
+
 ## Uninstalling
 
 `scripts/uninstall.sh` reverts everything VoxCtrl's setup and runtime create —

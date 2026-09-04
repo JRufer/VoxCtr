@@ -3,7 +3,7 @@
   "identifier": "default",
   "description": "Default capability set for VoxCtr windows",
   "platforms": ["linux", "windows", "macOS"],
-  "windows": ["settings", "overlay", "udev-warning"],
+  "windows": ["settings", "overlay", "udev-warning", "update"],
   "permissions": [
     "core:default",
     "core:window:allow-close",

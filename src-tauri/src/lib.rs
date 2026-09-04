@@ -21,6 +21,7 @@ mod services;
 mod startup_log;
 mod state;
 mod tray;
+mod updater;
 mod window;
 
 #[cfg(test)]
@@ -214,6 +215,8 @@ pub fn run() {
         hotkey_gesture_tx: Arc::new(Mutex::new(None)),
         hotkey_health: hotkey_health.clone(),
         overlay_tx: overlay_tx.clone(),
+        pending_update: Arc::new(Mutex::new(None)),
+        updating: Arc::new(AtomicBool::new(false)),
     });
 
     let (audio_level_tx, audio_level_rx) = crossbeam_channel::bounded::<f32>(128);
@@ -437,6 +440,14 @@ pub fn run() {
                 processing_frames,
             );
 
+            // Look for a new release, unless the user has turned that off or
+            // is standing in front of the setup wizard — a fresh install is on
+            // the latest version anyway, and an update dialog landing on top of
+            // step one of setup is nobody's idea of a first impression.
+            if !forced_wizard && cfg_data.ui.setup_completed {
+                updater::spawn_launch_check(app.handle().clone(), app_state.clone());
+            }
+
             startup_log::STARTUP_COMPLETE.store(true, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         })
@@ -496,6 +507,13 @@ pub fn run() {
             reset_chat_conversation,
             test_chat_target,
             set_hotkeys_inhibited,
+            updater::check_for_update,
+            updater::get_pending_update,
+            updater::install_update,
+            updater::skip_update_version,
+            updater::set_update_auto_check,
+            updater::dismiss_update,
+            updater::open_update_window,
         ])
         .build(tauri::generate_context!())
         .expect("error building Tauri application")

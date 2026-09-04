@@ -11,6 +11,7 @@ members = [
     "crates/voxctrl-mcp",
     "crates/voxctrl-llm",
     "crates/voxctrl-text",
+    "crates/voxctrl-update",
     "src-tauri",
 ]
 resolver = "2"
@@ -129,6 +130,7 @@ voxctrl-dbus     = { path = "crates/voxctrl-dbus" }
 voxctrl-mcp      = { path = "crates/voxctrl-mcp" }
 voxctrl-llm      = { path = "crates/voxctrl-llm" }
 voxctrl-text     = { path = "crates/voxctrl-text" }
+voxctrl-update   = { path = "crates/voxctrl-update" }
 
 [profile.release]
 lto = "fat"

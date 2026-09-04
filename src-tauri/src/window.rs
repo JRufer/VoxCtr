@@ -14,6 +14,9 @@ pub const SETUP_WINDOW: &str = "udev-warning";
 /// Label of the first-launch setup wizard window.
 pub const WIZARD_WINDOW: &str = "wizard";
 
+/// Label of the "a new version is available" window.
+pub const UPDATE_WINDOW: &str = "update";
+
 /// The wizard's screens are laid out on a 16:9 stage — two engine cards side by
 /// side, eight overlay thumbnails in a row, five voice cards in a row. Below
 /// roughly 1280 logical pixels those rows wrap and the layout stops reading as
@@ -144,6 +147,37 @@ pub fn open_wizard_window(app: &tauri::AppHandle) -> Result<(), String> {
         fit_to_display(&window);
     }
 
+    Ok(())
+}
+
+/// Show the update offer, building its window if it is not already there.
+///
+/// This is the one window that appears without the user having asked for
+/// anything, so it is a plain window rather than an always-on-top one: an
+/// update is worth mentioning, not worth interrupting whatever is on screen.
+/// VoxCtrl is a tray app that usually has nothing open at all, which is why the
+/// news cannot simply go into Settings.
+pub fn open_update_window(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window(UPDATE_WINDOW) {
+        show_and_focus_window(&existing);
+        return Ok(());
+    }
+
+    let window = tauri::WebviewWindowBuilder::new(
+        app,
+        UPDATE_WINDOW,
+        tauri::WebviewUrl::App("/update".into()),
+    )
+    .title("VoxCtrl — Update Available")
+    .inner_size(560.0, 620.0)
+    .min_inner_size(460.0, 420.0)
+    .center()
+    .resizable(true)
+    .decorations(true)
+    .build()
+    .map_err(|e| format!("Could not open the update window: {e}"))?;
+
+    show_and_focus_window(&window);
     Ok(())
 }
 

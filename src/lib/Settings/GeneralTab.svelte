@@ -12,6 +12,42 @@
 
   let wizardError = $state<string | null>(null);
 
+  type UpdateInfo = {
+    version: string;
+    current_version: string;
+    can_self_update: boolean;
+  };
+  type UpdateCheckPayload = {
+    current_version: string;
+    update: UpdateInfo | null;
+    skipped: boolean;
+  };
+
+  let checking = $state(false);
+  let checkResult = $state<UpdateCheckPayload | null>(null);
+  let checkError = $state<string | null>(null);
+
+  async function checkForUpdate() {
+    checking = true;
+    checkError = null;
+    checkResult = null;
+    try {
+      checkResult = await invoke<UpdateCheckPayload>("check_for_update");
+    } catch (e) {
+      checkError = `${e}`;
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function showUpdateWindow() {
+    try {
+      await invoke("open_update_window");
+    } catch (e) {
+      checkError = `${e}`;
+    }
+  }
+
   async function runSetupWizard() {
     wizardError = null;
     try {
@@ -40,6 +76,38 @@
     {/if}
   </div>
 
+
+  <div class="field-group">
+    <h3>Updates</h3>
+    <label class="field">
+      <span>Check for a new version on launch</span>
+      <input type="checkbox" bind:checked={cfg.updates.auto_check} onchange={markDirty} />
+    </label>
+    <p class="hint">
+      Asks GitHub once, shortly after startup, whether a newer release has been published, and
+      offers to install it. The request carries nothing about you or your machine, and it is the
+      only network request VoxCtrl makes on its own. Turn it off and VoxCtrl never contacts GitHub
+      unless you press "Check now".
+    </p>
+    <div class="field">
+      <span>Check now</span>
+      <button class="btn-action" onclick={checkForUpdate} disabled={checking}>
+        {checking ? "Checking…" : "Check for updates"}
+      </button>
+    </div>
+    {#if checkResult && !checkResult.update}
+      <p class="hint">VoxCtrl {checkResult.current_version} is the latest release.</p>
+    {:else if checkResult?.update}
+      <p class="hint">
+        Version {checkResult.update.version} is available (you have
+        {checkResult.update.current_version}).
+        <button class="link" onclick={showUpdateWindow}>See what's new</button>
+      </p>
+    {/if}
+    {#if checkError}
+      <p class="hint error">Could not check for updates: {checkError}</p>
+    {/if}
+  </div>
 
   <div class="field-group">
     <h3>MCP Server</h3>
@@ -81,5 +149,13 @@
 
   .hint.error {
     @apply text-red-400;
+  }
+
+  .btn-action:disabled {
+    @apply opacity-60 cursor-default;
+  }
+
+  .link {
+    @apply text-[var(--color-accent-blue)] underline underline-offset-2 bg-transparent border-0 p-0 cursor-pointer text-inherit;
   }
 </style>

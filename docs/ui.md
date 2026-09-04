@@ -11,6 +11,7 @@ VoxCtrl opens separate native windows managed by Tauri, plus a native overlay he
 | Settings | `/settings` | 720 × 640 (min 600 × 450) | Resizable, standard chrome |
 | Setup Wizard | `/wizard` | Fitted to the display, 16:9 (min 1280 × 720) | Resizable, first run only |
 | Setup / Diagnostics | `/udev-warning` | 580 × 600 (min 480 × 420) | Always-on-top |
+| Update | `/update` | 560 × 620 (min 460 × 420) | Resizable, built on demand |
 | Overlay | `voxctrl-overlay` helper (Slint) | 560 × 190 | Transparent, always-on-top, no decorations, click-through |
 
 The Tauri windows are declared in `src-tauri/tauri.conf.json`, start hidden (`visible: false`), and are shown programmatically. The overlay is a separate native process (`src-tauri/src/overlay.rs`) spawned at startup and driven over stdin; the Svelte `/overlay` route hosts the web counterparts of the same visualizers (used for custom HTML overlays).
@@ -38,6 +39,7 @@ The main configuration interface. Organized into a sidebar with ten tabs:
 
 ### General Tab
 - "Open setup wizard" button — re-runs the first-run wizard
+- "Check for a new version on launch" toggle, and a "Check for updates" button that reports the result inline
 - Overlay show/hide toggle
 - Overlay style selector
 - Auto-show settings on startup toggle
@@ -226,6 +228,9 @@ Updated by `status-tick` Tauri events (emitted by backend every ~250ms) and an i
 | `status-tick` | `AppStatus` | Periodic state update (~250ms) |
 | `config-changed` | `AppConfig` | Config was modified (by any window or externally) |
 | `audio-level` | `f32` | RMS audio level for VU meter (while monitoring is active) |
+| `update-progress` | `{ downloaded, total }` | Bytes fetched so far while an update downloads |
+| `update-installed` | `String` (version) | The new version is in place; the app is about to restart |
+| `update-failed` | `String` | The update could not be installed; the running version is untouched |
 
 ---
 

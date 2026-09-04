@@ -47,8 +47,9 @@ VoxCtrl/
     ├── voxctrl-mcp/        # MCP JSON-RPC server (Unix socket / named pipe)
     ├── voxctrl-dbus/       # DBus service (Linux session bus)
     ├── voxctrl-llm/        # OpenAI-compatible LLM HTTP client
-    └── voxctrl-text/       # Shared snippet expansion + fuzzy vocab correction
-                             #   (used by both voxctrl-inference and voxctrl-tts)
+    ├── voxctrl-text/       # Shared snippet expansion + fuzzy vocab correction
+    │                        #   (used by both voxctrl-inference and voxctrl-tts)
+    └── voxctrl-update/     # GitHub release check, download, verify, self-replace
 ```
 
 ---

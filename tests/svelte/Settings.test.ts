@@ -89,6 +89,10 @@ describe("Settings.svelte Startup Redirect", () => {
         server_enabled: false,
         record_timeout: 15.0,
       },
+      updates: {
+        auto_check: true,
+        skipped_version: null,
+      },
     } as any);
     configLoaded.set(true);
   });

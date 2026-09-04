@@ -9745,6 +9745,7 @@ dependencies = [
  "voxctrl-mcp",
  "voxctrl-routing",
  "voxctrl-tts",
+ "voxctrl-update",
  "x11rb",
  "zbus 4.4.0",
 ]
@@ -9930,6 +9931,23 @@ dependencies = [
  "tracing",
  "voxctrl-config",
  "voxctrl-text",
+]
+
+[[package]]
+name = "voxctrl-update"
+version = "0.3.10"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "hex",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
