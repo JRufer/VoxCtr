@@ -282,6 +282,7 @@
           <CustomSelect
             bind:value={editingTarget.delivery}
             options={[
+              { value: "command", label: "Voice Command Router (VoxCtrl keyword)" },
               { value: "inject", label: "Inject Text Directly (Simulate keyboard)" },
               { value: "clipboard", label: "Save to Clipboard" },
               { value: "exec", label: "Execute Command" },
@@ -293,8 +294,7 @@
               { value: "webhook", label: "Send Webhook Event" },
               { value: "mcp", label: "Call MCP Server Tool" },
               { value: "speak", label: "Speak Text Aloud (TTS)" },
-              { value: "chat", label: "Chat with a Local LLM (Hermes / OpenAI-compatible)" },
-              { value: "command", label: "Voice Command Router (VoxCtrl keyword)" }
+              { value: "chat", label: "Chat with a Local LLM (Hermes / OpenAI-compatible)" }
             ]}
           />
         </label>

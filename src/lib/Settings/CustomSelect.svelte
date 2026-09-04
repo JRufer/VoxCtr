@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-
   let {
     value = $bindable(),
     options = [],
@@ -15,6 +13,42 @@
 
   let isOpen = $state(false);
   let containerEl = $state<HTMLDivElement | null>(null);
+  /** Inline `position: fixed` box for the open menu — see `positionMenu`. */
+  let menuStyle = $state("");
+
+  /** Gap between the trigger and its menu, and the margin kept to the viewport edge. */
+  const MENU_GAP = 4;
+  const VIEWPORT_MARGIN = 8;
+
+  /**
+   * Place the open menu in viewport coordinates.
+   *
+   * The menu cannot be positioned inside the wrapper: every settings panel and
+   * the target editor scroll their content, and an absolutely positioned menu
+   * is clipped by that `overflow` the moment it reaches the panel's edge —
+   * which is what hid the lower half of the delivery list. Fixed positioning
+   * escapes the clip, so the menu is measured against the trigger instead, and
+   * flipped above it when the space below is too small.
+   */
+  function positionMenu() {
+    if (!containerEl) return;
+    const rect = containerEl.getBoundingClientRect();
+    const below = window.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_MARGIN;
+    const above = rect.top - MENU_GAP - VIEWPORT_MARGIN;
+    const openUpwards = below < 160 && above > below;
+    const maxHeight = Math.max(120, Math.floor(openUpwards ? above : below));
+
+    menuStyle = openUpwards
+      ? `position: fixed; left: ${rect.left}px; width: ${rect.width}px; ` +
+        `bottom: ${window.innerHeight - rect.top + MENU_GAP}px; max-height: ${maxHeight}px;`
+      : `position: fixed; left: ${rect.left}px; width: ${rect.width}px; ` +
+        `top: ${rect.bottom + MENU_GAP}px; max-height: ${maxHeight}px;`;
+  }
+
+  function toggleOpen() {
+    isOpen = !isOpen;
+    if (isOpen) positionMenu();
+  }
 
   let normalizedOptions = $derived(
     options.map(opt => {
@@ -44,9 +78,18 @@
       }
     };
 
+    // A fixed menu does not travel with its trigger, so follow any scroll or
+    // resize that moves it. `capture` catches scrolling panels, not just the
+    // window.
+    const reposition = () => positionMenu();
+
     document.addEventListener("click", handleClickOutside);
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
     return () => {
       document.removeEventListener("click", handleClickOutside);
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
     };
   });
 
@@ -64,12 +107,12 @@
     type="button"
     class="custom-select-trigger"
     {disabled}
-    onclick={() => isOpen = !isOpen}
+    onclick={toggleOpen}
   >
     {selectedLabel}
   </button>
   {#if isOpen && !disabled}
-    <div class="custom-dropdown-menu">
+    <div class="custom-dropdown-menu" style={menuStyle}>
       {#each normalizedOptions as opt}
         <button
           type="button"
@@ -111,8 +154,9 @@
     @apply opacity-50 cursor-not-allowed -translate-y-0!;
   }
 
+  /* Position, width and max-height come from `menuStyle` (see positionMenu). */
   .custom-dropdown-menu {
-    @apply absolute left-0 right-0 mt-1 max-h-60 overflow-y-auto bg-[#1e2436] border border-[var(--border)] rounded-[var(--radius)] shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-[200] flex flex-col p-1 gap-0.5;
+    @apply overflow-y-auto bg-[#1e2436] border border-[var(--border)] rounded-[var(--radius)] shadow-[0_10px_30px_rgba(0,0,0,0.5)] z-[2000] flex flex-col p-1 gap-0.5;
   }
 
   .custom-dropdown-item {
