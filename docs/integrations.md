@@ -288,14 +288,3 @@ Same POST (to `webhook_url`) but with HMAC-SHA256 signature:
 X-VoxCtrl-Signature: sha256=abc123...
 ```
 
----
-
-## AT-SPI2 Context Integration (Linux)
-
-When `atspi.context_prompt = true`, VoxCtrl uses the Linux Accessibility API (AT-SPI2) to read the surrounding text from the focused text field. This text is included in the Whisper initial prompt to improve transcription continuity and vocabulary consistency.
-
-When `atspi.auto_code_mode = true`, VoxCtrl detects when the focused application is a code editor or terminal and automatically enables code-mode post-processing.
-
-When `atspi.injection = true`, AT-SPI2 is used as the primary text injection method (before falling back to wtype/xdotool).
-
-Requires the `at-spi2-core` package and the `org.a11y.Bus` DBus service to be running.

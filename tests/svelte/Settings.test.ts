@@ -92,11 +92,6 @@ describe("Settings.svelte Startup Redirect", () => {
         server_enabled: false,
         record_timeout: 15.0,
       },
-      atspi: {
-        injection: true,
-        context_prompt: true,
-        auto_code_mode: true,
-      },
     } as any);
     configLoaded.set(true);
   });

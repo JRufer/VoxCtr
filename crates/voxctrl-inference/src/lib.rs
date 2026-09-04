@@ -36,8 +36,6 @@ pub struct InferenceRequest {
     pub target_id: String,
     /// Hotkey binding ID (if triggered by a hotkey)
     pub binding_id: Option<String>,
-    /// AT-SPI2 surrounding text for initial prompt, if available
-    pub context_text: Option<String>,
 }
 
 /// Final output after transcription + post-processing.
@@ -148,14 +146,6 @@ impl InferenceEngine {
             merged_prompt.push_str("Vocabulary: ");
             merged_prompt.push_str(&app_config.features.custom_vocabulary.join(", "));
             merged_prompt.push_str(". ");
-        }
-
-        // 3. Fallback context text if available
-        if let Some(ref context) = req.context_text {
-            if !context.trim().is_empty() {
-                merged_prompt.push_str(context.trim());
-                merged_prompt.push_str(". ");
-            }
         }
 
         let initial_prompt = if merged_prompt.trim().is_empty() {

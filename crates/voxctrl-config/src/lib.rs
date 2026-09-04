@@ -547,28 +547,6 @@ impl Default for McpConfig {
     }
 }
 
-// ── AT-SPI2 ───────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AtspiConfig {
-    /// Use AT-SPI2 for text insertion when available
-    pub injection: bool,
-    /// Feed surrounding text to Whisper as initial prompt
-    pub context_prompt: bool,
-    /// Automatically switch to code mode in terminals/IDEs
-    pub auto_code_mode: bool,
-}
-
-impl Default for AtspiConfig {
-    fn default() -> Self {
-        Self {
-            injection: true,
-            context_prompt: true,
-            auto_code_mode: true,
-        }
-    }
-}
-
 // ── Root config ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -582,7 +560,6 @@ pub struct AppConfig {
     pub openai: OpenAiConfig,
     pub tts: TtsConfig,
     pub mcp: McpConfig,
-    pub atspi: AtspiConfig,
 }
 
 // ── Config manager ────────────────────────────────────────────────────────────
@@ -837,11 +814,6 @@ mod tests {
             "mcp": {
                 "server_enabled": false,
                 "record_timeout": 15.0
-            },
-            "atspi": {
-                "injection": true,
-                "context_prompt": true,
-                "auto_code_mode": true
             }
         }"#;
 

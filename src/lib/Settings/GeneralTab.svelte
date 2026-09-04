@@ -63,22 +63,6 @@
     </label>
     <p class="hint">Socket: <code>/tmp/voxctrl-mcp.sock</code> (Linux) / <code>\\.\pipe\voxctrl-mcp</code> (Windows)</p>
   </div>
-
-  <div class="field-group">
-    <h3>AT-SPI2 (Linux)</h3>
-    <label class="field">
-      <span>Use AT-SPI2 for text insertion</span>
-      <input type="checkbox" bind:checked={cfg.atspi.injection} onchange={markDirty} />
-    </label>
-    <label class="field">
-      <span>Feed surrounding text as Whisper prompt</span>
-      <input type="checkbox" bind:checked={cfg.atspi.context_prompt} onchange={markDirty} />
-    </label>
-    <label class="field">
-      <span>Auto code mode in terminals / IDEs</span>
-      <input type="checkbox" bind:checked={cfg.atspi.auto_code_mode} onchange={markDirty} />
-    </label>
-  </div>
 </section>
 
 <style>

@@ -156,9 +156,6 @@ pub fn run() {
     tracing::info!("Pocket-TTS HF token set: {}", config.data.tts.pocket_tts.hf_token.is_some());
     tracing::info!("MCP enabled: {}", config.data.mcp.server_enabled);
     tracing::info!("MCP record timeout: {}", config.data.mcp.record_timeout);
-    tracing::info!("ATSPI injection: {}", config.data.atspi.injection);
-    tracing::info!("ATSPI context prompt: {}", config.data.atspi.context_prompt);
-    tracing::info!("ATSPI auto code mode: {}", config.data.atspi.auto_code_mode);
     tracing::info!("=============================");
 
     let cfg_data = Arc::new(config.data.clone());

@@ -135,7 +135,7 @@ VoxCtrl provides a clean, native settings window and overlay environment:
 ![Settings Panel](assets/settings.png)
 
 ### 📌 Interactive Settings UI
-* **General tab**: Configure core system attributes, including the local MCP JSON-RPC server toggles, record timeouts, and Wayland/X11 AT-SPI2 text injection behaviors.
+* **General tab**: Configure core system attributes, including the local MCP JSON-RPC server toggles and record timeouts.
 * **Visual tab**: A premium Cyber Obsidian interface that groups all aesthetic and presentation settings. It features an interactive **Overlay Style Selector** (supporting Voice Card, Waveform, Pulse Ring, Ocean Wave, Mono Bars, Neon Spectrum, Retro Terminal, Analog VU, or Disabled styles), toggles for displaying heads-up HUD overlays while speaking, **Command Trigger Overlay toggles and duration sliders**, and controls for sending system notifications on transcription. It also lets you configure if the Settings window should open automatically at launch or start minimized in the system tray.
 
 ### 🎨 Heads-Up HUD Overlay Styles

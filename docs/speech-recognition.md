@@ -57,7 +57,6 @@ When a recording session ends, the accumulated audio buffer is sent to the infer
 InferenceRequest {
     audio: Vec<f32>,           // 16 kHz mono PCM
     target_id: String,         // Which output target (comma-separated for multi-target)
-    context_text: Option<String>, // AT-SPI context text, if enabled
 }
 ```
 
@@ -74,7 +73,6 @@ The worker runs:
 3. Build Whisper initial prompt
    a. Target's initial_prompt (if set)
    b. Custom vocabulary words from features.custom_vocabulary
-   c. AT-SPI context text (if context_prompt enabled)
    → Merged into a single prompt string for Whisper
 
 4. whisper-rs transcription
@@ -198,12 +196,9 @@ This threshold (0.003 RMS) is intentionally below any genuine speech energy, so 
 
 ## Context Prompting
 
-When `atspi.context_prompt = true`, the surrounding text from the focused widget (read via AT-SPI2) is included in the Whisper initial prompt. This improves continuity with existing text in the field.
-
-The Whisper initial prompt also incorporates:
+The Whisper initial prompt is built from:
 1. The target's `initial_prompt` field (if set)
 2. The `features.custom_vocabulary` list, formatted as: `"Vocabulary: word1, word2, ..."`
-3. The AT-SPI2 surrounding text
 
 ---
 

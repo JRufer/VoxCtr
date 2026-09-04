@@ -43,7 +43,6 @@ pub fn spawn_audio_coordinator(
                             audio: std::mem::take(&mut accumulated_audio),
                             target_id: target_id.clone(),
                             binding_id: Some(binding_id.clone()),
-                            context_text: None,
                         };
                         state_for_audio.set_processing(true);
                         let _ = inference_tx.send(req);

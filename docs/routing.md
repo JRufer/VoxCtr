@@ -314,7 +314,6 @@ remove_fillers = false
 spoken_punctuation = true
 auto_format_lists = false
 apply_snippets = true
-atspi_context = true
 noise_suppression = false
 quiet_mode = false
 ```

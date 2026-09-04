@@ -62,7 +62,6 @@ function baseConfig(): any {
       breeze_tts_2: { model_dir: "", hf_token: null },
     },
     mcp: {},
-    atspi: {},
   };
 }
 

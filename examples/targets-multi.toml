@@ -24,7 +24,7 @@ delivery = "inject"
 append_newline = false
 send_on_release = true
 file_timestamp = true
-processing = {remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = false, openai_enabled = false, atspi_context = false}
+processing = {remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = false, openai_enabled = false}
 
 # ── 3. Code mode — forces code-dictation mode regardless of focused app ────────
 [[target]]
@@ -35,7 +35,7 @@ append_newline = false
 send_on_release = true
 file_timestamp = true
 initial_prompt = "Python code. Variables use snake_case. Functions defined with def."
-processing = {code_mode = true, remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = true, openai_enabled = false, atspi_context = false}
+processing = {code_mode = true, remove_fillers = false, spoken_punctuation = false, auto_format_lists = false, apply_snippets = true, openai_enabled = false}
 
 # ── 4. Clipboard with LLM grammar fix ──────────────────────────────────────
 [[target]]

@@ -112,7 +112,6 @@ pub enum DeliveryType {
 pub struct TargetProcessingConfig {
     pub noise_suppression: Option<bool>,
     pub quiet_mode: Option<bool>,
-    pub atspi_context: Option<bool>,
     pub remove_fillers: Option<bool>,
     pub spoken_punctuation: Option<bool>,
     pub auto_format_lists: Option<bool>,
@@ -124,7 +123,6 @@ impl TargetProcessingConfig {
     pub fn has_any(&self) -> bool {
         self.noise_suppression.is_some()
             || self.quiet_mode.is_some()
-            || self.atspi_context.is_some()
             || self.remove_fillers.is_some()
             || self.spoken_punctuation.is_some()
             || self.auto_format_lists.is_some()

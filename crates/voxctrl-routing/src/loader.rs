@@ -102,7 +102,6 @@ struct RawTarget {
 struct RawProcessing {
     noise_suppression: Option<bool>,
     quiet_mode: Option<bool>,
-    atspi_context: Option<bool>,
     remove_fillers: Option<bool>,
     spoken_punctuation: Option<bool>,
     auto_format_lists: Option<bool>,
@@ -178,7 +177,6 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
 
     let has_any_override = r.processing.noise_suppression.is_some()
         || r.processing.quiet_mode.is_some()
-        || r.processing.atspi_context.is_some()
         || r.processing.remove_fillers.is_some()
         || r.processing.spoken_punctuation.is_some()
         || r.processing.auto_format_lists.is_some()
@@ -192,7 +190,6 @@ fn raw_to_target(r: RawTarget) -> OutputTarget {
         TargetProcessingConfig {
             noise_suppression: r.processing.noise_suppression,
             quiet_mode: r.processing.quiet_mode,
-            atspi_context: r.processing.atspi_context,
             remove_fillers: r.processing.remove_fillers,
             spoken_punctuation: r.processing.spoken_punctuation,
             auto_format_lists: r.processing.auto_format_lists,
@@ -337,7 +334,6 @@ fn target_to_raw(t: &OutputTarget) -> RawTarget {
         processing: RawProcessing {
             noise_suppression: p.noise_suppression,
             quiet_mode: p.quiet_mode,
-            atspi_context: p.atspi_context,
             remove_fillers: p.remove_fillers,
             spoken_punctuation: p.spoken_punctuation,
             auto_format_lists: p.auto_format_lists,

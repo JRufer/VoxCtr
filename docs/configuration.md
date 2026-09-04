@@ -96,11 +96,6 @@ Full schema with defaults:
     "server_enabled": false,
     "record_timeout": 15.0,
     "visual_feedback": true
-  },
-  "atspi": {
-    "injection": true,
-    "context_prompt": true,
-    "auto_code_mode": true
   }
 }
 ```
@@ -293,14 +288,6 @@ shared `tts.speed`. See [tts.md](tts.md) for the full engine notes.
 | `record_timeout` | float | `15.0` | Max seconds for `transcribe_voice` to wait for speech |
 | `visual_feedback` | bool | `true` | Show overlay indicator while MCP server is listening to microphone |
 
-### `atspi` section
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `injection` | bool | `true` | Use AT-SPI2 for text insertion when available |
-| `context_prompt` | bool | `true` | Read focused widget text to use as Whisper context prompt |
-| `auto_code_mode` | bool | `true` | Detect code editors/terminals and enable code-mode processing automatically |
-
 ---
 
 ## targets.toml
@@ -336,7 +323,6 @@ auto_format_lists = true
 apply_snippets = true
 code_mode = false
 quiet_mode = false
-atspi_context = true
 noise_suppression = false
 ```
 

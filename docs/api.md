@@ -451,7 +451,6 @@ interface AppConfig {
   openai: OpenAiConfig;
   tts: TtsConfig;
   mcp: McpConfig;
-  atspi: AtspiConfig;
 }
 
 interface EngineConfig {
@@ -547,12 +546,6 @@ interface McpConfig {
   visual_feedback: boolean;
 }
 
-interface AtspiConfig {
-  injection: boolean;       // not "enabled"
-  context_prompt: boolean;
-  auto_code_mode: boolean;
-}
-
 interface OutputTarget {
   id: string;
   label: string;
@@ -613,7 +606,6 @@ interface OutputTarget {
 interface TargetProcessingConfig {
   noise_suppression?: boolean;
   quiet_mode?: boolean;
-  atspi_context?: boolean;
   remove_fillers?: boolean;
   spoken_punctuation?: boolean;
   auto_format_lists?: boolean;
