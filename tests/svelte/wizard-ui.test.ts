@@ -176,8 +176,6 @@ describe("EngineStep", () => {
       return undefined;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
-    await fireEvent.click((await screen.findAllByRole("radio"))[0]);
-    await fireEvent.click((await screen.findAllByText("small"))[0].closest("button")!);
     expect(await screen.findByText(/small is on disk and ready/)).toBeTruthy();
   });
 
@@ -234,6 +232,72 @@ describe("EngineStep", () => {
 
     await fireEvent.click(toggle);
     await waitFor(() => expect(toggle.textContent).toContain("ON · CUDA"));
+  });
+
+  test("an already-downloaded model needs no click before continuing", async () => {
+    // The gate is there to stop an unwanted download. There is nothing to
+    // download here, so making the user click their own existing choice would
+    // be a ceremony that protects nobody.
+    const blockers: (string | null)[] = [];
+    invoke.mockImplementation(async (cmd: string, args: any) => {
+      if (cmd === "check_model_downloaded") return args.modelSize === "small";
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, {
+      registerGate: noopGate,
+      setBlocker: (_s: number, r: string | null) => blockers.push(r),
+    });
+
+    await waitFor(() => expect(blockers.at(-1)).toBeNull());
+    expect(wizard.engineChosen).toBe(false);
+    expect(wizard.modelChosen).toBe(false);
+  });
+
+  test("switching to a model that is not downloaded brings the gate back", async () => {
+    const blockers: (string | null)[] = [];
+    invoke.mockImplementation(async (cmd: string, args: any) => {
+      if (cmd === "check_model_downloaded") return args.modelSize === "small";
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, {
+      registerGate: noopGate,
+      setBlocker: (_s: number, r: string | null) => blockers.push(r),
+    });
+    await waitFor(() => expect(blockers.at(-1)).toBeNull());
+
+    // Picking "medium" is itself an explicit choice, so the gate is satisfied
+    // and the pill switches to warning about the download instead.
+    await fireEvent.click((await screen.findByText("medium")).closest("button") as HTMLElement);
+    await waitFor(() =>
+      expect(screen.getByText(/medium will download when you continue/)).toBeTruthy(),
+    );
+    expect(blockers.at(-1)).toBeNull();
+  });
+
+  test("waits for the on-disk check before deciding anything", async () => {
+    const blockers: (string | null)[] = [];
+    let releaseCheck: (v: boolean) => void = () => {};
+    const pending = new Promise<boolean>((r) => (releaseCheck = r));
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "check_model_downloaded") return pending;
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "cuda_enabled") return false;
+      return false;
+    });
+    render(EngineStep, {
+      registerGate: noopGate,
+      setBlocker: (_s: number, r: string | null) => blockers.push(r),
+    });
+
+    // Both readiness maps start empty; deciding from them would call every
+    // model missing and demand a pointless click.
+    await waitFor(() => expect(blockers.at(-1)).toMatch(/Checking which models/));
+    releaseCheck(true);
+    await waitFor(() => expect(blockers.at(-1)).toBeNull());
   });
 
   test("will not move on until an engine and a model size are actually chosen", async () => {

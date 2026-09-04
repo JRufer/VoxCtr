@@ -35,6 +35,9 @@
 
   let downloading = $state<string | null>(null);
   let downloadError = $state<string | null>(null);
+  /** False until the first on-disk probe finishes. Both maps start empty, so
+   *  deciding anything before then would report every model as missing. */
+  let readinessChecked = $state(false);
 
   const selectedEngine = $derived<SttEngineId>(
     $config.engine.backend === "moonshine" ? "moonshine" : "whisper-cpp",
@@ -164,14 +167,22 @@
   }
 
   // Continue stays live while a model is merely missing — pressing it is what
-  // starts the download. It is blocked while one is in flight, and until the
-  // user has actually chosen: the config ships with a backend and a size
-  // already set, so "did not touch this screen" and "picked the default on
-  // purpose" are otherwise indistinguishable, and the wrong multi-gigabyte
-  // download is an expensive way to find out.
+  // starts the download — and is blocked while one is in flight.
+  //
+  // The "you must choose" gate exists for exactly one reason: the config ships
+  // with a backend and a size already set, so an untouched screen and a
+  // deliberately-kept default look identical, and the cost of guessing wrong is
+  // a multi-gigabyte download of a model nobody asked for. When the selected
+  // model is already on disk that cost is zero, so there is nothing left to
+  // protect the user from and the gate would just be a click they have to
+  // perform on their own existing choice.
   $effect(() => {
     if (downloading) {
       setBlocker(STEP, `Downloading ${downloading}…`);
+    } else if (!readinessChecked) {
+      setBlocker(STEP, "Checking which models are already on disk…");
+    } else if (selectedReady) {
+      setBlocker(STEP, null);
     } else if (!wizard.engineChosen) {
       setBlocker(STEP, "Choose a transcription engine to continue.");
     } else if (!wizard.modelChosen) {
@@ -181,6 +192,12 @@
     }
   });
 
+  async function refreshReadiness() {
+    readinessChecked = false;
+    await Promise.all([refreshWhisper(), refreshMoonshine()]);
+    readinessChecked = true;
+  }
+
   onMount(() => {
     registerGate(STEP, ensureModel);
     invoke<boolean>("moonshine_available")
@@ -189,8 +206,7 @@
     invoke<boolean>("cuda_enabled")
       .then((v) => (cudaEnabled = v))
       .catch(() => (cudaEnabled = false));
-    void refreshWhisper();
-    void refreshMoonshine();
+    void refreshReadiness();
     return () => {
       registerGate(STEP, null);
       setBlocker(STEP, null);
@@ -347,16 +363,18 @@
   </div>
 
   <div class="status-row">
-    {#if !wizard.engineChosen || !wizard.modelChosen}
-      <span class="vx-pill">
-        ◇ Pick an engine and a model size — they download before the next step
-      </span>
-    {:else if downloading}
+    {#if downloading}
       <span class="vx-pill vx-busy"><span class="vx-spinner"></span> Downloading {downloading} — this can take a few minutes</span>
     {:else if downloadError}
       <span class="vx-pill vx-err">✕ Download failed: {downloadError}</span>
+    {:else if !readinessChecked}
+      <span class="vx-pill vx-busy"><span class="vx-spinner"></span> Checking local models…</span>
     {:else if selectedReady}
       <span class="vx-pill vx-ok">✓ {selectedModel} is on disk and ready</span>
+    {:else if !wizard.engineChosen || !wizard.modelChosen}
+      <span class="vx-pill">
+        ◇ Pick an engine and a model size — they download before the next step
+      </span>
     {:else}
       <span class="vx-pill">↓ {selectedModel} will download when you continue</span>
     {/if}
