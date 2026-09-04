@@ -261,13 +261,13 @@ Defines `OutputTarget`, `HotkeyBinding`, `DeliveryType`, `TargetProcessingConfig
 
 ---
 
-## Adding a New Output Target Type
+## Adding a New Output Command Delivery Type
 
 1. Add a variant to `DeliveryType` enum in `crates/voxctrl-routing/src/models.rs`
 2. Add any target-specific fields to `OutputTarget` in `crates/voxctrl-routing/src/models.rs`
 3. Add a match arm in the router dispatch logic in `crates/voxctrl-routing/src/router.rs`
 4. Update the TypeScript `OutputTarget` interface in `src/stores/config.ts`
-5. Add the new type to the delivery type selector in `src/lib/Settings/RoutingTab.svelte`
+5. Add the new type to the "Delivery System" selector in `src/lib/Settings/TargetEditorModal.svelte` (opened from `CommandsTab.svelte`, the Output Commands tab)
 6. Document in `docs/routing.md`
 
 ---

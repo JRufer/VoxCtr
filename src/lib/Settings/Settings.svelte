@@ -12,20 +12,20 @@
   import EngineTab from "./EngineTab.svelte";
   import AudioTab from "./AudioTab.svelte";
   import HotkeysTab from "./HotkeysTab.svelte";
-  import TargetsTab from "./TargetsTab.svelte";
+  import CommandsTab from "./CommandsTab.svelte";
   import TtsTab from "./TtsTab.svelte";
   import OpenAiTab from "./OpenAiTab.svelte";
   import FeaturesTab from "./FeaturesTab.svelte";
   import AboutTab from "./AboutTab.svelte";
 
-  type Tab = "general" | "engine" | "hotkeys" | "targets" | "visual" | "audio" | "tts" | "features" | "openai" | "about";
+  type Tab = "general" | "engine" | "hotkeys" | "commands" | "visual" | "audio" | "tts" | "features" | "openai" | "about";
   let activeTab = $state<Tab>("general");
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "general",  label: "General",  icon: "⚙️" },
     { id: "engine",   label: "Engine",   icon: "🧠" },
     { id: "hotkeys",  label: "Hotkeys",  icon: "⌨️" },
-    { id: "targets",  label: "Output Targets", icon: "🎯" },
+    { id: "commands", label: "Output Commands", icon: "🎯" },
     { id: "visual",   label: "Visual",   icon: "🎨" },
     { id: "audio",    label: "Audio",    icon: "🔊" },
     { id: "tts",      label: "TTS",      icon: "🗣️" },
@@ -179,8 +179,8 @@
         <EngineTab bind:cfg={$config} />
       {:else if activeTab === "hotkeys"}
         <HotkeysTab />
-      {:else if activeTab === "targets"}
-        <TargetsTab />
+      {:else if activeTab === "commands"}
+        <CommandsTab />
       {:else if activeTab === "visual"}
         <VisualTab bind:cfg={$config} />
       {:else if activeTab === "audio"}

@@ -6,16 +6,29 @@
 
 VoxCtrl's routing system decouples *what you say* from *where it goes*. You define:
 
-- **Output Targets** (`targets.toml`) — named delivery destinations
-- **Hotkey Bindings** (`bindings.toml`) — which keys trigger which targets
+- **Output Commands** (`targets.toml`) — named delivery destinations
+- **Hotkey Bindings** (`bindings.toml`) — which keys trigger which commands
+
+> [!NOTE]
+> Output Commands are called *targets* everywhere below the UI: the file is
+> `targets.toml`, each block is `[[target]]`, bindings reference `target_id`,
+> and the Tauri commands are `get_targets` / `save_targets`. Only the name the
+> app shows you changed; nothing on disk did.
 
 Both files are hot-reloaded when changed on disk.
 
 ---
 
-## Output Targets
+## Output Commands
 
 Defined in `~/.config/voxctrl/targets.toml`. Each `[[target]]` block describes one destination.
+
+**Saying one by name.** Start dictation and say *"VoxCtrl"*, then the command's
+name, then the text: *"VoxCtrl notes, remember to call the plumber"* delivers
+*remember to call the plumber* to the command named **notes**, whatever the
+active hotkey was pointed at. Everything after the name is the payload. The full
+matching rules — conversational lead-ins, fuzzy name matching, the overlay —
+are under [`command` — Voice Command Router](#command--voice-command-router).
 
 ### Common Fields
 

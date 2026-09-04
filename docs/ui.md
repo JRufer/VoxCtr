@@ -56,8 +56,11 @@ The main configuration interface. Organized into a sidebar with ten tabs:
 - "Download Model" button with progress
 - **Missing Model Warning & Auto-Redirection**: Startup check programmatically determines if the configured Whisper voice model file is downloaded on the local machine. If missing, it immediately switches the active Settings tab to "Engine" and presents a Tailwind-styled yellow warning alert prompting the user to select and download a GGUF voice model size.
 
-### Routing Tab
-- Visual editor for `targets.toml` — add/edit/delete output targets
+### Output Commands Tab
+- Visual editor for `targets.toml` — add/edit/delete output commands (the tab is
+  labelled "Output Commands"; the file and its `[[target]]` blocks are unchanged)
+- A note at the top explaining the spoken form: "VoxCtrl", then the command's
+  name, then the text
 - Per-target fields: command name (the target's name, and the phrase that routes
   dictation here through a Voice Command Router target), delivery type, and
   type-specific options — including, for file targets, a timestamp format with a

@@ -88,7 +88,7 @@ Note the parameter name is `newConfig` (camelCase), not `config`.
 ### Routing
 
 #### `get_targets() → OutputTarget[]`
-Returns all output targets from `targets.toml`.
+Returns all output commands from `targets.toml`. Named `targets` throughout the API; "Output Commands" is the UI label for the same thing.
 
 ```typescript
 const targets = await invoke<OutputTarget[]>('get_targets');

@@ -4,7 +4,7 @@
 
 VoxCtrl ("Voice Controller") is a desktop dictation application that turns your voice into text and routes it wherever you need it — injected directly into the focused window, saved to a file, sent to an HTTP endpoint, or handed off to an LLM agent via the MCP protocol.
 
-It is designed as a **programmable voice input broker**: you define output targets (where text goes) and hotkey bindings (what keys trigger recording for which targets), and VoxCtrl handles the rest.
+It is designed as a **programmable voice input broker**: you define output commands (where text goes) and hotkey bindings (what keys trigger recording for which commands), and VoxCtrl handles the rest. A command can also be picked mid-sentence by saying "VoxCtrl" and its name.
 
 Everything runs locally. No audio ever leaves your machine.
 

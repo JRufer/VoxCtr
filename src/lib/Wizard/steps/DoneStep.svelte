@@ -222,7 +222,7 @@
         <li><span class="glyph">∇</span> Engine <span class="tag">model & device</span></li>
         <li><span class="glyph">⌬</span> Visual <span class="tag">overlay style & position</span></li>
         <li><span class="glyph">⊕</span> TTS <span class="tag">voice output</span></li>
-        <li><span class="glyph">⊳</span> Output Targets <span class="tag">where text goes</span></li>
+        <li><span class="glyph">⊳</span> Output Commands <span class="tag">where text goes</span></li>
       </ul>
       <button class="vx-btn open-settings" onclick={openSettings}>Open Settings now</button>
     </div>

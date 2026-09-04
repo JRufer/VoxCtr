@@ -50,13 +50,21 @@ In an era of cloud processing, VoxCtrl is built from the ground up to guarantee 
 
 ---
 
-## 🎯 The Deep Targeting System
+## 🎯 Output Commands — The Deep Targeting System
 
-The core of VoxCtrl is its **Output Target Router**. Rather than simply pasting text where your cursor is, VoxCtrl allows you to declare **named output targets** in `targets.toml` and bind them to different global keyboard gestures. This turns your voice into a programmable router.
+The core of VoxCtrl is its **Output Command Router**. Rather than simply pasting text where your cursor is, VoxCtrl allows you to declare **named output commands** in `targets.toml` and bind them to different global keyboard gestures. This turns your voice into a programmable router.
 
-**New in v0.1:** You can now bind **multiple targets** to a single hotkey gesture! When activated, your text is broadcast concurrently to all bound targets. Configurations also **hot-reload instantly** in the background, without requiring an app restart.
+**Say a command by name.** Start dictation and say *"VoxCtrl"*, then the command's
+name, then what you want to send — *"VoxCtrl notes, remember to call the plumber"*
+routes *remember to call the plumber* to the command named **notes**. Everything
+after the name is the text, natural phrasing works (*"VoxCtrl, add this to my
+notes: …"*), and a dictation with no such phrase in it simply goes wherever your
+hotkey already points. See [docs/routing.md](docs/routing.md#command--voice-command-router)
+for the full matching rules.
 
-Below are the 11 target types supported by VoxCtrl and what they are used for:
+**New in v0.1:** You can now bind **multiple commands** to a single hotkey gesture! When activated, your text is broadcast concurrently to all bound commands. Configurations also **hot-reload instantly** in the background, without requiring an app restart.
+
+Below are the 11 delivery types supported by VoxCtrl and what they are used for:
 
 | Delivery Type | Mechanism | Perfect Use Case |
 | :--- | :--- | :--- |
@@ -109,7 +117,7 @@ Below are the 11 target types supported by VoxCtrl and what they are used for:
                                  │ (transcription, target_id)
                                  ▼
                   ┌──────────────────────────────┐
-                  │     Output Target Router     │
+                  │     Output Command Router    │
                   │      (targets.toml)          │
                   └───────┬───────┬────────┬─────┘
                           │       │        │
@@ -181,7 +189,7 @@ VoxCtrl features a native Model Context Protocol (MCP) server listening on a loc
 3. **`get_status()`**: Returns a JSON object with boolean states indicating whether the microphone is currently recording or the TTS engine is currently speaking.
 
 ### 🎯 Generic MCP Routing Target
-VoxCtrl supports routing transcribed text directly to any local or networked MCP server via its **Output Target Router** using the `mcp` delivery type in `targets.toml`. 
+VoxCtrl supports routing transcribed text directly to any local or networked MCP server via its **Output Command Router** using the `mcp` delivery type in `targets.toml`. 
 
 The client is fully standard-compliant (Option B, performing `initialize` -> `notifications/initialized` -> `tools/call` handshakes on socket connect) to guarantee maximum compatibility with strict third-party MCP servers.
 
@@ -292,7 +300,8 @@ Once set up, you can execute the application in three ways:
 All configurations are stored locally inside `~/.config/voxctrl/`.
 
 ### `targets.toml`
-Defines the output target router destinations:
+Defines your Output Commands. The file and its `[[target]]` blocks keep their
+original names on disk, so an existing config needs no changes:
 ```toml
 format_version = "1.1"
 
@@ -350,8 +359,8 @@ Supported gestures are `hold`, `toggle`, `double_tap` and `double_tap_hold`.
 See [docs/hotkeys.md](docs/hotkeys.md) for how each behaves and how to tune the
 double-tap timings.
 
-### Multi-Target Hotkey Bindings
-VoxCtrl supports routing your speech to **multiple output targets simultaneously** using a single hotkey gesture! 
+### Multi-Command Hotkey Bindings
+VoxCtrl supports routing your speech to **multiple Output Commands simultaneously** using a single hotkey gesture! 
 
 When a multi-target binding is activated:
 1. Your speech is captured and transcribed **once**.

@@ -365,7 +365,7 @@ For agents that generate responses to a named FIFO, VoxCtrl can dynamically read
 
 ### How it works
 
-1. The user configures an output target specifying a `response_pipe` path.
+1. The user configures an output command specifying a `response_pipe` path.
 2. The Tauri application spawns an asynchronous `run_fifo_responder` task that watches this FIFO file.
 3. When the agent writes its response text to the FIFO, VoxCtrl reads each line and pushes it to the TTS Engine worker queue.
 4. Playback proceeds automatically, showing the visual speaking overlay.
