@@ -4,6 +4,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { get } from "svelte/store";
   import { config } from "../../../stores/config";
+  import { status } from "../../../stores/status";
   import { patchConfig, wizard } from "../wizard-state.svelte";
   import {
     TTS_ENGINES,
@@ -37,6 +38,46 @@
   let playing = $state<string | null>(null);
   let playError = $state<string | null>(null);
   const bars = waveBars(14);
+
+  /**
+   * Getting back out of the "playing" state, by three routes.
+   *
+   * The obvious one — the `tts-playback-end` event — is a single fire-and-forget
+   * broadcast, and a card stuck mid-playback is not a cosmetic problem: it
+   * disables every other engine, so one missed event costs the user the whole
+   * step. So the event is treated as the fast path, not the only path.
+   *
+   * The reliable path is the app's own status tick, which carries `speaking`
+   * and is re-broadcast to every window on a timer — a dropped tick is simply
+   * followed by another. The watchdog covers the rest: an engine that fails
+   * without ever reporting playback at all.
+   */
+  let playWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+  /** No engine takes this long to say one sentence; if nothing has reported
+   *  back by now, something went wrong silently. */
+  const PLAY_TIMEOUT_MS = 30_000;
+
+  function stopPlaying() {
+    playing = null;
+    if (playWatchdog) {
+      clearTimeout(playWatchdog);
+      playWatchdog = null;
+    }
+  }
+
+  // The status tick's speaking flag, watched for its falling edge. An edge
+  // rather than the level, because `playing` is set the moment the button is
+  // pressed — before synthesis has produced a single sample — and the flag is
+  // still false through all of that.
+  let wasSpeaking = false;
+  $effect(() => {
+    // Guarded: a status payload that has not arrived yet must not take the
+    // step down with it.
+    const speaking = $status?.speaking ?? false;
+    if (!speaking && wasSpeaking && playing) stopPlaying();
+    wasSpeaking = speaking;
+  });
 
   function setErr(id: string, msg: string | null) {
     const next = { ...errors };
@@ -157,10 +198,26 @@
    * Settings → TTS uses, so a sample that works here works in the app.
    */
   async function play(id: TtsEngineId) {
+    // A second press on the card that is speaking stops it. Without this the
+    // only way out of a long sample is to wait it out.
+    if (playing === id) {
+      stopPlaying();
+      void invoke("stop_tts").catch(() => {});
+      return;
+    }
     if (playing) return;
     pick(id);
     playError = null;
     playing = id;
+    wasSpeaking = false;
+    if (playWatchdog) clearTimeout(playWatchdog);
+    playWatchdog = setTimeout(() => {
+      playing = null;
+      playWatchdog = null;
+      playError =
+        "The sample never finished playing. The engine may have failed silently — " +
+        "check Settings → TTS, or try another voice.";
+    }, PLAY_TIMEOUT_MS);
     const cfg = get(config);
     const engine = TTS_ENGINES.find((e) => e.id === id)!;
     const voice =
@@ -172,7 +229,7 @@
       await invoke("speak_text", { text: `Hi this is ${engine.name} speaking from VoxCtrl`, voice });
     } catch (e) {
       playError = `${e}`;
-      playing = null;
+      stopPlaying();
       wizard.recordIssue({
         id: `tts-speak-${id}`,
         step: STEP,
@@ -210,10 +267,10 @@
       .catch(() => (inflectAvailable = false));
 
     const subs = [
-      listen("tts-playback-end", () => (playing = null)),
+      listen("tts-playback-end", () => stopPlaying()),
       listen<string>("tts-error", (e) => {
         playError = e.payload;
-        playing = null;
+        stopPlaying();
         wizard.recordIssue({
           id: "tts-runtime",
           step: STEP,
@@ -224,6 +281,7 @@
     ];
     return () => {
       setBlocker(STEP, null);
+      if (playWatchdog) clearTimeout(playWatchdog);
       for (const s of subs) void s.then((off) => off()).catch(() => {});
       void invoke("stop_tts").catch(() => {});
     };
@@ -312,7 +370,11 @@
             class="play"
             class:playing={playing === engine.id}
             disabled={!isReady || unavailable || (!!playing && playing !== engine.id)}
-            title={isReady ? "Play a sample" : "Download this voice first"}
+            title={playing === engine.id
+              ? "Stop"
+              : isReady
+                ? "Play a sample"
+                : "Download this voice first"}
             onclick={(e) => {
               e.stopPropagation();
               void play(engine.id);

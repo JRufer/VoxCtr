@@ -82,12 +82,26 @@ function hotkeyStatus(over: Record<string, unknown> = {}) {
 const noopGate = () => {};
 const noopBlocker = () => {};
 
+/** The shape the status tick really delivers. */
+function baseStatus(over: Record<string, unknown> = {}): any {
+  return {
+    recording: false,
+    processing: false,
+    speaking: false,
+    mcp_recording: false,
+    audio_ready: true,
+    word_count: 0,
+    ...over,
+  };
+}
+
 beforeEach(() => {
   invoke.mockReset();
   invoke.mockImplementation(async () => undefined);
   listeners.clear();
   wizard.reset();
   config.set(baseConfig());
+  status.set(baseStatus());
 });
 
 describe("SetupWizard shell", () => {
@@ -642,6 +656,114 @@ describe("VoiceStep", () => {
     config.subscribe((c) => (current = c))();
     expect(current.tts.enabled).toBe(true);
     expect(current.tts.engine).toBe("piper");
+  });
+
+  test("the play button returns to idle when the end event arrives", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "check_voice_downloaded") return true;
+      return false;
+    });
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    const piper = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
+    await fireEvent.click(await waitFor(() => within(piper).getByTitle("Play a sample")));
+    await waitFor(() => expect(within(piper).queryByText("play sample")).toBeNull());
+
+    listeners.get("tts-playback-end")?.({ payload: undefined });
+
+    await waitFor(() => expect(within(piper).getByText("play sample")).toBeTruthy());
+  });
+
+  test("a card stuck playing recovers from the status tick alone", async () => {
+    // The end event is a single broadcast and the wizard is not the window it
+    // was written for. The status tick carries `speaking` to every window on a
+    // timer, so a missed event costs a moment, not the rest of the step.
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "check_voice_downloaded") return true;
+      return false;
+    });
+    const speakingStatus = (speaking: boolean) => status.set(baseStatus({ speaking }));
+
+    speakingStatus(false);
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    const piper = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
+    await fireEvent.click(await waitFor(() => within(piper).getByTitle("Play a sample")));
+    await waitFor(() => expect(within(piper).queryByText("play sample")).toBeNull());
+
+    // The engine starts, then finishes — with no end event at all.
+    speakingStatus(true);
+    await waitFor(() => expect(within(piper).queryByText("play sample")).toBeNull());
+    speakingStatus(false);
+
+    await waitFor(() => expect(within(piper).getByText("play sample")).toBeTruthy());
+  });
+
+  test("one card playing does not strand the others", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "check_voice_downloaded") return true;
+      return false;
+    });
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    const piper = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
+    const espeak = (await screen.findByText("eSpeak-NG")).closest(".card") as HTMLElement;
+    await fireEvent.click(await waitFor(() => within(piper).getByTitle("Play a sample")));
+
+    expect((within(espeak).getByTitle("Play a sample") as HTMLButtonElement).disabled).toBe(true);
+
+    listeners.get("tts-playback-end")?.({ payload: undefined });
+
+    await waitFor(() =>
+      expect((within(espeak).getByTitle("Play a sample") as HTMLButtonElement).disabled).toBe(false),
+    );
+  });
+
+  test("pressing the speaking card again stops it", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "inflect_micro_available") return true;
+      if (cmd === "check_voice_downloaded") return true;
+      return false;
+    });
+    render(VoiceStep, { setBlocker: noopBlocker });
+
+    const piper = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
+    await fireEvent.click(await waitFor(() => within(piper).getByTitle("Play a sample")));
+
+    const stop = await waitFor(() => within(piper).getByTitle("Stop"));
+    await fireEvent.click(stop);
+
+    await waitFor(() => expect(within(piper).getByText("play sample")).toBeTruthy());
+    expect(invoke.mock.calls.some(([c]) => c === "stop_tts")).toBe(true);
+  });
+
+  test("an engine that never reports back is given up on rather than left stuck", async () => {
+    vi.useFakeTimers();
+    try {
+      invoke.mockImplementation(async (cmd: string) => {
+        if (cmd === "inflect_micro_available") return true;
+        if (cmd === "check_voice_downloaded") return true;
+        return false;
+      });
+      render(VoiceStep, { setBlocker: noopBlocker });
+
+      await vi.advanceTimersByTimeAsync(50);
+      const piper = (await screen.findByText("Piper TTS")).closest(".card") as HTMLElement;
+      await fireEvent.click(within(piper).getByTitle("Play a sample"));
+      await vi.advanceTimersByTimeAsync(50);
+      expect(within(piper).queryByText("play sample")).toBeNull();
+
+      // No end event, no status tick, no error — just silence.
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      expect(within(piper).getByText("play sample")).toBeTruthy();
+      expect(screen.getByText(/never finished playing/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("a failed voice download is logged for the final screen", async () => {
