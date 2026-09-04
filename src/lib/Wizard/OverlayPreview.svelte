@@ -1,14 +1,45 @@
 <script lang="ts">
   /**
-   * A small animated stand-in for an overlay style.
+   * Preview of one overlay style, for the wizard's overlay step.
    *
-   * Not the real overlay: that one is a separate always-on-top window driven by
-   * live mic levels, and there is no microphone running while the wizard is on
-   * screen. What this gives the user is the shape and colour of what they will
-   * see — enough to choose between eight of them — without pretending to be a
-   * live meter.
+   * Plays a short recording of the real overlay when one is bundled at
+   * `src/assets/overlays/{style id}.webm`, and falls back to a CSS animation
+   * in its shape and colour when it is not. The fallback is not only for a
+   * missing file: it is what stays on screen while the clip buffers, and what
+   * the user sees if the webview cannot decode VP8/VP9 at all.
+   *
+   * The clips are bundled rather than fetched from the web on purpose. VoxCtrl
+   * runs entirely on-device and its CSP is `default-src 'self'`, so a remote
+   * remote video element would be blocked outright — and a setup wizard that needs the
+   * internet to show you a menu would be a poor first impression.
    */
   let { styleId, seed = 1 }: { styleId: string; seed?: number } = $props();
+
+  // Resolved at build time, so a style with no clip simply has no entry and
+  // renders its fallback — adding one is dropping a file in the folder.
+  const CLIPS = import.meta.glob("../../assets/overlays/*.webm", {
+    eager: true,
+    query: "?url",
+    import: "default",
+  }) as Record<string, string>;
+
+  const clip = $derived.by(() => {
+    const match = Object.entries(CLIPS).find(([path]) =>
+      path.endsWith(`/${styleId}.webm`),
+    );
+    return match?.[1] ?? null;
+  });
+
+  /** Flipped once the clip has enough data to show a frame, so it fades in
+   *  over the fallback instead of flashing a black box. */
+  let playable = $state(false);
+
+  // A different style means a different clip: hide the video again until the
+  // new one is ready, or the previous frame lingers over the wrong preview.
+  $effect(() => {
+    void clip;
+    playable = false;
+  });
 
   /** Deterministic per-style bar profile, so a style always looks like itself. */
   const bars = $derived(
@@ -77,6 +108,23 @@
   {/if}
 </div>
 
+{#if clip}
+  <!-- A silent UI animation, so there is nothing to caption. -->
+  <!-- svelte-ignore a11y_media_has_caption -->
+  <video
+    class="clip"
+    class:ready={playable}
+    src={clip}
+    autoplay
+    muted
+    loop
+    playsinline
+    preload="metadata"
+    oncanplay={() => (playable = true)}
+    onerror={() => (playable = false)}
+  ></video>
+{/if}
+
 <style>
   .preview {
     position: absolute;
@@ -90,6 +138,22 @@
   .preview.mono {
     color: #dfe6ee;
     background: none;
+  }
+
+  .clip {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    pointer-events: none;
+  }
+
+  .clip.ready {
+    opacity: 1;
   }
 
   .bars {

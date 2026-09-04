@@ -31,6 +31,7 @@ import OverlayStep from "../../src/lib/Wizard/steps/OverlayStep.svelte";
 import VoiceStep from "../../src/lib/Wizard/steps/VoiceStep.svelte";
 import DoneStep from "../../src/lib/Wizard/steps/DoneStep.svelte";
 import TestStep from "../../src/lib/Wizard/steps/TestStep.svelte";
+import { OVERLAY_STYLES } from "../../src/lib/Wizard/wizard-data";
 
 /** Minimal but complete-enough config for the wizard's reads. */
 function baseConfig(): any {
@@ -487,6 +488,38 @@ describe("OverlayStep", () => {
     let current: any;
     config.subscribe((c) => (current = c))();
     expect(current.ui.show_overlay).toBe(false);
+  });
+});
+
+describe("OverlayPreview", () => {
+  // The clips are resolved from src/assets/overlays at build time. Until they
+  // are added the folder is empty, so every style must still render something
+  // — a black rectangle where a preview should be is worse than no preview.
+  test("falls back to an animation for a style with no clip bundled", async () => {
+    invoke.mockImplementation(async () => undefined);
+    const { container } = render(OverlayStep);
+
+    const thumbs = container.querySelectorAll(".thumb");
+    expect(thumbs.length).toBe(OVERLAY_STYLES.length);
+    for (const thumb of thumbs) {
+      // Either a clip or the CSS fallback, never an empty box.
+      const hasSomething =
+        thumb.querySelector("video") !== null || thumb.querySelector(".preview") !== null;
+      expect(hasSomething).toBe(true);
+    }
+  });
+
+  test("a bundled clip is muted, looping and autoplaying, as a silent UI animation must be", async () => {
+    invoke.mockImplementation(async () => undefined);
+    const { container } = render(OverlayStep);
+
+    for (const video of container.querySelectorAll("video")) {
+      expect(video.hasAttribute("muted") || (video as HTMLVideoElement).muted).toBe(true);
+      expect(video.hasAttribute("loop")).toBe(true);
+      expect(video.hasAttribute("autoplay")).toBe(true);
+      // Hidden until it can actually paint a frame.
+      expect(video.classList.contains("ready")).toBe(false);
+    }
   });
 });
 
