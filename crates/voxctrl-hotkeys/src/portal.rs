@@ -61,6 +61,22 @@ fn group_bindings(bindings: &[HotkeyBinding]) -> Vec<ShortcutGroup> {
     let mut groups: HashMap<String, ShortcutGroup> = HashMap::new();
 
     for b in bindings.iter().filter(|b| !b.disabled && !b.keys.is_empty()) {
+        // A portal shortcut is an exclusive grab. Asking for one on a key the
+        // whole desktop depends on — bare Escape — would mean menus, dialogs
+        // and every other app stop seeing it for as long as VoxCtrl runs, which
+        // is not a trade any shortcut is worth. Leaving the group out here also
+        // makes `sync_kde_shortcuts` prune the registration from KGlobalAccel,
+        // so an install that already grabbed Escape releases it on next start.
+        if crate::trigger::is_reserved_for_the_desktop(&b.keys) {
+            tracing::warn!(
+                "Not registering `{}` ({}) with the desktop: a portal shortcut is an \
+                 exclusive grab, and this key has to stay available to every other app. \
+                 Add a modifier — Ctrl+Escape — to use it on this backend.",
+                if b.label.is_empty() { &b.id } else { &b.label },
+                b.keys.join("+"),
+            );
+            continue;
+        }
         let signature = b.trigger_signature();
         let entry = groups.entry(signature.clone()).or_insert_with(|| {
             order.push(signature.clone());
@@ -605,6 +621,29 @@ mod tests {
         let mut disabled = binding("off", &["KEY_LEFTCTRL", "KEY_D"], GestureType::Hold);
         disabled.disabled = true;
         assert!(group_bindings(&[disabled]).is_empty());
+    }
+
+    #[test]
+    fn bare_escape_is_never_registered_with_the_compositor() {
+        // The compositor grants an *exclusive* grab, so a registered Escape is
+        // an Escape no other application ever receives. Dropping the group here
+        // is what leaves the key alone; on KDE it also makes `sync_kde_shortcuts`
+        // prune a registration an older VoxCtrl already made.
+        let stop = binding("__tts_stop__", &["KEY_ESC"], GestureType::Hold);
+        assert!(group_bindings(&[stop]).is_empty());
+    }
+
+    #[test]
+    fn a_reserved_key_does_not_take_the_rest_of_the_bindings_with_it() {
+        let groups = group_bindings(&[
+            binding("__tts_stop__", &["KEY_ESC"], GestureType::Hold),
+            binding("dictate", &["KEY_LEFTMETA", "KEY_SPACE"], GestureType::Hold),
+            binding("stop", &["KEY_LEFTCTRL", "KEY_ESC"], GestureType::Hold),
+        ]);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].binding_ids, vec!["dictate"]);
+        assert_eq!(groups[1].binding_ids, vec!["stop"]);
+        assert_eq!(groups[1].trigger.as_deref(), Some("CTRL+Escape"));
     }
 
     #[test]

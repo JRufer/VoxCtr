@@ -564,6 +564,38 @@
   let isRecordingStopKey = $state(false);
   let currentlyPressedStopKeys = $state<string[]>([]);
 
+  // Some combinations cannot be a global stop key on the desktop that is
+  // running. Bare Escape is the one that matters here: where the compositor
+  // owns the key grab, registering Escape would take it from every other app —
+  // menus would stop closing — so VoxCtrl declines to register it and says so
+  // here rather than leaving a stop key that quietly never fires. Only shown
+  // when the verdict is binding on this machine; where VoxCtrl watches the
+  // keyboard itself (X11, evdev, Windows) Escape works and there is nothing to
+  // report.
+  let stopKeyNotice = $state<string | null>(null);
+  let stopKeyCheckToken = 0;
+
+  $effect(() => {
+    const keys = [...(cfg.tts.stop_key ?? [])];
+    const token = ++stopKeyCheckToken;
+    if (keys.length === 0) {
+      stopKeyNotice = null;
+      return;
+    }
+    invoke<{ accepted: boolean; enforced: boolean; message: string | null }>(
+      "check_hotkey_keys",
+      { keys },
+    )
+      .then((check) => {
+        if (token !== stopKeyCheckToken) return;
+        stopKeyNotice = check.enforced ? check.message : null;
+      })
+      .catch(() => {
+        if (token !== stopKeyCheckToken) return;
+        stopKeyNotice = null;
+      });
+  });
+
   function mapBrowserKeyToEvdev(key: string, code: string): string {
     const codeUpper = code.toUpperCase();
     if (key === "Control") return "KEY_LEFTCTRL";
@@ -1159,6 +1191,9 @@
           </span>
         {/if}
       </div>
+      {#if stopKeyNotice}
+        <p class="hint" style="margin: 0; color: #fbbf24;">⚠️ {stopKeyNotice}</p>
+      {/if}
     </div>
   </div>
 

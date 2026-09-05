@@ -308,6 +308,64 @@ fn bare_modifiers_are_allowed_where_voxctrl_watches_the_keyboard() {
 }
 
 #[test]
+fn bare_escape_is_refused_where_the_desktop_owns_the_grab() {
+    // Registering Escape with the compositor is an exclusive grab: with it
+    // held, an open menu no longer closes anywhere on the machine. VoxCtrl
+    // declines the shortcut instead, and has to say why — this is the default
+    // TTS stop key, so a user can hit it without ever choosing Escape.
+    let health = voxctrl_hotkeys::ListenerHealth::default();
+    health.set_supported(true);
+    health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+    let check = crate::commands::check_hotkey_keys_with(&["KEY_ESC".to_string()], &health);
+    assert!(!check.accepted);
+    assert!(check.enforced);
+    assert_eq!(check.problem.as_deref(), Some("reserved_key"));
+    let message = check.message.expect("a rejection must explain itself");
+    assert!(message.contains("Escape"), "{message}");
+    assert!(
+        message.contains("Ctrl+Escape"),
+        "the user needs a combination that does work: {message}"
+    );
+}
+
+#[test]
+fn escape_stays_a_stop_key_where_voxctrl_watches_the_keyboard() {
+    // The X11, evdev and Windows backends never grab anything — every app
+    // still receives Escape — so refusing it there would break a stop key
+    // that works, on every OS VoxCtrl runs on.
+    for backend in [
+        voxctrl_hotkeys::Backend::X11,
+        voxctrl_hotkeys::Backend::Evdev,
+        voxctrl_hotkeys::Backend::WindowsHook,
+    ] {
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(backend);
+        health.set_keyboards_open(1);
+
+        let check = crate::commands::check_hotkey_keys_with(&["KEY_ESC".to_string()], &health);
+        assert!(check.accepted, "Escape must stay usable on {backend:?}");
+        assert!(!check.enforced, "nothing is grabbed on {backend:?}");
+    }
+}
+
+#[test]
+fn escape_with_a_modifier_is_accepted_everywhere() {
+    let health = voxctrl_hotkeys::ListenerHealth::default();
+    health.set_supported(true);
+    health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+    let check = crate::commands::check_hotkey_keys_with(
+        &["KEY_LEFTCTRL".to_string(), "KEY_ESC".to_string()],
+        &health,
+    );
+    assert!(check.accepted);
+    assert_eq!(check.accelerator.as_deref(), Some("CTRL+Escape"));
+    assert!(check.problem.is_none());
+}
+
+#[test]
 fn two_regular_keys_are_refused_with_their_own_reason() {
     let health = voxctrl_hotkeys::ListenerHealth::default();
     health.set_supported(true);

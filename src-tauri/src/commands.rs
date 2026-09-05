@@ -1349,10 +1349,31 @@ pub fn check_hotkey_keys_with(
             Some("Keep one regular key and use modifiers for the rest.")
         }
         TriggerProblem::UnsupportedKey(_) => Some("Try a letter, number, function or arrow key."),
+        TriggerProblem::ReservedKey(_) => {
+            Some("Add a modifier — Ctrl+Escape and Super+Escape both work — or pick another key.")
+        }
         TriggerProblem::Empty => None,
     };
 
-    let mut message = if enforced {
+    // A reserved key is not a limit of the desktop's shortcut service; it is a
+    // key VoxCtrl declines to take from the rest of the desktop. Saying "your
+    // desktop cannot register this" would be wrong — it could, and that is the
+    // problem.
+    let mut message = if matches!(problem, TriggerProblem::ReservedKey(_)) {
+        if enforced {
+            format!(
+                "VoxCtrl will not register this shortcut with your desktop: {problem}. \
+                 It would be an exclusive grab."
+            )
+        } else {
+            format!(
+                "This works right now, because VoxCtrl watches the keyboard itself rather \
+                 than asking the desktop to grab keys — every app still sees the key \
+                 normally. On a desktop that hands shortcuts to the compositor VoxCtrl \
+                 leaves this one alone instead: {problem}."
+            )
+        }
+    } else if enforced {
         format!("Your desktop cannot register this shortcut: {problem}.")
     } else {
         format!(
@@ -1378,6 +1399,7 @@ pub fn check_hotkey_keys_with(
                 TriggerProblem::ModifiersOnly => "modifiers_only",
                 TriggerProblem::MultipleKeys => "multiple_keys",
                 TriggerProblem::UnsupportedKey(_) => "unsupported_key",
+                TriggerProblem::ReservedKey(_) => "reserved_key",
             }
             .to_string(),
         ),

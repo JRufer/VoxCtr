@@ -95,6 +95,12 @@ Two shapes are not accelerators, and no desktop can bind them:
 - **Modifiers alone** — a lone Super, or Ctrl+Shift with nothing else. This is the one that catches people out, because "double-tap Super" feels like a perfectly ordinary hotkey.
 - **Two regular keys** — `A+B`. Use modifiers for everything but the last key.
 
+One more shape a desktop *would* bind, and VoxCtrl will not ask it to:
+
+- **Bare Escape.** A registered global shortcut is an **exclusive grab**: the compositor routes that key to VoxCtrl and to nothing else. For a combination you chose for VoxCtrl that is the point. For Escape it never is — Escape is how every program on your machine says "never mind", and an open menu, a dialog or a full-screen video would stop responding to it for as long as VoxCtrl ran. So the portal backend leaves bare Escape unregistered, and the Cinnamon/MATE native-shortcut route skips it for the same reason. `Ctrl+Escape` and `Super+Escape` are registered normally: no other app is listening for those.
+
+  This matters most for `tts.stop_key`, whose default *is* Escape. On the backends where VoxCtrl watches the keys itself — X11, evdev, Windows — nothing is grabbed and Escape still stops playback while every other app keeps receiving it, so the default is untouched there. On a portal desktop, Settings → TTS says the key cannot be registered and suggests adding a modifier.
+
 The key recorder in Settings → Hotkeys **refuses these while you are recording** and says why, rather than saving something that silently never fires. It nudges you as soon as you are holding modifiers with no regular key yet, so you can add one without lifting your fingers, and it shows the accelerator your desktop will receive (`LOGO+space`) once the combination is valid. A refused capture leaves your existing shortcut untouched.
 
 The rule is defined once, in `crates/voxctrl-hotkeys/src/trigger.rs`, and the settings UI validates against it over IPC — so what the recorder accepts and what the portal can register cannot drift apart.
