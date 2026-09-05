@@ -304,6 +304,9 @@ async fn test_inject_target_success_and_failure() {
 
 #[tokio::test]
 async fn test_inject_target_failure_no_injection() {
+    // Probes the environment like its siblings, so it takes the same lock:
+    // observing another test's mock half-installed proves nothing either way.
+    let _env = env_lock().lock().await;
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Inject;
     let target = build_target(config);
@@ -321,22 +324,89 @@ async fn test_clipboard_target_success() {
     // `test` runs, which is exactly how this failed intermittently on headless CI.
     let _env = env_lock().lock().await;
 
+    // The lock is necessary but not sufficient, because the *ambient*
+    // environment is not a fixed thing either: which of the three delivery
+    // paths runs depends on `WAYLAND_DISPLAY`, on what is installed, and — for
+    // the `arboard` fallback — on a display connection that can be there for
+    // one call and not the next. Two probes a moment apart were being asked to
+    // agree about a machine that was free to change its mind in between, and on
+    // a headless runner they sometimes disagreed.
+    //
+    // So the test brings its own environment. What is under test is that
+    // delivery and the reachability probe agree about the same known clipboard,
+    // not what this particular machine happens to have installed.
+    #[cfg(target_os = "linux")]
+    let mock = MockClipboardTool::install();
+
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Clipboard;
     let target = build_target(config);
     let res = target.deliver("Test Clipboard").await;
+    // The mock makes the success path the one that runs here, rather than
+    // whatever this machine happens to support — without this, a mock that
+    // stopped being found would quietly send the test down the `else` branch,
+    // where it asserts almost nothing.
+    #[cfg(target_os = "linux")]
+    assert!(
+        res.success,
+        "the mock clipboard tool should have satisfied delivery: {:?}",
+        res.error
+    );
     if res.success {
         // Clipboard delivery ends its text with one space, exactly like inject:
         // dictation arrives an utterance at a time, and without it the next one
-        // starts flush against this one's last word. This assertion only runs
-        // where a clipboard tool exists, which is why it outlived the change
-        // that introduced the trailing space — a headless machine takes the
-        // `else` branch and never checks the text at all.
+        // starts flush against this one's last word.
         assert_eq!(res.delivered_text.as_deref(), Some("Test Clipboard "));
         let test_res = target.test().await;
-        assert!(test_res.reachable);
+        assert!(
+            test_res.reachable,
+            "delivery worked, so the Test button must not call the clipboard \
+             unreachable: {}",
+            test_res.detail
+        );
     } else {
+        // Only reachable off Linux, where the test installs no mock and the
+        // machine may genuinely have no clipboard.
         assert!(res.error.is_some());
+    }
+
+    #[cfg(target_os = "linux")]
+    drop(mock);
+}
+
+/// A stand-in `wl-copy` on `PATH`, with `WAYLAND_DISPLAY` set so the Linux
+/// clipboard path chooses it. Restores both on drop.
+#[cfg(target_os = "linux")]
+struct MockClipboardTool {
+    _wayland: EnvVarGuard,
+    _path: EnvVarGuard,
+    dir: std::path::PathBuf,
+}
+
+#[cfg(target_os = "linux")]
+impl MockClipboardTool {
+    fn install() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "voxctrl_clipboard_probe_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("wl-copy");
+        // Reads stdin so the delivery side sees the same "consumed the text and
+        // exited 0" it would from the real tool.
+        std::fs::write(&bin, "#!/bin/sh\ncat > /dev/null\nexit 0\n").unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _wayland = EnvVarGuard::set("WAYLAND_DISPLAY", "mock-display");
+        let _path = prepend_to_path(&dir);
+        Self { _wayland, _path, dir }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for MockClipboardTool {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -381,6 +451,7 @@ async fn test_clipboard_target_linux_cli() {
 
 #[tokio::test]
 async fn test_clipboard_target_failure_empty_text() {
+    let _env = env_lock().lock().await;
     let mut config = OutputTarget::default_inject();
     config.delivery = DeliveryType::Clipboard;
     let target = build_target(config);
