@@ -122,96 +122,143 @@ pub fn spawn_text_delivery_worker(
 
 pub fn spawn_hotkey_gesture_handler(
     state_for_gesture: Arc<AppState>,
-    mut gesture_rx: voxctrl_hotkeys::GestureReceiver,
+    gesture_rx: voxctrl_hotkeys::GestureReceiver,
 ) {
     // Notices for the silent failure modes of a fresh install: dictating with
     // an unfinished setup, and recording with a mic stream that never delivers
     // audio. The setup notice repeats (throttled) rather than firing once —
     // a single toast at the very first keypress is easy to miss, and the user
     // will keep pressing the shortcut until something explains itself.
+    //
+    // They live out here so a restarted loop does not start nagging again.
     let last_setup_notice = Arc::new(Mutex::new(None::<std::time::Instant>));
     let mic_notice_shown = Arc::new(AtomicBool::new(false));
+    let gesture_rx = Arc::new(Mutex::new(gesture_rx));
 
+    // Supervised, because every shortcut in the app is delivered by this one
+    // task: a panic anywhere inside it — in a notification, an injection, a
+    // lock — would take every hotkey down with it for the rest of the session,
+    // silently, with the app still running and apparently healthy. That is
+    // indistinguishable from a desktop that stopped delivering shortcuts, and
+    // it is the shape of "my keybind stopped working and a restart fixed it".
     tokio::spawn(async move {
-        while let Some(event) = gesture_rx.recv().await {
-            // TTS stop key: fires on key-down (Start), not release.
-            // Only stop the active Rodio sink — do NOT send None to the worker
-            // channel (that would kill the thread and break all future TTS).
-            if event.binding_id == "__tts_stop__" {
-                if event.kind == GestureKind::Start {
-                    // Use the handle's stop() (not the raw stop_current_playback())
-                    // so the generation counter is bumped too — otherwise a
-                    // streaming engine like Pocket-TTS keeps appending the
-                    // frames it already had in flight and audio resumes.
-                    if let Some(tts) = state_for_gesture.tts_handle.lock().await.as_ref() {
-                        tts.stop();
-                    }
+        loop {
+            let task = tokio::spawn(run_gesture_loop(
+                state_for_gesture.clone(),
+                gesture_rx.clone(),
+                last_setup_notice.clone(),
+                mic_notice_shown.clone(),
+            ));
+            match task.await {
+                Ok(()) => {
+                    tracing::warn!(
+                        "Hotkey gesture loop ended: the listener's channel closed. No \
+                         shortcut can fire until VoxCtrl is restarted."
+                    );
+                    return;
                 }
-                continue;
-            }
-
-            match event.kind {
-                GestureKind::Start => {
-                    // Drop gestures while the keybind recorder is open. The user
-                    // is pressing keys to configure a new binding — acting on them
-                    // would start an unwanted dictation session mid-setup.
-                    if state_for_gesture.is_hotkeys_inhibited() {
-                        tracing::debug!(
-                            "Hotkey '{}' gesture suppressed: keybind recorder is active",
-                            event.binding_id
-                        );
-                        continue;
-                    }
-
-                    *state_for_gesture.active_target.lock().await = event.target_id.clone();
-                    *state_for_gesture.active_binding_label.lock().await =
-                        event.binding_label.clone();
-                    *state_for_gesture.active_binding_id.lock().await = event.binding_id.clone();
-                    state_for_gesture.begin_recording().await;
-
-                    // The user just tried to dictate. If the install is not
-                    // finished, say so now — otherwise the shortcut records
-                    // audio that can never become text, which reads as
-                    // "VoxCtrl is broken" rather than "setup is incomplete".
-                    if let Some(msg) = setup_blocker(&state_for_gesture).await {
-                        let now = std::time::Instant::now();
-                        let stale = {
-                            let last = last_setup_notice.lock().await;
-                            last.map(|t: std::time::Instant| {
-                                now.duration_since(t) > SETUP_NOTICE_INTERVAL
-                            })
-                            .unwrap_or(true)
-                        };
-                        if stale {
-                            *last_setup_notice.lock().await = Some(now);
-                            voxctrl_inject::show_notification("VoxCtrl — setup unfinished", &msg);
-                            show_setup_window();
-                        }
-                    }
-
-                    // Warn if the microphone stream never comes up while the
-                    // user is recording (dead input device, audio stack issue).
-                    let st = state_for_gesture.clone();
-                    let mic_shown = mic_notice_shown.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
-                        if st.is_recording()
-                            && !st.is_audio_ready()
-                            && !mic_shown.swap(true, Ordering::SeqCst)
-                        {
-                            voxctrl_inject::show_notification(
-                                "VoxCtrl",
-                                "Recording is active but no microphone audio is arriving. Check the input device in Settings → Audio.",
-                            );
-                        }
-                    });
+                Err(e) if e.is_panic() => {
+                    tracing::error!(
+                        "Hotkey gesture loop panicked ({e}); restarting it so shortcuts \
+                         keep working. Please report this with the backtrace above."
+                    );
                 }
-                GestureKind::Stop => {
-                    state_for_gesture.set_recording(false);
+                Err(e) => {
+                    tracing::warn!("Hotkey gesture loop stopped: {e}");
+                    return;
                 }
             }
         }
     });
+}
+
+async fn run_gesture_loop(
+    state_for_gesture: Arc<AppState>,
+    gesture_rx: Arc<Mutex<voxctrl_hotkeys::GestureReceiver>>,
+    last_setup_notice: Arc<Mutex<Option<std::time::Instant>>>,
+    mic_notice_shown: Arc<AtomicBool>,
+) {
+    // Held for the life of the loop; a restart takes it back and carries on
+    // with whatever the listener queued in between.
+    let mut gesture_rx = gesture_rx.lock().await;
+    while let Some(event) = gesture_rx.recv().await {
+        // TTS stop key: fires on key-down (Start), not release.
+        // Only stop the active Rodio sink — do NOT send None to the worker
+        // channel (that would kill the thread and break all future TTS).
+        if event.binding_id == voxctrl_routing::TTS_STOP_BINDING_ID {
+            if event.kind == GestureKind::Start {
+                // Use the handle's stop() (not the raw stop_current_playback())
+                // so the generation counter is bumped too — otherwise a
+                // streaming engine like Pocket-TTS keeps appending the
+                // frames it already had in flight and audio resumes.
+                if let Some(tts) = state_for_gesture.tts_handle.lock().await.as_ref() {
+                    tts.stop();
+                }
+            }
+            continue;
+        }
+
+        match event.kind {
+            GestureKind::Start => {
+                // Drop gestures while the keybind recorder is open. The user
+                // is pressing keys to configure a new binding — acting on them
+                // would start an unwanted dictation session mid-setup.
+                if state_for_gesture.is_hotkeys_inhibited() {
+                    tracing::debug!(
+                        "Hotkey '{}' gesture suppressed: keybind recorder is active",
+                        event.binding_id
+                    );
+                    continue;
+                }
+
+                *state_for_gesture.active_target.lock().await = event.target_id.clone();
+                *state_for_gesture.active_binding_label.lock().await =
+                    event.binding_label.clone();
+                *state_for_gesture.active_binding_id.lock().await = event.binding_id.clone();
+                state_for_gesture.begin_recording().await;
+
+                // The user just tried to dictate. If the install is not
+                // finished, say so now — otherwise the shortcut records
+                // audio that can never become text, which reads as
+                // "VoxCtrl is broken" rather than "setup is incomplete".
+                if let Some(msg) = setup_blocker(&state_for_gesture).await {
+                    let now = std::time::Instant::now();
+                    let stale = {
+                        let last = last_setup_notice.lock().await;
+                        last.map(|t: std::time::Instant| {
+                            now.duration_since(t) > SETUP_NOTICE_INTERVAL
+                        })
+                        .unwrap_or(true)
+                    };
+                    if stale {
+                        *last_setup_notice.lock().await = Some(now);
+                        voxctrl_inject::show_notification("VoxCtrl — setup unfinished", &msg);
+                        show_setup_window();
+                    }
+                }
+
+                // Warn if the microphone stream never comes up while the
+                // user is recording (dead input device, audio stack issue).
+                let st = state_for_gesture.clone();
+                let mic_shown = mic_notice_shown.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    if st.is_recording()
+                        && !st.is_audio_ready()
+                        && !mic_shown.swap(true, Ordering::SeqCst)
+                    {
+                        voxctrl_inject::show_notification(
+                            "VoxCtrl",
+                            "Recording is active but no microphone audio is arriving. Check the input device in Settings → Audio.",
+                        );
+                    }
+                });
+            }
+            GestureKind::Stop => {
+                state_for_gesture.set_recording(false);
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]

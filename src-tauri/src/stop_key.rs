@@ -31,8 +31,10 @@ use voxctrl_routing::{GestureType, HotkeyBinding};
 
 use crate::state::AppState;
 
-/// The synthetic binding id the gesture handler matches on.
-pub const STOP_BINDING_ID: &str = "__tts_stop__";
+/// The synthetic binding id the gesture handler matches on. Defined in
+/// `voxctrl-routing` because the portal backend needs it too: it tells the one
+/// shortcut VoxCtrl may hold transiently from a binding the user chose.
+pub use voxctrl_routing::TTS_STOP_BINDING_ID as STOP_BINDING_ID;
 
 /// How long the grab is kept after playback stops.
 ///
@@ -53,7 +55,8 @@ const TICK: Duration = Duration::from_millis(500);
 /// How long VoxCtrl may hold the stop key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopKeyGrab {
-    /// No stop key is configured; there is nothing to register.
+    /// Nothing is registered: no stop key is configured, or one that would need
+    /// arming is switched off with `VOXCTRL_STOP_KEY_ARMING=0`.
     None,
     /// Registered for the whole session. Either VoxCtrl is watching the keys
     /// itself and grabs nothing, or the combination is one no other app is
@@ -62,6 +65,21 @@ pub enum StopKeyGrab {
     /// Registered only while VoxCtrl speaks, because a standing grab would take
     /// the key from the rest of the desktop.
     WhileSpeaking,
+}
+
+/// Set `VOXCTRL_STOP_KEY_ARMING=0` to switch the arming off.
+///
+/// Taking and giving back a shortcut means creating and closing portal sessions
+/// while the app runs, and how a compositor reacts to that is its own business.
+/// Where it goes wrong the cost lands on the user's other shortcuts, so there
+/// has to be a way to stand the whole mechanism down without a rebuild: with
+/// this set, a stop key that would need arming is simply never registered, and
+/// a stop key with a modifier keeps working as it always has.
+fn arming_disabled() -> bool {
+    matches!(
+        std::env::var("VOXCTRL_STOP_KEY_ARMING").as_deref(),
+        Ok("0") | Ok("false") | Ok("no")
+    )
 }
 
 /// How long VoxCtrl may hold `stop_key` on the backend that is running.
@@ -84,6 +102,14 @@ pub fn stop_key_grab(backend: Backend, stop_key: &[String]) -> StopKeyGrab {
     // nothing, and waiting would cost the user a stop key that works.
     if backend == Backend::Starting && !cfg!(target_os = "linux") {
         return StopKeyGrab::Always;
+    }
+
+    if arming_disabled() {
+        tracing::debug!(
+            "VOXCTRL_STOP_KEY_ARMING is off: leaving the stop key unregistered rather \
+             than taking it for playback"
+        );
+        return StopKeyGrab::None;
     }
 
     // Portal, Mint, and — on Linux — a listener still deciding.
@@ -138,11 +164,40 @@ pub async fn listener_bindings(state: &AppState, saved: Vec<HotkeyBinding>) -> V
     all
 }
 
-/// The saved bindings, read from disk, plus the stop key when it is held.
-pub async fn listener_bindings_from_disk(state: &AppState) -> Vec<HotkeyBinding> {
+/// Is this a set worth handing the listener?
+///
+/// `load_bindings` answers a missing file with VoxCtrl's own defaults, so a
+/// successful read is never empty. An empty set therefore means the read
+/// failed — an unparseable file, a torn read of one being saved right now — and
+/// handing it over would unregister every shortcut the user has, with no way
+/// back but a restart. Reloading is always optional; keeping what is already
+/// registered is the safe answer.
+pub fn is_usable(saved: &[HotkeyBinding]) -> bool {
+    !saved.is_empty()
+}
+
+/// The saved bindings plus the stop key, or `None` when the saved bindings
+/// could not be read and the listener should keep what it has.
+pub async fn listener_bindings_from_disk(state: &AppState) -> Option<Vec<HotkeyBinding>> {
     let dir = voxctrl_routing::config_dir();
-    let saved = voxctrl_routing::load_bindings(&dir).unwrap_or_default();
-    listener_bindings(state, saved).await
+    let saved = match voxctrl_routing::load_bindings(&dir) {
+        Ok(saved) => saved,
+        Err(e) => {
+            tracing::warn!(
+                "Could not read the saved shortcuts ({e}); leaving the ones already \
+                 registered alone rather than unregistering them"
+            );
+            return None;
+        }
+    };
+    if !is_usable(&saved) {
+        tracing::warn!(
+            "The saved shortcuts read back empty, which only happens when the read \
+             failed; leaving the ones already registered alone"
+        );
+        return None;
+    }
+    Some(listener_bindings(state, saved).await)
 }
 
 /// Start the task that takes the stop key and gives it back.
@@ -204,9 +259,12 @@ pub fn spawn(state: Arc<AppState>) {
                 continue;
             }
 
-            let bindings = {
-                state.stop_key_held.store(wanted, Ordering::SeqCst);
-                listener_bindings_from_disk(&state).await
+            state.stop_key_held.store(wanted, Ordering::SeqCst);
+            let Some(bindings) = listener_bindings_from_disk(&state).await else {
+                // Nothing to hand over that would not cost the user their
+                // shortcuts. Try again on the next tick.
+                state.stop_key_held.store(held, Ordering::SeqCst);
+                continue;
             };
             let reloader = state.hotkey_reloader.lock().await;
             let Some(reloader) = reloader.as_ref() else {
@@ -214,11 +272,16 @@ pub fn spawn(state: Arc<AppState>) {
                 state.stop_key_held.store(held, Ordering::SeqCst);
                 continue;
             };
+            let count = bindings.len();
             match reloader.send(bindings) {
                 Ok(()) => {
                     held = wanted;
-                    tracing::debug!(
-                        "TTS stop key {} ({grab:?})",
+                    // Info rather than debug: when a shortcut stops working
+                    // after playback, this line and the portal's own reload log
+                    // are what say whether VoxCtrl asked for the wrong thing or
+                    // the desktop stopped delivering what it was asked for.
+                    tracing::info!(
+                        "TTS stop key {} ({grab:?}); listener now has {count} binding(s)",
                         if wanted { "registered" } else { "released" }
                     );
                 }
@@ -301,6 +364,42 @@ mod tests {
         let grab = stop_key_grab(Backend::Portal, &[]);
         assert_eq!(grab, StopKeyGrab::None);
         assert!(!stop_key_wanted(grab, true));
+    }
+
+    #[test]
+    fn the_arming_switch_stands_the_whole_mechanism_down() {
+        // The escape hatch for a compositor that mishandles a session closing.
+        // With it set, nothing is taken and nothing is given back — the stop key
+        // on bare Escape is simply not registered, and a modified one is
+        // untouched, because it never needed arming.
+        let escape = keys(&["KEY_ESC"]);
+        let ctrl_escape = keys(&["KEY_LEFTCTRL", "KEY_ESC"]);
+
+        // SAFETY: single-threaded test, and the variable is read nowhere else.
+        unsafe { std::env::set_var("VOXCTRL_STOP_KEY_ARMING", "0") };
+        assert_eq!(stop_key_grab(Backend::Portal, &escape), StopKeyGrab::None);
+        assert_eq!(
+            stop_key_grab(Backend::Portal, &ctrl_escape),
+            StopKeyGrab::Always
+        );
+        // And where nothing is grabbed in the first place, it changes nothing.
+        assert_eq!(stop_key_grab(Backend::X11, &escape), StopKeyGrab::Always);
+
+        unsafe { std::env::remove_var("VOXCTRL_STOP_KEY_ARMING") };
+        assert_eq!(
+            stop_key_grab(Backend::Portal, &escape),
+            StopKeyGrab::WhileSpeaking
+        );
+    }
+
+    #[test]
+    fn an_empty_binding_set_is_never_handed_to_the_listener() {
+        // `load_bindings` answers a missing file with VoxCtrl's defaults, so an
+        // empty read is a failed read. Passing it on would unregister every
+        // shortcut the user has — dictation included — and nothing short of a
+        // restart would bring them back.
+        assert!(!is_usable(&[]));
+        assert!(is_usable(&[stop_binding(keys(&["KEY_ESC"]))]));
     }
 
     #[test]

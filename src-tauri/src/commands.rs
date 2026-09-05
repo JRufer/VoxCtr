@@ -154,10 +154,13 @@ pub async fn save_config(
     // back out of it.
     drop(guard);
     if stop_key_changed {
-        let bindings = crate::stop_key::listener_bindings_from_disk(&state).await;
-        let reloader_guard = state.hotkey_reloader.lock().await;
-        if let Some(reloader) = &*reloader_guard {
-            let _ = reloader.send(bindings);
+        // A set that could not be read is not worth reloading: the listener
+        // keeps the shortcuts it already has instead of losing all of them.
+        if let Some(bindings) = crate::stop_key::listener_bindings_from_disk(&state).await {
+            let reloader_guard = state.hotkey_reloader.lock().await;
+            if let Some(reloader) = &*reloader_guard {
+                let _ = reloader.send(bindings);
+            }
         }
     }
 
@@ -1169,7 +1172,11 @@ pub async fn open_shortcut_settings() -> Result<(), String> {
 pub async fn retry_portal_shortcuts(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        let bindings = crate::stop_key::listener_bindings_from_disk(&state).await;
+        let Some(bindings) = crate::stop_key::listener_bindings_from_disk(&state).await else {
+            return Err("Could not read your saved shortcuts, so there is nothing to \
+                        register. Check the log for what went wrong reading bindings.toml."
+                .to_string());
+        };
 
         let gesture_tx = {
             let gtx_guard = state.hotkey_gesture_tx.lock().await;
