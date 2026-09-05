@@ -127,6 +127,8 @@ Two consequences worth knowing:
 - **The first fraction of a second of playback may not be interruptible** on the portal backend, because the grab is established as audio starts. Consecutive utterances stay armed, so this is only ever the first one after a quiet stretch.
 - **KDE's shortcut store is left out of it.** The KDE housekeeping — pruning ids VoxCtrl no longer registers, syncing display names into `~/.config/kglobalshortcutsrc` — runs only when the standing set changes, never on an arm or release: nothing the user configured has changed, and rewriting their shortcut store every time VoxCtrl speaks would be pure churn. A transiently-bound id is also exempt from pruning, because KDE keys your "enabled" tick to that id and dropping it would make the next arm register a fresh, disabled shortcut ([bugs.kde.org #483639](https://bugs.kde.org/show_bug.cgi?id=483639)) that never fires.
 
+If any of this goes wrong on a particular compositor, `VOXCTRL_STOP_KEY_ARMING=0` stands the whole mechanism down: a stop key that would need arming is simply never registered (use `Ctrl+Escape` instead), and no session is created or closed while the app runs.
+
 A *dictation* binding on bare Escape is a different matter: those are held for the whole session, so the recorder accepts one and warns you what it costs, rather than silently taking Escape from your desktop.
 
 #### If the portal refuses the session

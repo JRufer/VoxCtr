@@ -599,10 +599,24 @@ async fn run(
             // spinning on the reload poll while reporting itself healthy.
             event = activated.next() => {
                 let Some(event) = event else { break };
-                if let Some(ids) = by_shortcut.get(event.shortcut_id()) {
-                    for id in ids {
-                        engine.apply(id, Transition::Activated, &tx);
+                match by_shortcut.get(event.shortcut_id()) {
+                    Some(ids) => {
+                        tracing::debug!(
+                            "portal hotkeys: `{}` fired ({})",
+                            event.shortcut_id(),
+                            ids.join(", ")
+                        );
+                        for id in ids {
+                            engine.apply(id, Transition::Activated, &tx);
+                        }
                     }
+                    // The compositor is delivering a shortcut VoxCtrl no longer
+                    // knows about — worth saying, because the mirror image
+                    // (a shortcut that stops arriving) looks identical from here.
+                    None => tracing::debug!(
+                        "portal hotkeys: `{}` fired but matches no binding",
+                        event.shortcut_id()
+                    ),
                 }
             }
             event = deactivated.next() => {
@@ -626,6 +640,18 @@ async fn run(
             new_bindings = next_reload(&rx_reload) => {
                 let Some(new_bindings) = new_bindings else { break };
                 tracing::info!("portal hotkeys: reloading {} bindings", new_bindings.len());
+                if new_bindings.is_empty() {
+                    // Nothing upstream should ever send this: it would ask the
+                    // compositor to forget every shortcut VoxCtrl has, and only
+                    // a restart would bring them back. Refusing costs nothing —
+                    // a genuine "no shortcuts" state is indistinguishable from a
+                    // failed read, and the second is the likely one.
+                    tracing::warn!(
+                        "portal hotkeys: ignoring an empty binding set; keeping the \
+                         shortcuts already registered"
+                    );
+                    continue;
+                }
                 let (new_standing, new_transient) = split_groups(group_bindings(&new_bindings));
                 let standing_changed = !same_groups(&new_standing, &groups);
                 let transient_changed = !same_groups(&new_transient, &transient_groups);
@@ -644,11 +670,24 @@ async fn run(
                 if standing_changed {
                     // Sessions allow `bind_shortcuts` exactly once, so a real
                     // change to the user's bindings needs a new one.
+                    tracing::info!(
+                        "portal hotkeys: the standing shortcuts changed ({} now), \
+                         re-creating their session",
+                        groups.len()
+                    );
                     let known = [groups.clone(), transient_groups.clone()].concat();
                     match rebind(&portal, &groups, Some(&known)).await {
                         Ok((new_session, bound)) => {
                             let _ = session.close().await;
                             session = new_session;
+                            for s in &bound {
+                                tracing::info!(
+                                    "portal hotkeys: `{}` bound={} as `{}`",
+                                    s.binding_ids.join(", "),
+                                    s.bound,
+                                    s.trigger_description
+                                );
+                            }
                             health.set_bound_shortcuts(bound);
                         }
                         Err(e) => tracing::warn!("Re-binding portal shortcuts failed: {e}"),
@@ -663,12 +702,24 @@ async fn run(
                     if let Some(old) = transient_session.take() {
                         let _ = old.close().await;
                     }
-                    if !transient_groups.is_empty() {
+                    if transient_groups.is_empty() {
+                        tracing::info!(
+                            "portal hotkeys: released the stop key; the standing session \
+                             was not touched"
+                        );
+                    } else {
                         // No KDE housekeeping here: nothing the user configured
                         // has changed, and rewriting their shortcut store every
                         // time VoxCtrl speaks would be pure churn.
                         match rebind(&portal, &transient_groups, None).await {
-                            Ok((session, _)) => transient_session = Some(session),
+                            Ok((session, bound)) => {
+                                transient_session = Some(session);
+                                tracing::info!(
+                                    "portal hotkeys: took the stop key on its own session \
+                                     ({} bound)",
+                                    bound.iter().filter(|s| s.bound).count()
+                                );
+                            }
                             Err(e) => tracing::warn!("Could not register the stop key: {e}"),
                         }
                     }
