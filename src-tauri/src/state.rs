@@ -161,6 +161,27 @@ impl AppState {
         self.gain.store(v.to_bits(), Ordering::SeqCst);
     }
 
+    /// Start capturing, and stop anything VoxCtrl is saying while it does.
+    ///
+    /// Every path that starts dictation goes through this rather than
+    /// `set_recording(true)`: the hotkey gesture, the settings window, the D-Bus
+    /// service a desktop shortcut pokes, and MCP voice capture. A user who
+    /// starts talking over a spoken response means to interrupt it — and
+    /// capturing while the speakers are still going also feeds VoxCtrl's own
+    /// voice back into the microphone.
+    ///
+    /// `TtsEngineHandle::stop` rather than the raw sink stop, so the generation
+    /// counter is bumped: a streaming engine would otherwise keep appending the
+    /// frames it already had in flight and pick the sentence back up.
+    pub async fn begin_recording(&self) {
+        if let Some(tts) = self.tts_handle.lock().await.as_ref() {
+            tts.stop();
+        }
+        self.set_recording(true);
+    }
+
+    /// Prefer `begin_recording` to start dictation — it also interrupts
+    /// playback. This is the plain flag, and the only way to clear it.
     pub fn set_recording(&self, v: bool) {
         self.recording.store(v, Ordering::SeqCst);
         if !v {

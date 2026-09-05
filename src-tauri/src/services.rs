@@ -22,8 +22,8 @@ impl McpCallbacks for AppState {
 
             self.set_mcp_recording(true);
 
-            // Start recording.
-            self.set_recording(true);
+            // Start recording, interrupting any response being spoken.
+            self.begin_recording().await;
 
             // Spawn a timer to automatically stop recording after timeout_secs.
             let recording = self.recording.clone();
@@ -123,7 +123,7 @@ pub fn start_dbus_service(app_state: Arc<AppState>) {
                     // shortcut would dictate into the default target no matter
                     // which one the user pressed.
                     apply_dbus_binding(&app_state_dbus, &binding_id).await;
-                    app_state_dbus.set_recording(true);
+                    app_state_dbus.begin_recording().await;
                     let mut st = dbus_state_clone.lock().await;
                     st.status = voxctrl_dbus::DictationStatus::Recording;
                 }

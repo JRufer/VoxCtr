@@ -55,7 +55,7 @@ pub struct StatusPayload {
 #[tauri::command]
 pub async fn start_recording(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     *state.active_binding_id.lock().await = String::new();
-    state.set_recording(true);
+    state.begin_recording().await;
     info!("Recording started via command");
     Ok(())
 }
