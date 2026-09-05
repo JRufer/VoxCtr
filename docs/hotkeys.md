@@ -95,17 +95,35 @@ Two shapes are not accelerators, and no desktop can bind them:
 - **Modifiers alone** — a lone Super, or Ctrl+Shift with nothing else. This is the one that catches people out, because "double-tap Super" feels like a perfectly ordinary hotkey.
 - **Two regular keys** — `A+B`. Use modifiers for everything but the last key.
 
-One more shape a desktop *would* bind, and VoxCtrl will not ask it to:
-
-- **Bare Escape.** A registered global shortcut is an **exclusive grab**: the compositor routes that key to VoxCtrl and to nothing else. For a combination you chose for VoxCtrl that is the point. For Escape it never is — Escape is how every program on your machine says "never mind", and an open menu, a dialog or a full-screen video would stop responding to it for as long as VoxCtrl ran. So the portal backend leaves bare Escape unregistered, and the Cinnamon/MATE native-shortcut route skips it for the same reason. `Ctrl+Escape` and `Super+Escape` are registered normally: no other app is listening for those.
-
-  This matters most for `tts.stop_key`, whose default *is* Escape. On the backends where VoxCtrl watches the keys itself — X11, evdev, Windows — nothing is grabbed and Escape still stops playback while every other app keeps receiving it, so the default is untouched there. On a portal desktop, Settings → TTS says the key cannot be registered and suggests adding a modifier.
-
 The key recorder in Settings → Hotkeys **refuses these while you are recording** and says why, rather than saving something that silently never fires. It nudges you as soon as you are holding modifiers with no regular key yet, so you can add one without lifting your fingers, and it shows the accelerator your desktop will receive (`LOGO+space`) once the combination is valid. A refused capture leaves your existing shortcut untouched.
 
 The rule is defined once, in `crates/voxctrl-hotkeys/src/trigger.rs`, and the settings UI validates against it over IPC — so what the recorder accepts and what the portal can register cannot drift apart.
 
 On the X11 and evdev backends and on Windows, VoxCtrl watches the keys itself and a bare modifier genuinely works. There the recorder accepts it and shows a note that it will stop working if shortcut delivery ever moves to the portal, rather than blocking something that works on your machine today.
+
+#### Bare Escape and the exclusive grab
+
+A registered global shortcut is an **exclusive grab**: the compositor routes that key to VoxCtrl and to nothing else. For a combination you chose for VoxCtrl that is the point. For bare Escape it is not — Escape is how every program on your machine says "never mind", and it is the default `tts.stop_key`, so a user who never picked it would lose it desktop-wide: an open menu would stop closing, a dialog would stop cancelling, for as long as VoxCtrl ran.
+
+Re-emitting the key does not fix this, and VoxCtrl does not try. A synthetic press enters the same input pipeline the grab sits on, so the compositor intercepts it again — the key never reaches the focused app, and VoxCtrl's own shortcut fires in a loop instead. Injecting *below* the compositor means uinput, which needs exactly the keyboard access VoxCtrl refuses to arrange (see [Why this changed](#why-this-changed)), and Wayland gives one client no way to deliver a key to another at all.
+
+What VoxCtrl does instead is hold the grab **only while it is speaking**. `src-tauri/src/stop_key.rs` decides:
+
+| Situation | Grab |
+| --- | --- |
+| No stop key configured | `None` — nothing is registered |
+| Stop key has a modifier (`Ctrl+Escape`) | `Always` — nothing else is listening for it |
+| Backend watches the keys itself (X11, evdev, Windows) | `Always` — nothing is grabbed, every app still receives Escape |
+| Bare Escape, desktop owns the grab (portal, Mint, still starting) | `WhileSpeaking` |
+
+Under `WhileSpeaking` the binding is added to the listener when playback starts and dropped again two seconds after it ends — long enough that the gaps inside one spoken response do not each cost a re-registration, short enough that Escape is yours again almost immediately. The arbiter never re-registers while a dictation gesture is active, because a reload restarts the listener's gesture engine and would drop the recording.
+
+Two consequences worth knowing:
+
+- **The first fraction of a second of playback may not be interruptible** on the portal backend, because the grab is established as audio starts. Consecutive utterances stay armed, so this is only ever the first one after a quiet stretch.
+- **KDE's shortcut store is protected from the churn.** `sync_kde_shortcuts` prunes ids VoxCtrl no longer registers; a transiently-bound id is exempt, because KDE keys your "enabled" tick to that id and pruning it would make the next arm register a fresh, disabled shortcut ([bugs.kde.org #483639](https://bugs.kde.org/show_bug.cgi?id=483639)) that never fires.
+
+A *dictation* binding on bare Escape is a different matter: those are held for the whole session, so the recorder accepts one and warns you what it costs, rather than silently taking Escape from your desktop.
 
 #### If the portal refuses the session
 

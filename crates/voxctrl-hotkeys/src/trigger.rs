@@ -26,11 +26,6 @@ pub enum TriggerProblem {
     MultipleKeys,
     /// A key with no keysym equivalent in the shortcuts specification.
     UnsupportedKey(String),
-    /// The key belongs to the desktop, not to any one app. Registering it as a
-    /// global shortcut is an *exclusive* grab: the compositor would route it to
-    /// VoxCtrl and to nobody else, so nothing else on the machine would ever see
-    /// it again. Carries the key's human name.
-    ReservedKey(String),
 }
 
 impl std::fmt::Display for TriggerProblem {
@@ -50,12 +45,6 @@ impl std::fmt::Display for TriggerProblem {
                 f,
                 "{} has no equivalent in the desktop shortcut specification",
                 k.trim_start_matches("KEY_")
-            ),
-            Self::ReservedKey(k) => write!(
-                f,
-                "{k} on its own belongs to whatever you are looking at — a global \
-                 shortcut on it would be an exclusive grab, and no other app would \
-                 see {k} again while VoxCtrl is running"
             ),
         }
     }
@@ -95,11 +84,6 @@ pub fn accelerator(keys: &[String]) -> Result<String, TriggerProblem> {
     }
 
     let key = key.ok_or(TriggerProblem::ModifiersOnly)?;
-    if modifiers.is_empty() {
-        if let Some(name) = reserved_bare_key(&key) {
-            return Err(TriggerProblem::ReservedKey(name.to_string()));
-        }
-    }
     // Canonical order, so the same combo always produces the same string.
     let mut parts: Vec<&str> = Vec::new();
     for m in ["CTRL", "ALT", "SHIFT", "LOGO"] {
@@ -187,7 +171,8 @@ fn keysym_name(key: &str) -> Option<String> {
     Some(sym)
 }
 
-/// Keys that may never be handed to a desktop as a bare, unmodified shortcut.
+/// Keys VoxCtrl will not hold a *standing* grab on, in every spelling a saved
+/// config might use.
 ///
 /// Registering a global shortcut — through the XDG shortcuts portal, or through
 /// Cinnamon's own keybinding settings — asks the desktop for an *exclusive*
@@ -196,30 +181,30 @@ fn keysym_name(key: &str) -> Option<String> {
 /// underneath is never told the key was pressed. For a combination the user
 /// deliberately reserved for VoxCtrl (Super+Space, Ctrl+Alt+D) that is exactly
 /// what they asked for. For Escape it never is — Escape is how every program on
-/// the machine says "never mind", and VoxCtrl's default TTS stop key, so users
-/// who never picked it would silently lose it desktop-wide.
+/// the machine says "never mind", and it is VoxCtrl's default TTS stop key, so
+/// users who never picked it would lose it desktop-wide.
 ///
-/// The restriction is on *bare* Escape only. `CTRL+Escape` grabs a combination
-/// nothing else is listening for and stays available.
+/// The app answers this by holding the grab only for the seconds it is actually
+/// speaking (`stop_key::StopKeyGrab::WhileSpeaking`), so Escape interrupts
+/// playback and belongs to the rest of the desktop the rest of the time. This
+/// list is what marks a key as needing that treatment.
 ///
-/// This says nothing about the backends where VoxCtrl watches the key stream
-/// itself (X11 raw events, evdev, the Windows hook). Those never grab anything —
-/// the keystroke reaches its application either way — so Escape keeps working
-/// as a stop key there and this rule never comes up.
-fn reserved_bare_key(keysym: &str) -> Option<&'static str> {
-    match keysym {
-        "Escape" => Some("Escape"),
-        _ => None,
-    }
-}
+/// Both spellings are here on purpose: the Rust config canonicalises to
+/// `KEY_ESC`, but a config written by an older build — or by the frontend's own
+/// default — can still say `KEY_ESCAPE`.
+pub const RESERVED_KEYS: &[&str] = &["KEY_ESC", "KEY_ESCAPE"];
 
-/// Would binding these keys as a desktop shortcut take a key the rest of the
-/// desktop needs?
+/// Would a standing grab on these keys take something the rest of the desktop
+/// needs?
 ///
-/// The portal backend filters these out instead of registering them, which is
-/// what keeps the compositor from swallowing Escape system-wide.
+/// Only bare, unmodified combinations count. `Ctrl+Escape` grabs a combination
+/// nothing else is listening for, so it is an ordinary shortcut and is
+/// registered for the life of the process like any other.
 pub fn is_reserved_for_the_desktop(keys: &[String]) -> bool {
-    matches!(accelerator(keys), Err(TriggerProblem::ReservedKey(_)))
+    !keys.is_empty()
+        && keys
+            .iter()
+            .all(|k| RESERVED_KEYS.contains(&k.to_ascii_uppercase().as_str()))
 }
 
 /// True for a key that only ever acts as a modifier, so it cannot be the one
@@ -284,24 +269,21 @@ mod tests {
     }
 
     #[test]
-    fn bare_escape_is_never_offered_to_a_desktop_to_grab() {
-        // The bug this pins: registering Escape as a global shortcut is an
-        // exclusive grab, so every other app stops seeing it — an open menu
-        // will not close, a dialog will not cancel — for as long as VoxCtrl
-        // runs. Escape is also the default TTS stop key, so this hit users who
-        // never chose it.
-        assert_eq!(
-            accelerator(&keys(&["KEY_ESC"])),
-            Err(TriggerProblem::ReservedKey("Escape".to_string()))
-        );
+    fn bare_escape_is_a_valid_accelerator_that_may_only_be_held_transiently() {
+        // Escape *is* something a desktop can bind, and VoxCtrl does bind it —
+        // that is how the stop key interrupts playback. What it must not do is
+        // hold the grab while it is not speaking, because the grab is exclusive
+        // and an open menu would stop closing anywhere on the machine.
+        assert_eq!(accelerator(&keys(&["KEY_ESC"])).unwrap(), "Escape");
         assert!(is_reserved_for_the_desktop(&keys(&["KEY_ESC"])));
         assert!(is_reserved_for_the_desktop(&keys(&["KEY_ESCAPE"])));
     }
 
     #[test]
-    fn escape_with_a_modifier_is_still_a_shortcut_anyone_can_bind() {
+    fn escape_with_a_modifier_is_an_ordinary_shortcut() {
         // Ctrl+Escape takes nothing from the desktop: no app is listening for
-        // the combination, so the user keeps a working stop key.
+        // the combination, so it is registered for the life of the process and
+        // needs none of the arming machinery.
         assert_eq!(
             accelerator(&keys(&["KEY_LEFTCTRL", "KEY_ESC"])).unwrap(),
             "CTRL+Escape"
@@ -316,15 +298,16 @@ mod tests {
 
     #[test]
     fn only_escape_is_reserved() {
-        // The rule is deliberately one key wide. A bare F5 or a bare Space is
-        // a combination the user picked on purpose, and refusing to bind it
-        // would break setups that work today.
+        // The rule is deliberately one key wide. A bare F5 or a bare Space is a
+        // combination the user picked on purpose, and taking it back between
+        // utterances would break setups that work today.
         for k in ["KEY_F5", "KEY_SPACE", "KEY_A", "KEY_TAB", "KEY_ENTER"] {
             assert!(
                 !is_reserved_for_the_desktop(&keys(&[k])),
-                "{k} must still be bindable"
+                "{k} must stay an ordinary standing shortcut"
             );
         }
+        assert!(!is_reserved_for_the_desktop(&[]));
     }
 
     #[test]

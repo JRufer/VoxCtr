@@ -61,22 +61,6 @@ fn group_bindings(bindings: &[HotkeyBinding]) -> Vec<ShortcutGroup> {
     let mut groups: HashMap<String, ShortcutGroup> = HashMap::new();
 
     for b in bindings.iter().filter(|b| !b.disabled && !b.keys.is_empty()) {
-        // A portal shortcut is an exclusive grab. Asking for one on a key the
-        // whole desktop depends on — bare Escape — would mean menus, dialogs
-        // and every other app stop seeing it for as long as VoxCtrl runs, which
-        // is not a trade any shortcut is worth. Leaving the group out here also
-        // makes `sync_kde_shortcuts` prune the registration from KGlobalAccel,
-        // so an install that already grabbed Escape releases it on next start.
-        if crate::trigger::is_reserved_for_the_desktop(&b.keys) {
-            tracing::warn!(
-                "Not registering `{}` ({}) with the desktop: a portal shortcut is an \
-                 exclusive grab, and this key has to stay available to every other app. \
-                 Add a modifier — Ctrl+Escape — to use it on this backend.",
-                if b.label.is_empty() { &b.id } else { &b.label },
-                b.keys.join("+"),
-            );
-            continue;
-        }
         let signature = b.trigger_signature();
         let entry = groups.entry(signature.clone()).or_insert_with(|| {
             order.push(signature.clone());
@@ -114,6 +98,23 @@ fn shortcut_id(signature: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
     format!("voxctrl_{slug}")
+}
+
+/// Shortcut ids VoxCtrl binds only while it is speaking.
+///
+/// A reserved key (bare Escape) is registered when playback starts and dropped
+/// again a moment after it ends, so the rest of the desktop keeps the key. That
+/// makes it *absent* from the registered set for most of the session, and
+/// `sync_kde_shortcuts` must not read that absence as "the user deleted this
+/// binding": KDE stores the user's enabled tick against the shortcut id, and
+/// pruning the id would throw it away — so the next arm would register a fresh
+/// shortcut, disabled by default (bugs.kde.org #483639), and the stop key would
+/// never fire again.
+fn transient_shortcut_ids() -> std::collections::HashSet<String> {
+    crate::trigger::RESERVED_KEYS
+        .iter()
+        .map(|k| shortcut_id(&k.to_ascii_uppercase()))
+        .collect()
 }
 
 /// The application id VoxCtrl declares to the desktop.
@@ -273,6 +274,7 @@ async fn bind_groups(
 /// them. Pruning deleted shortcuts and syncing descriptions ensures that KDE's shortcut
 /// settings stay in sync with VoxCtrl's configured bindings, labels, and names.
 async fn sync_kde_shortcuts(groups: &[ShortcutGroup]) {
+    let transient = transient_shortcut_ids();
     let group_details: std::collections::HashMap<&str, (&str, Option<&str>)> = groups
         .iter()
         .map(|g| (g.id.as_str(), (g.description.as_str(), g.trigger.as_deref())))
@@ -307,7 +309,8 @@ async fn sync_kde_shortcuts(groups: &[ShortcutGroup]) {
                 for action in actions {
                     if action.len() >= 2 {
                         let shortcut_id = &action[1];
-                        let is_stale = !group_details.contains_key(shortcut_id.as_str());
+                        let is_stale = !group_details.contains_key(shortcut_id.as_str())
+                            && !transient.contains(shortcut_id.as_str());
 
                         if is_stale {
                             let unregister_res: Result<bool, zbus::Error> = proxy
@@ -337,11 +340,12 @@ async fn sync_kde_shortcuts(groups: &[ShortcutGroup]) {
     }
 
     // 2. Synchronize descriptions in ~/.config/kglobalshortcutsrc
-    update_kglobalshortcutsrc(&group_details).await;
+    update_kglobalshortcutsrc(&group_details, &transient).await;
 }
 
 async fn update_kglobalshortcutsrc(
     group_details: &std::collections::HashMap<&str, (&str, Option<&str>)>,
+    transient: &std::collections::HashSet<String>,
 ) {
     let home = match std::env::var("HOME") {
         Ok(h) => std::path::PathBuf::from(h),
@@ -413,6 +417,11 @@ async fn update_kglobalshortcutsrc(
                     } else {
                         new_lines.push(format!("{key}={val},{expected_desc}"));
                     }
+                } else if transient.contains(key) {
+                    // Bound only while VoxCtrl speaks. Keep the line exactly as
+                    // it is: it carries the key the user assigned and whether
+                    // they enabled it, and the next arm needs both.
+                    new_lines.push(line.to_string());
                 } else {
                     // Stale or deleted shortcut - omit from file
                     tracing::debug!("Removing stale shortcut `{key}` from kglobalshortcutsrc");
@@ -624,26 +633,46 @@ mod tests {
     }
 
     #[test]
-    fn bare_escape_is_never_registered_with_the_compositor() {
-        // The compositor grants an *exclusive* grab, so a registered Escape is
-        // an Escape no other application ever receives. Dropping the group here
-        // is what leaves the key alone; on KDE it also makes `sync_kde_shortcuts`
-        // prune a registration an older VoxCtrl already made.
+    fn a_reserved_key_is_registered_like_any_other_when_it_is_handed_over() {
+        // Arming is the app's call, not the portal's: when the stop binding is
+        // in the list the compositor is asked for it, and when the app drops it
+        // for the idle stretches the group simply is not there.
         let stop = binding("__tts_stop__", &["KEY_ESC"], GestureType::Hold);
-        assert!(group_bindings(&[stop]).is_empty());
+        let groups = group_bindings(std::slice::from_ref(&stop));
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].trigger.as_deref(), Some("Escape"));
+
+        assert!(group_bindings(&[]).is_empty());
     }
 
     #[test]
-    fn a_reserved_key_does_not_take_the_rest_of_the_bindings_with_it() {
-        let groups = group_bindings(&[
-            binding("__tts_stop__", &["KEY_ESC"], GestureType::Hold),
-            binding("dictate", &["KEY_LEFTMETA", "KEY_SPACE"], GestureType::Hold),
-            binding("stop", &["KEY_LEFTCTRL", "KEY_ESC"], GestureType::Hold),
-        ]);
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].binding_ids, vec!["dictate"]);
-        assert_eq!(groups[1].binding_ids, vec!["stop"]);
-        assert_eq!(groups[1].trigger.as_deref(), Some("CTRL+Escape"));
+    fn a_transiently_bound_shortcut_is_never_pruned_from_kdes_store() {
+        // KDE keys the user's "enabled" tick to the shortcut id. Escape is
+        // absent from the registered set for most of a session — it is bound
+        // only while VoxCtrl speaks — and treating that absence as a deleted
+        // binding would discard the tick, so the next arm would register a
+        // fresh, disabled shortcut (bugs.kde.org #483639) that never fires.
+        let ids = transient_shortcut_ids();
+        for spelling in ["KEY_ESC", "KEY_ESCAPE"] {
+            let id = group_bindings(&[binding("s", &[spelling], GestureType::Hold)])[0]
+                .id
+                .clone();
+            assert!(
+                ids.contains(&id),
+                "{spelling} registers as `{id}`, which must be protected"
+            );
+        }
+
+        // And the protection is exactly that wide: an ordinary shortcut the
+        // user really did delete still gets cleaned up.
+        let ordinary = group_bindings(&[binding(
+            "d",
+            &["KEY_LEFTMETA", "KEY_SPACE"],
+            GestureType::Hold,
+        )])[0]
+            .id
+            .clone();
+        assert!(!ids.contains(&ordinary));
     }
 
     #[test]

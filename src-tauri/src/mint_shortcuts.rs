@@ -331,11 +331,6 @@ fn mirrorable_shortcuts(bindings: &[HotkeyBinding]) -> Vec<(String, String)> {
             // A bare modifier or a two-key combo has no accelerator, so the
             // desktop cannot bind it. Skipping is right: the settings UI has
             // already told the user this combination needs a regular key.
-            //
-            // Bare Escape lands here too, and skipping matters for a different
-            // reason: a Cinnamon custom keybinding is an exclusive grab, so
-            // mirroring it would take Escape from every other app on the
-            // desktop. `trigger::accelerator` refuses it for exactly that.
             continue;
         };
         wanted.push((b.id.clone(), convert_to_gtk_accelerator(&portal_accel)));

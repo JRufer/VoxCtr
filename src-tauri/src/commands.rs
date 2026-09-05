@@ -144,39 +144,26 @@ pub async fn save_config(
     guard.save().map_err(|e| e.to_string())?;
     info!("Config saved");
 
-    // Hot-reload the stop key binding in the evdev listener if tts.stop_key changed
+    let (overlay_position, overlay_monitor) = (
+        guard.data.ui.overlay_position.clone(),
+        guard.data.ui.overlay_monitor.clone(),
+    );
+
+    // Hot-reload the stop key binding in the listener if tts.stop_key changed.
+    // The config lock has to go first: assembling the set reads the stop key
+    // back out of it.
+    drop(guard);
     if stop_key_changed {
-        let dir = voxctrl_routing::config_dir();
-        let mut current_bindings = voxctrl_routing::load_bindings(&dir).unwrap_or_default();
-        if !new_config.tts.stop_key.is_empty() {
-            use voxctrl_routing::{HotkeyBinding, GestureType};
-            current_bindings.push(HotkeyBinding {
-                id: "__tts_stop__".to_string(),
-                label: "TTS Stop Key".to_string(),
-                keys: new_config.tts.stop_key.clone(),
-                gesture: GestureType::Hold,
-                target_id: String::new(),
-                target_ids: vec![],
-                tap_ms: 250,
-                hold_threshold_ms: 0,
-                disabled: false,
-                openai_enabled: Some(false),
-                openai_model: None,
-                openai_mode: None,
-                openai_prompt: None,
-                openai_system_prompt: None,
-            });
-        }
+        let bindings = crate::stop_key::listener_bindings_from_disk(&state).await;
         let reloader_guard = state.hotkey_reloader.lock().await;
         if let Some(reloader) = &*reloader_guard {
-            let _ = reloader.send(current_bindings);
+            let _ = reloader.send(bindings);
         }
     }
 
     // Emit config-changed event to all windows to enable instant reactivity
     let _ = app.emit("config-changed", new_config);
 
-    let (overlay_position, overlay_monitor) = (guard.data.ui.overlay_position.clone(), guard.data.ui.overlay_monitor.clone());
     let pos_msg = serde_json::json!({
         "type": "position",
         "position": overlay_position,
@@ -264,30 +251,10 @@ pub async fn save_bindings(
     voxctrl_routing::save_bindings(&bindings, &dir).map_err(|e| e.to_string())?;
     info!("Bindings saved");
     
-    // Hot reload the bindings in the active listener threads, always re-injecting the stop key.
-    let mut all_bindings = bindings.clone();
-    {
-        let cfg_guard = state.config.lock().await;
-        if !cfg_guard.data.tts.stop_key.is_empty() {
-            use voxctrl_routing::GestureType;
-            all_bindings.push(HotkeyBinding {
-                id: "__tts_stop__".to_string(),
-                label: "TTS Stop Key".to_string(),
-                keys: cfg_guard.data.tts.stop_key.clone(),
-                gesture: GestureType::Hold,
-                target_id: String::new(),
-                target_ids: vec![],
-                tap_ms: 250,
-                hold_threshold_ms: 0,
-                disabled: false,
-                openai_enabled: Some(false),
-                openai_model: None,
-                openai_mode: None,
-                openai_prompt: None,
-                openai_system_prompt: None,
-            });
-        }
-    }
+    // Hot reload the bindings in the active listener threads, re-injecting the
+    // stop key when it is currently held — `stop_key`'s arbiter decides that,
+    // and a save must not take a grab it released or drop one it is using.
+    let all_bindings = crate::stop_key::listener_bindings(&state, bindings.clone()).await;
     let reloader_guard = state.hotkey_reloader.lock().await;
     if let Some(reloader) = &*reloader_guard {
         if let Err(e) = reloader.send(all_bindings) {
@@ -1202,30 +1169,7 @@ pub async fn open_shortcut_settings() -> Result<(), String> {
 pub async fn retry_portal_shortcuts(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        let dir = voxctrl_routing::config_dir();
-        let mut bindings = voxctrl_routing::load_bindings(&dir).unwrap_or_default();
-        {
-            let cfg_guard = state.config.lock().await;
-            if !cfg_guard.data.tts.stop_key.is_empty() {
-                use voxctrl_routing::GestureType;
-                bindings.push(voxctrl_routing::HotkeyBinding {
-                    id: "__tts_stop__".to_string(),
-                    label: "TTS Stop Key".to_string(),
-                    keys: cfg_guard.data.tts.stop_key.clone(),
-                    gesture: GestureType::Hold,
-                    target_id: String::new(),
-                    target_ids: vec![],
-                    tap_ms: 250,
-                    hold_threshold_ms: 0,
-                    disabled: false,
-                    openai_enabled: Some(false),
-                    openai_model: None,
-                    openai_mode: None,
-                    openai_prompt: None,
-                    openai_system_prompt: None,
-                });
-            }
-        }
+        let bindings = crate::stop_key::listener_bindings_from_disk(&state).await;
 
         let gesture_tx = {
             let gtx_guard = state.hotkey_gesture_tx.lock().await;
@@ -1319,6 +1263,44 @@ impl HotkeyKeysCheck {
     }
 }
 
+/// A combination the desktop can bind, plus a warning when *holding* it would
+/// cost the rest of the desktop the key.
+///
+/// A binding here is registered for as long as VoxCtrl runs, and where the
+/// compositor owns the grab that registration is exclusive: bare Escape would
+/// reach VoxCtrl and nothing else, so menus would stop closing everywhere. It
+/// is still the user's call — they may genuinely want Escape to start dictation
+/// — so this is advice, not a refusal. The TTS stop key is the case that must
+/// not carry this cost silently, and it does not: `stop_key` holds it only
+/// while VoxCtrl is speaking.
+fn standing_grab_check(
+    keys: &[String],
+    accelerator: String,
+    health: &voxctrl_hotkeys::ListenerHealth,
+) -> HotkeyKeysCheck {
+    let takes_the_key = voxctrl_hotkeys::is_reserved_for_the_desktop(keys)
+        && !health.backend().sees_raw_keys();
+    if !takes_the_key {
+        return HotkeyKeysCheck::ok(Some(accelerator));
+    }
+    HotkeyKeysCheck {
+        // It genuinely works. Refusing it would be a lie, and the cost is the
+        // user's to weigh.
+        accepted: true,
+        enforced: false,
+        accelerator: Some(accelerator),
+        problem: Some("reserved_key".to_string()),
+        message: Some(
+            "Your desktop hands a registered shortcut to VoxCtrl alone, and a binding is \
+             held for as long as VoxCtrl runs — so with Escape bound here, an open menu or \
+             dialog would stop closing anywhere on your desktop. Add a modifier \
+             (Ctrl+Escape) to avoid that. The TTS stop key is safe to leave on Escape: it \
+             is held only while VoxCtrl is speaking."
+                .to_string(),
+        ),
+    }
+}
+
 /// Can this key combination be registered as a global shortcut?
 ///
 /// The settings UI calls this instead of reimplementing the rules, so the key
@@ -1331,7 +1313,7 @@ pub fn check_hotkey_keys_with(
     use voxctrl_hotkeys::TriggerProblem;
 
     let problem = match voxctrl_hotkeys::accelerator(keys) {
-        Ok(accelerator) => return HotkeyKeysCheck::ok(Some(accelerator)),
+        Ok(accelerator) => return standing_grab_check(keys, accelerator, health),
         Err(problem) => problem,
     };
 
@@ -1349,31 +1331,10 @@ pub fn check_hotkey_keys_with(
             Some("Keep one regular key and use modifiers for the rest.")
         }
         TriggerProblem::UnsupportedKey(_) => Some("Try a letter, number, function or arrow key."),
-        TriggerProblem::ReservedKey(_) => {
-            Some("Add a modifier — Ctrl+Escape and Super+Escape both work — or pick another key.")
-        }
         TriggerProblem::Empty => None,
     };
 
-    // A reserved key is not a limit of the desktop's shortcut service; it is a
-    // key VoxCtrl declines to take from the rest of the desktop. Saying "your
-    // desktop cannot register this" would be wrong — it could, and that is the
-    // problem.
-    let mut message = if matches!(problem, TriggerProblem::ReservedKey(_)) {
-        if enforced {
-            format!(
-                "VoxCtrl will not register this shortcut with your desktop: {problem}. \
-                 It would be an exclusive grab."
-            )
-        } else {
-            format!(
-                "This works right now, because VoxCtrl watches the keyboard itself rather \
-                 than asking the desktop to grab keys — every app still sees the key \
-                 normally. On a desktop that hands shortcuts to the compositor VoxCtrl \
-                 leaves this one alone instead: {problem}."
-            )
-        }
-    } else if enforced {
+    let mut message = if enforced {
         format!("Your desktop cannot register this shortcut: {problem}.")
     } else {
         format!(
@@ -1399,7 +1360,6 @@ pub fn check_hotkey_keys_with(
                 TriggerProblem::ModifiersOnly => "modifiers_only",
                 TriggerProblem::MultipleKeys => "multiple_keys",
                 TriggerProblem::UnsupportedKey(_) => "unsupported_key",
-                TriggerProblem::ReservedKey(_) => "reserved_key",
             }
             .to_string(),
         ),
