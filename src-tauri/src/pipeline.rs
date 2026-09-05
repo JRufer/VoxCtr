@@ -167,7 +167,7 @@ pub fn spawn_hotkey_gesture_handler(
                     *state_for_gesture.active_binding_label.lock().await =
                         event.binding_label.clone();
                     *state_for_gesture.active_binding_id.lock().await = event.binding_id.clone();
-                    state_for_gesture.set_recording(true);
+                    state_for_gesture.begin_recording().await;
 
                     // The user just tried to dictate. If the install is not
                     // finished, say so now — otherwise the shortcut records

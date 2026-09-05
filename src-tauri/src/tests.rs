@@ -96,6 +96,21 @@ fn make_test_state() -> AppState {
 }
 
 #[tokio::test]
+async fn starting_dictation_interrupts_a_spoken_response() {
+    // Talking over a response means interrupting it, not being talked over —
+    // and capturing while the speakers are still going feeds VoxCtrl's own
+    // voice back into the microphone. Every path that starts dictation goes
+    // through `begin_recording` for that reason; with no engine attached it
+    // still has to start the capture rather than fail.
+    let state = make_test_state();
+    assert!(state.tts_handle.lock().await.is_none());
+
+    state.begin_recording().await;
+
+    assert!(state.is_recording());
+}
+
+#[tokio::test]
 async fn test_app_state_initial_values() {
     let state = make_test_state();
     assert!(!state.is_recording());
