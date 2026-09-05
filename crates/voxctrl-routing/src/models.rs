@@ -70,6 +70,15 @@ impl HotkeyBinding {
     }
 }
 
+/// Id of the synthetic binding that carries the TTS stop key into the hotkey
+/// listener.
+///
+/// It is not one of the user's saved bindings: the app appends it, `pipeline`
+/// matches it to stop playback, and the portal backend uses it to tell the one
+/// shortcut it may hold transiently from a binding the user chose. Everything
+/// that needs to name it names this.
+pub const TTS_STOP_BINDING_ID: &str = "__tts_stop__";
+
 fn default_tap_ms() -> u32 {
     // Gap allowed between releasing the first tap and pressing the second.
     // 250ms was tight enough that a deliberate but unhurried double-tap missed;

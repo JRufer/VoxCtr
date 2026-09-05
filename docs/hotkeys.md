@@ -118,10 +118,14 @@ What VoxCtrl does instead is hold the grab **only while it is speaking**. `src-t
 
 Under `WhileSpeaking` the binding is added to the listener when playback starts and dropped again two seconds after it ends — long enough that the gaps inside one spoken response do not each cost a re-registration, short enough that Escape is yours again almost immediately. The arbiter never re-registers while a dictation gesture is active, because a reload restarts the listener's gesture engine and would drop the recording.
 
+**The transient shortcut lives in its own portal session.** A portal session accepts `BindShortcuts` exactly once, so changing what is registered means a new session — and the first version of this arming did that to the *one* session that also held the dictation shortcuts. Re-registering those ids under a second session and then closing the first left the compositor firing none of them: after the first cancelled playback, the user's own keybinds were dead. So the standing shortcuts and the transient one are now bound on separate sessions. Arming and releasing the stop key creates and closes only its own session, whose id no other session ever registers, and the session holding the dictation shortcuts is rebuilt only when the user actually edits a binding.
+
+Only VoxCtrl's own `__tts_stop__` binding is eligible for that treatment. A user who binds *dictation* to bare Escape shares the group with it, and that group stays standing — a shortcut that worked only while VoxCtrl happened to be speaking would be worse than the grab the recorder warned them about.
+
 Two consequences worth knowing:
 
 - **The first fraction of a second of playback may not be interruptible** on the portal backend, because the grab is established as audio starts. Consecutive utterances stay armed, so this is only ever the first one after a quiet stretch.
-- **KDE's shortcut store is protected from the churn.** `sync_kde_shortcuts` prunes ids VoxCtrl no longer registers; a transiently-bound id is exempt, because KDE keys your "enabled" tick to that id and pruning it would make the next arm register a fresh, disabled shortcut ([bugs.kde.org #483639](https://bugs.kde.org/show_bug.cgi?id=483639)) that never fires.
+- **KDE's shortcut store is left out of it.** The KDE housekeeping — pruning ids VoxCtrl no longer registers, syncing display names into `~/.config/kglobalshortcutsrc` — runs only when the standing set changes, never on an arm or release: nothing the user configured has changed, and rewriting their shortcut store every time VoxCtrl speaks would be pure churn. A transiently-bound id is also exempt from pruning, because KDE keys your "enabled" tick to that id and dropping it would make the next arm register a fresh, disabled shortcut ([bugs.kde.org #483639](https://bugs.kde.org/show_bug.cgi?id=483639)) that never fires.
 
 A *dictation* binding on bare Escape is a different matter: those are held for the whole session, so the recorder accepts one and warns you what it costs, rather than silently taking Escape from your desktop.
 

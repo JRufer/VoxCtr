@@ -137,7 +137,7 @@ pub fn spawn_hotkey_gesture_handler(
             // TTS stop key: fires on key-down (Start), not release.
             // Only stop the active Rodio sink — do NOT send None to the worker
             // channel (that would kill the thread and break all future TTS).
-            if event.binding_id == "__tts_stop__" {
+            if event.binding_id == voxctrl_routing::TTS_STOP_BINDING_ID {
                 if event.kind == GestureKind::Start {
                     // Use the handle's stop() (not the raw stop_current_playback())
                     // so the generation counter is bumped too — otherwise a

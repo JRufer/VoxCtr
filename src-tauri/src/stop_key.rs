@@ -31,8 +31,10 @@ use voxctrl_routing::{GestureType, HotkeyBinding};
 
 use crate::state::AppState;
 
-/// The synthetic binding id the gesture handler matches on.
-pub const STOP_BINDING_ID: &str = "__tts_stop__";
+/// The synthetic binding id the gesture handler matches on. Defined in
+/// `voxctrl-routing` because the portal backend needs it too: it tells the one
+/// shortcut VoxCtrl may hold transiently from a binding the user chose.
+pub use voxctrl_routing::TTS_STOP_BINDING_ID as STOP_BINDING_ID;
 
 /// How long the grab is kept after playback stops.
 ///

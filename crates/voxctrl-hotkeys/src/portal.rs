@@ -17,7 +17,7 @@ use ashpd::desktop::{
     Session,
 };
 use futures_util::StreamExt;
-use voxctrl_routing::HotkeyBinding;
+use voxctrl_routing::{HotkeyBinding, TTS_STOP_BINDING_ID};
 
 use crate::{
     gestures::{GestureEngine, Transition},
@@ -49,11 +49,17 @@ impl std::fmt::Display for PortalError {
 /// accelerator twice — which it is entitled to refuse — and would break the
 /// `double_tap` / `double_tap_hold` pairing that depends on both gestures
 /// seeing the same press.
+#[derive(Clone)]
 struct ShortcutGroup {
     id: String,
     description: String,
     trigger: Option<String>,
     binding_ids: Vec<String>,
+    /// This shortcut is only registered for as long as VoxCtrl needs it — the
+    /// TTS stop key on bare Escape. It lives in its own portal session, so
+    /// taking it and giving it back never disturbs the session holding the
+    /// dictation shortcuts.
+    transient: bool,
 }
 
 fn group_bindings(bindings: &[HotkeyBinding]) -> Vec<ShortcutGroup> {
@@ -61,6 +67,12 @@ fn group_bindings(bindings: &[HotkeyBinding]) -> Vec<ShortcutGroup> {
     let mut groups: HashMap<String, ShortcutGroup> = HashMap::new();
 
     for b in bindings.iter().filter(|b| !b.disabled && !b.keys.is_empty()) {
+        // Only the app's own stop-key binding may be held transiently. A user
+        // who binds dictation to bare Escape shares this group with it, and
+        // their binding is a standing one — so the group is too, and the stop
+        // key rides along on a registration that is never given back.
+        let transient =
+            crate::trigger::is_reserved_for_the_desktop(&b.keys) && b.id == TTS_STOP_BINDING_ID;
         let signature = b.trigger_signature();
         let entry = groups.entry(signature.clone()).or_insert_with(|| {
             order.push(signature.clone());
@@ -69,8 +81,10 @@ fn group_bindings(bindings: &[HotkeyBinding]) -> Vec<ShortcutGroup> {
                 description: String::new(),
                 trigger: portal_trigger(&b.keys),
                 binding_ids: Vec::new(),
+                transient,
             }
         });
+        entry.transient = entry.transient && transient;
         if !entry.description.is_empty() {
             entry.description.push_str(" / ");
         }
@@ -191,8 +205,14 @@ pub async fn start(
         .await
         .map_err(|e| session_error(e, &registration))?;
 
-    let groups = group_bindings(&bindings);
-    let bound = bind_groups(&portal, &session, &groups).await?;
+    // The standing shortcuts — everything but a transiently-held stop key — are
+    // what this session carries, and it is never rebuilt for the stop key's
+    // sake. That separation is the point: re-registering these ids under a new
+    // session, then closing the old one, is what left the compositor with no
+    // working dictation shortcut at all.
+    let (groups, transient_groups) = split_groups(group_bindings(&bindings));
+    let known = [groups.clone(), transient_groups.clone()].concat();
+    let bound = bind_groups(&portal, &session, &groups, Some(&known)).await?;
     health.set_bound_shortcuts(bound);
     // Claimed here rather than by the caller after the await: the listener task
     // below can fail immediately, and a late `set_backend(Portal)` racing that
@@ -205,7 +225,17 @@ pub async fn start(
     );
 
     tokio::spawn(async move {
-        run(portal, session, bindings, groups, tx, rx_reload, health).await;
+        run(
+            portal,
+            session,
+            bindings,
+            groups,
+            transient_groups,
+            tx,
+            rx_reload,
+            health,
+        )
+        .await;
     });
 
     Ok(())
@@ -233,13 +263,24 @@ fn session_error(e: ashpd::Error, registration: &Result<(), String>) -> PortalEr
     })
 }
 
+/// Register `groups` on `session`.
+///
+/// `known` is every group VoxCtrl currently has across all of its sessions, and
+/// only matters for the KDE housekeeping: pruning is keyed on "an id VoxCtrl no
+/// longer uses", so it has to see the whole picture rather than the subset this
+/// session happens to carry. Pass `None` to skip that housekeeping entirely —
+/// arming the stop key changes no user-visible binding, and rewriting the user's
+/// shortcut store every time VoxCtrl speaks would be pure churn.
 async fn bind_groups(
     portal: &GlobalShortcuts,
     session: &Session<GlobalShortcuts>,
     groups: &[ShortcutGroup],
+    known: Option<&[ShortcutGroup]>,
 ) -> Result<Vec<BoundShortcut>, PortalError> {
     // Sync shortcut names in KDE settings and unregister any deleted shortcuts.
-    sync_kde_shortcuts(groups).await;
+    if let Some(known) = known {
+        sync_kde_shortcuts(known).await;
+    }
 
     let shortcuts: Vec<NewShortcut> = groups
         .iter()
@@ -441,6 +482,58 @@ async fn update_kglobalshortcutsrc(
     }
 }
 
+/// Split the registered groups into the ones held for the session and the ones
+/// VoxCtrl only holds while it needs them.
+fn split_groups(groups: Vec<ShortcutGroup>) -> (Vec<ShortcutGroup>, Vec<ShortcutGroup>) {
+    groups.into_iter().partition(|g| !g.transient)
+}
+
+/// Do these two sets ask the compositor for the same thing? Ids, names and
+/// triggers are what a registration carries; anything else changed in a binding
+/// is the gesture engine's business, not the portal's.
+fn same_groups(a: &[ShortcutGroup], b: &[ShortcutGroup]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b.iter()).all(|(a, b)| {
+            a.id == b.id && a.description == b.description && a.trigger == b.trigger
+        })
+}
+
+/// Which bindings each shortcut id fires, across every session.
+fn shortcut_map(
+    standing: &[ShortcutGroup],
+    transient: &[ShortcutGroup],
+) -> HashMap<String, Vec<String>> {
+    standing
+        .iter()
+        .chain(transient.iter())
+        .map(|g| (g.id.clone(), g.binding_ids.clone()))
+        .collect()
+}
+
+/// A fresh session carrying `groups`, or the reason there is not one.
+///
+/// The caller closes whatever the new session replaces — and, for a set of ids
+/// that is moving between sessions, closes it *first*: two sessions registering
+/// the same id under the same app id, one of them then closing, is how a
+/// desktop ends up holding neither.
+async fn rebind(
+    portal: &GlobalShortcuts,
+    groups: &[ShortcutGroup],
+    known: Option<&[ShortcutGroup]>,
+) -> Result<(Session<GlobalShortcuts>, Vec<BoundShortcut>), PortalError> {
+    let session = portal
+        .create_session(Default::default())
+        .await
+        .map_err(|e| PortalError::Rejected(format!("{e}")))?;
+    match bind_groups(portal, &session, groups, known).await {
+        Ok(bound) => Ok((session, bound)),
+        Err(e) => {
+            let _ = session.close().await;
+            Err(e)
+        }
+    }
+}
+
 /// What the compositor actually bound, so the UI can show the real shortcut
 /// rather than the one VoxCtrl asked for.
 fn describe(groups: &[ShortcutGroup], shortcuts: &[Shortcut]) -> Vec<BoundShortcut> {
@@ -466,15 +559,24 @@ async fn run(
     mut session: Session<GlobalShortcuts>,
     bindings: Vec<HotkeyBinding>,
     mut groups: Vec<ShortcutGroup>,
+    mut transient_groups: Vec<ShortcutGroup>,
     tx: GestureSender,
     rx_reload: ReloaderReceiver,
     health: Arc<ListenerHealth>,
 ) {
     let mut engine = GestureEngine::new(bindings);
-    let mut by_shortcut: HashMap<String, Vec<String>> = groups
-        .iter()
-        .map(|g| (g.id.clone(), g.binding_ids.clone()))
-        .collect();
+    // Transient shortcuts get their own session so arming and releasing them
+    // leaves the standing one — the dictation shortcuts — untouched.
+    let mut transient_session: Option<Session<GlobalShortcuts>> = None;
+    if !transient_groups.is_empty() {
+        // Only reachable when the listener starts while VoxCtrl is already
+        // speaking, which the "Approve shortcuts" button can do.
+        match rebind(&portal, &transient_groups, None).await {
+            Ok((session, _)) => transient_session = Some(session),
+            Err(e) => tracing::warn!("Could not register the stop key: {e}"),
+        }
+    }
+    let mut by_shortcut = shortcut_map(&groups, &transient_groups);
 
     let (mut activated, mut deactivated, mut changed) = match futures_util::try_join!(
         portal.receive_activated(),
@@ -518,47 +620,62 @@ async fn run(
             event = changed.next() => {
                 let Some(event) = event else { break };
                 // The user re-assigned a shortcut in the desktop's settings.
-                health.set_bound_shortcuts(describe(&groups, event.shortcuts()));
+                let known = [groups.clone(), transient_groups.clone()].concat();
+                health.set_bound_shortcuts(describe(&known, event.shortcuts()));
             }
             new_bindings = next_reload(&rx_reload) => {
                 let Some(new_bindings) = new_bindings else { break };
                 tracing::info!("portal hotkeys: reloading {} bindings", new_bindings.len());
-                let new_groups = group_bindings(&new_bindings);
-                let same_groups = new_groups.len() == groups.len() && new_groups.iter().zip(groups.iter()).all(|(a, b)| {
-                    a.id == b.id && a.description == b.description && a.trigger == b.trigger
-                });
+                let (new_standing, new_transient) = split_groups(group_bindings(&new_bindings));
+                let standing_changed = !same_groups(&new_standing, &groups);
+                let transient_changed = !same_groups(&new_transient, &transient_groups);
+
                 engine.reset(&tx);
                 engine.reload(new_bindings.clone());
-                groups = new_groups;
-                by_shortcut = groups
-                    .iter()
-                    .map(|g| (g.id.clone(), g.binding_ids.clone()))
-                    .collect();
+                groups = new_standing;
+                transient_groups = new_transient;
+                by_shortcut = shortcut_map(&groups, &transient_groups);
 
-                if same_groups {
-                    tracing::info!("portal hotkeys: shortcut triggers unchanged; preserving active portal session");
-                    continue;
+                // A stop key going up or down must not touch the session that
+                // holds the dictation shortcuts. Re-registering those ids under
+                // a second session and then closing the first is what left a
+                // compositor with no working shortcut at all once playback had
+                // been cancelled once.
+                if standing_changed {
+                    // Sessions allow `bind_shortcuts` exactly once, so a real
+                    // change to the user's bindings needs a new one.
+                    let known = [groups.clone(), transient_groups.clone()].concat();
+                    match rebind(&portal, &groups, Some(&known)).await {
+                        Ok((new_session, bound)) => {
+                            let _ = session.close().await;
+                            session = new_session;
+                            health.set_bound_shortcuts(bound);
+                        }
+                        Err(e) => tracing::warn!("Re-binding portal shortcuts failed: {e}"),
+                    }
                 }
 
-                // Re-creating the portal session on reload is required because
-                // GlobalShortcuts portal sessions allow bind_shortcuts to be called only once per session.
-                match portal.create_session(Default::default()).await {
-                    Ok(new_session) => {
-                        match bind_groups(&portal, &new_session, &groups).await {
-                            Ok(bound) => {
-                                let _ = session.close().await;
-                                session = new_session;
-                                health.set_bound_shortcuts(bound);
-                            }
-                            Err(e) => {
-                                let _ = new_session.close().await;
-                                tracing::warn!("Re-binding portal shortcuts failed: {e}");
-                            }
+                if transient_changed {
+                    // Close first: the old session and the new one would be
+                    // registering the same shortcut id under the same app id,
+                    // and closing the loser afterwards takes the winner's
+                    // registration with it on at least one desktop.
+                    if let Some(old) = transient_session.take() {
+                        let _ = old.close().await;
+                    }
+                    if !transient_groups.is_empty() {
+                        // No KDE housekeeping here: nothing the user configured
+                        // has changed, and rewriting their shortcut store every
+                        // time VoxCtrl speaks would be pure churn.
+                        match rebind(&portal, &transient_groups, None).await {
+                            Ok((session, _)) => transient_session = Some(session),
+                            Err(e) => tracing::warn!("Could not register the stop key: {e}"),
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!("Failed to create new portal session for reload: {e}");
-                    }
+                }
+
+                if !standing_changed && !transient_changed {
+                    tracing::info!("portal hotkeys: shortcut triggers unchanged; preserving active portal session");
                 }
             }
         }
@@ -673,6 +790,67 @@ mod tests {
             .id
             .clone();
         assert!(!ids.contains(&ordinary));
+    }
+
+    #[test]
+    fn the_stop_key_is_split_away_from_the_shortcuts_that_stay_registered() {
+        // The regression this exists for: arming and releasing the stop key
+        // used to rebuild the one session that also held the dictation
+        // shortcuts — re-registering their ids under a new session and closing
+        // the old one — and after the first release the compositor fired none
+        // of them. The two now live in separate sessions.
+        let (standing, transient) = split_groups(group_bindings(&[
+            binding("dictate", &["KEY_LEFTMETA", "KEY_SPACE"], GestureType::Hold),
+            binding("__tts_stop__", &["KEY_ESC"], GestureType::Hold),
+        ]));
+
+        assert_eq!(standing.len(), 1);
+        assert_eq!(standing[0].binding_ids, vec!["dictate"]);
+        assert_eq!(transient.len(), 1);
+        assert_eq!(transient[0].binding_ids, vec!["__tts_stop__"]);
+        assert_eq!(transient[0].trigger.as_deref(), Some("Escape"));
+
+        // Both still reach the gesture engine: whichever session delivers the
+        // activation, it is looked up by shortcut id.
+        let map = shortcut_map(&standing, &transient);
+        assert_eq!(map.len(), 2);
+        assert!(map.values().any(|ids| ids == &vec!["__tts_stop__".to_string()]));
+    }
+
+    #[test]
+    fn arming_the_stop_key_leaves_the_standing_shortcuts_alone() {
+        // What the reload compares. Adding or dropping the stop key must not
+        // read as a change to the standing set, or the session holding the
+        // user's dictation shortcuts would be rebuilt for it after all.
+        let dictate = binding("dictate", &["KEY_LEFTMETA", "KEY_SPACE"], GestureType::Hold);
+        let stop = binding("__tts_stop__", &["KEY_ESC"], GestureType::Hold);
+
+        let (idle, idle_transient) = split_groups(group_bindings(std::slice::from_ref(&dictate)));
+        let (armed, armed_transient) = split_groups(group_bindings(&[dictate, stop]));
+
+        assert!(same_groups(&idle, &armed), "the standing set is untouched");
+        assert!(idle_transient.is_empty());
+        assert!(!same_groups(&idle_transient, &armed_transient));
+    }
+
+    #[test]
+    fn a_dictation_binding_on_escape_keeps_its_standing_registration() {
+        // Only VoxCtrl's own stop key is held transiently. A user who chose
+        // Escape to start dictation means it, and a shortcut that worked only
+        // while VoxCtrl happened to be speaking would be worse than the grab
+        // they were warned about — so the shared group stays standing and the
+        // stop key rides along on it.
+        let mut mine = binding("__tts_stop__", &["KEY_ESC"], GestureType::Hold);
+        mine.id = "__tts_stop__".to_string();
+        let theirs = binding("dictate-on-escape", &["KEY_ESC"], GestureType::Hold);
+
+        let (standing, transient) = split_groups(group_bindings(&[mine, theirs]));
+        assert_eq!(standing.len(), 1, "one shortcut, one registration");
+        assert!(transient.is_empty());
+        assert_eq!(
+            standing[0].binding_ids,
+            vec!["__tts_stop__", "dictate-on-escape"]
+        );
     }
 
     #[test]
