@@ -171,6 +171,42 @@ fn keysym_name(key: &str) -> Option<String> {
     Some(sym)
 }
 
+/// Keys VoxCtrl will not hold a *standing* grab on, in every spelling a saved
+/// config might use.
+///
+/// Registering a global shortcut — through the XDG shortcuts portal, or through
+/// Cinnamon's own keybinding settings — asks the desktop for an *exclusive*
+/// grab. The compositor then routes that key to VoxCtrl and to nothing else:
+/// the menu that was open does not close, the dialog does not cancel, the app
+/// underneath is never told the key was pressed. For a combination the user
+/// deliberately reserved for VoxCtrl (Super+Space, Ctrl+Alt+D) that is exactly
+/// what they asked for. For Escape it never is — Escape is how every program on
+/// the machine says "never mind", and it is VoxCtrl's default TTS stop key, so
+/// users who never picked it would lose it desktop-wide.
+///
+/// The app answers this by holding the grab only for the seconds it is actually
+/// speaking (`stop_key::StopKeyGrab::WhileSpeaking`), so Escape interrupts
+/// playback and belongs to the rest of the desktop the rest of the time. This
+/// list is what marks a key as needing that treatment.
+///
+/// Both spellings are here on purpose: the Rust config canonicalises to
+/// `KEY_ESC`, but a config written by an older build — or by the frontend's own
+/// default — can still say `KEY_ESCAPE`.
+pub const RESERVED_KEYS: &[&str] = &["KEY_ESC", "KEY_ESCAPE"];
+
+/// Would a standing grab on these keys take something the rest of the desktop
+/// needs?
+///
+/// Only bare, unmodified combinations count. `Ctrl+Escape` grabs a combination
+/// nothing else is listening for, so it is an ordinary shortcut and is
+/// registered for the life of the process like any other.
+pub fn is_reserved_for_the_desktop(keys: &[String]) -> bool {
+    !keys.is_empty()
+        && keys
+            .iter()
+            .all(|k| RESERVED_KEYS.contains(&k.to_ascii_uppercase().as_str()))
+}
+
 /// True for a key that only ever acts as a modifier, so it cannot be the one
 /// regular key an accelerator needs.
 pub fn is_modifier(key: &str) -> bool {
@@ -230,6 +266,48 @@ mod tests {
             accelerator(&keys(&["KEY_RIGHTMETA"])),
             Err(TriggerProblem::ModifiersOnly)
         );
+    }
+
+    #[test]
+    fn bare_escape_is_a_valid_accelerator_that_may_only_be_held_transiently() {
+        // Escape *is* something a desktop can bind, and VoxCtrl does bind it —
+        // that is how the stop key interrupts playback. What it must not do is
+        // hold the grab while it is not speaking, because the grab is exclusive
+        // and an open menu would stop closing anywhere on the machine.
+        assert_eq!(accelerator(&keys(&["KEY_ESC"])).unwrap(), "Escape");
+        assert!(is_reserved_for_the_desktop(&keys(&["KEY_ESC"])));
+        assert!(is_reserved_for_the_desktop(&keys(&["KEY_ESCAPE"])));
+    }
+
+    #[test]
+    fn escape_with_a_modifier_is_an_ordinary_shortcut() {
+        // Ctrl+Escape takes nothing from the desktop: no app is listening for
+        // the combination, so it is registered for the life of the process and
+        // needs none of the arming machinery.
+        assert_eq!(
+            accelerator(&keys(&["KEY_LEFTCTRL", "KEY_ESC"])).unwrap(),
+            "CTRL+Escape"
+        );
+        let ctrl_escape = keys(&["KEY_LEFTCTRL", "KEY_ESC"]);
+        assert!(!is_reserved_for_the_desktop(&ctrl_escape));
+        assert_eq!(
+            accelerator(&keys(&["KEY_LEFTMETA", "KEY_ESCAPE"])).unwrap(),
+            "LOGO+Escape"
+        );
+    }
+
+    #[test]
+    fn only_escape_is_reserved() {
+        // The rule is deliberately one key wide. A bare F5 or a bare Space is a
+        // combination the user picked on purpose, and taking it back between
+        // utterances would break setups that work today.
+        for k in ["KEY_F5", "KEY_SPACE", "KEY_A", "KEY_TAB", "KEY_ENTER"] {
+            assert!(
+                !is_reserved_for_the_desktop(&keys(&[k])),
+                "{k} must stay an ordinary standing shortcut"
+            );
+        }
+        assert!(!is_reserved_for_the_desktop(&[]));
     }
 
     #[test]

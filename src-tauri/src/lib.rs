@@ -20,6 +20,7 @@ mod pipeline;
 mod services;
 mod startup_log;
 mod state;
+mod stop_key;
 mod tray;
 mod updater;
 mod window;
@@ -211,6 +212,8 @@ pub fn run() {
         audio_tx: audio_tx.clone(),
         tts_handle: Arc::new(Mutex::new(None)),
         active_fifos: Arc::new(Mutex::new(std::collections::HashSet::new())),
+        stop_key_held: Arc::new(AtomicBool::new(false)),
+        speaking_tx: Arc::new(std::sync::OnceLock::new()),
         hotkey_reloader: Arc::new(Mutex::new(None)),
         hotkey_gesture_tx: Arc::new(Mutex::new(None)),
         hotkey_health: hotkey_health.clone(),
@@ -280,25 +283,19 @@ pub fn run() {
     }
 
     // Hotkey listener & bindings
+    //
+    // The stop key is not in this set. Where the desktop owns the key grab a
+    // standing registration on bare Escape would take the key from every other
+    // app, so `stop_key`'s arbiter adds it — here, immediately, on the backends
+    // that grab nothing, and only while VoxCtrl speaks on the ones that do.
     let mut all_bindings = bindings;
-    if !cfg_data.tts.stop_key.is_empty() {
-        use voxctrl_routing::{GestureType, HotkeyBinding};
-        all_bindings.push(HotkeyBinding {
-            id: "__tts_stop__".to_string(),
-            label: "TTS Stop Key".to_string(),
-            keys: cfg_data.tts.stop_key.clone(),
-            gesture: GestureType::Hold,
-            target_id: String::new(),
-            target_ids: vec![],
-            tap_ms: 250,
-            hold_threshold_ms: 0,
-            disabled: false,
-            openai_enabled: Some(false),
-            openai_model: None,
-            openai_mode: None,
-            openai_prompt: None,
-            openai_system_prompt: None,
-        });
+    let initial_grab =
+        crate::stop_key::stop_key_grab(hotkey_health.backend(), &cfg_data.tts.stop_key);
+    if crate::stop_key::stop_key_wanted(initial_grab, app_state.is_speaking()) {
+        app_state
+            .stop_key_held
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        all_bindings.push(crate::stop_key::stop_binding(cfg_data.tts.stop_key.clone()));
     }
 
     let (gesture_tx, gesture_rx) = voxctrl_hotkeys::channel();
@@ -308,6 +305,8 @@ pub fn run() {
         cfg_data.audio.evdev_device.clone(),
         hotkey_health.clone(),
     );
+
+    crate::stop_key::spawn(app_state.clone());
 
     let state_for_gesture = app_state.clone();
     let gesture_tx_for_state = gesture_tx.clone();

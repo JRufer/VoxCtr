@@ -85,6 +85,8 @@ fn make_test_state() -> AppState {
         overlay_tx,
         tts_handle: Arc::new(Mutex::new(None)),
         active_fifos: Arc::new(Mutex::new(std::collections::HashSet::new())),
+        stop_key_held: Arc::new(AtomicBool::new(false)),
+        speaking_tx: Arc::new(std::sync::OnceLock::new()),
         hotkey_reloader: Arc::new(Mutex::new(None)),
         hotkey_gesture_tx: Arc::new(Mutex::new(None)),
         hotkey_health: Arc::new(voxctrl_hotkeys::ListenerHealth::default()),
@@ -305,6 +307,126 @@ fn bare_modifiers_are_allowed_where_voxctrl_watches_the_keyboard() {
         .message
         .expect("an advisory still needs wording")
         .contains("stop working"));
+}
+
+/// The stop-key arbiter, end to end: the grab is taken when playback starts and
+/// given back once it stops.
+///
+/// Multi-threaded on purpose — the assertions block on the reloader channel,
+/// which on a current-thread runtime would starve the very task under test.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_stop_key_is_taken_for_playback_and_given_back_after() {
+    use std::time::Duration;
+
+    let state = Arc::new(make_test_state());
+    // The desktop owns the grab here, so a standing Escape registration would
+    // take the key from every other app: this is the case the arbiter exists for.
+    state.hotkey_health.set_supported(true);
+    state
+        .hotkey_health
+        .set_backend(voxctrl_hotkeys::Backend::Portal);
+    {
+        let mut cfg = state.config.lock().await;
+        cfg.data.tts.stop_key = vec!["KEY_ESC".to_string()];
+    }
+    let (reloader_tx, reloader_rx) = crossbeam_channel::unbounded();
+    {
+        let mut reloader = state.hotkey_reloader.lock().await;
+        *reloader = Some(reloader_tx);
+    }
+
+    crate::stop_key::spawn(state.clone());
+
+    let has_stop_key = |bindings: &[voxctrl_routing::HotkeyBinding]| {
+        bindings
+            .iter()
+            .any(|b| b.id == crate::stop_key::STOP_BINDING_ID)
+    };
+
+    // Nothing is speaking, so nothing should be registered yet.
+    assert!(
+        reloader_rx.recv_timeout(Duration::from_millis(750)).is_err(),
+        "the listener must not be reloaded while there is nothing to arm"
+    );
+    assert!(!state.stop_key_held.load(std::sync::atomic::Ordering::SeqCst));
+
+    state.set_speaking(true);
+    let armed = reloader_rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("playback must arm the stop key");
+    assert!(has_stop_key(&armed), "Escape has to reach VoxCtrl while it speaks");
+    assert!(state.stop_key_held.load(std::sync::atomic::Ordering::SeqCst));
+
+    state.set_speaking(false);
+    let released = reloader_rx
+        .recv_timeout(Duration::from_secs(8))
+        .expect("the key must be given back once playback ends");
+    assert!(
+        !has_stop_key(&released),
+        "with playback over, Escape belongs to whatever the user is looking at"
+    );
+    assert!(!state.stop_key_held.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn a_standing_binding_on_bare_escape_warns_what_it_costs() {
+    // Bound as a dictation hotkey, Escape is registered for as long as VoxCtrl
+    // runs, and where the compositor owns the grab that means no other app ever
+    // sees it. The user may still want it, so this is advice rather than a
+    // refusal — but it has to name the cost, and say that the TTS stop key does
+    // not pay it.
+    let health = voxctrl_hotkeys::ListenerHealth::default();
+    health.set_supported(true);
+    health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+    let check = crate::commands::check_hotkey_keys_with(&["KEY_ESC".to_string()], &health);
+    assert!(check.accepted, "it works; the user decides whether to pay for it");
+    assert!(!check.enforced);
+    assert_eq!(check.problem.as_deref(), Some("reserved_key"));
+    assert_eq!(check.accelerator.as_deref(), Some("Escape"));
+    let message = check.message.expect("an advisory needs wording");
+    assert!(message.contains("Ctrl+Escape"), "{message}");
+    assert!(
+        message.contains("stop key"),
+        "the stop key is the one place Escape is safe, and the user is looking at \
+         exactly that question: {message}"
+    );
+}
+
+#[test]
+fn bare_escape_is_unremarkable_where_voxctrl_watches_the_keyboard() {
+    // X11 raw events, evdev and the Windows hook grab nothing — every app still
+    // receives Escape — so there is no cost to warn about on any of them.
+    for backend in [
+        voxctrl_hotkeys::Backend::X11,
+        voxctrl_hotkeys::Backend::Evdev,
+        voxctrl_hotkeys::Backend::WindowsHook,
+    ] {
+        let health = voxctrl_hotkeys::ListenerHealth::default();
+        health.set_supported(true);
+        health.set_backend(backend);
+        health.set_keyboards_open(1);
+
+        let check = crate::commands::check_hotkey_keys_with(&["KEY_ESC".to_string()], &health);
+        assert!(check.accepted, "{backend:?}");
+        assert!(check.problem.is_none(), "nothing is grabbed on {backend:?}");
+        assert!(check.message.is_none(), "{backend:?}");
+    }
+}
+
+#[test]
+fn escape_with_a_modifier_is_accepted_everywhere() {
+    let health = voxctrl_hotkeys::ListenerHealth::default();
+    health.set_supported(true);
+    health.set_backend(voxctrl_hotkeys::Backend::Portal);
+
+    let check = crate::commands::check_hotkey_keys_with(
+        &["KEY_LEFTCTRL".to_string(), "KEY_ESC".to_string()],
+        &health,
+    );
+    assert!(check.accepted);
+    assert_eq!(check.accelerator.as_deref(), Some("CTRL+Escape"));
+    assert!(check.problem.is_none());
 }
 
 #[test]

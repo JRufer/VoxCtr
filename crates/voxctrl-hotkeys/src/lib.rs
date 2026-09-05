@@ -19,7 +19,7 @@ use voxctrl_routing::HotkeyBinding;
 
 pub use gestures::{GestureEvent, GestureKind};
 pub use health::{Backend, BoundShortcut, ListenerHealth};
-pub use trigger::{accelerator, is_modifier, TriggerProblem};
+pub use trigger::{accelerator, is_modifier, is_reserved_for_the_desktop, TriggerProblem};
 
 /// Callback channel: the listener sends GestureEvents to the app coordinator.
 pub type GestureSender = mpsc::UnboundedSender<GestureEvent>;

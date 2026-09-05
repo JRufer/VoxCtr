@@ -292,6 +292,8 @@ The `stop_key` config field lists keys that interrupt current TTS playback when 
 
 Sending `None` through the TTS engine channel (via `TtsEngineHandle::stop()`) clears the current utterance.
 
+**Escape and the desktop portal.** The default stop key is Escape, and it works as it reads: press it and playback stops. How VoxCtrl registers it depends on the backend. Where VoxCtrl watches the key stream itself (X11, evdev, the Windows hook) nothing is grabbed, every app still receives Escape, and the binding is simply registered for the whole session. Where the desktop owns the grab (the XDG `GlobalShortcuts` portal), a standing registration would be *exclusive* — no other app would see Escape while VoxCtrl ran — so VoxCtrl holds it only while it is speaking and gives it back two seconds after playback ends. A stop key with a modifier (`Ctrl+Escape`) is an ordinary shortcut everywhere and is held throughout. See [hotkeys.md](hotkeys.md#bare-escape-and-the-exclusive-grab).
+
 ---
 
 ## Configuration Options

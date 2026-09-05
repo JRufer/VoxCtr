@@ -70,6 +70,20 @@ pub struct AppState {
     /// Set of active FIFO response pipes currently being listened to
     pub active_fifos: Arc<Mutex<HashSet<String>>>,
 
+    /// True while the TTS stop key is part of the listener's binding set.
+    ///
+    /// Where the desktop owns the key grab, a standing registration on bare
+    /// Escape would take the key from every other app, so `stop_key` holds it
+    /// only while VoxCtrl speaks. `stop_key::spawn` is the only writer; every
+    /// reload path reads it, so a save from the settings window cannot drop a
+    /// grab that is in use or resurrect one that was given back.
+    pub stop_key_held: Arc<AtomicBool>,
+
+    /// Tells the stop-key arbiter that playback started or stopped. Set once,
+    /// when the arbiter starts; `set_speaking` is called from the playback
+    /// thread, so this has to be lock-free and usable without a tokio runtime.
+    pub speaking_tx: Arc<std::sync::OnceLock<tokio::sync::mpsc::UnboundedSender<bool>>>,
+
     /// Channel for sending hotkey configurations directly to background threads
     pub hotkey_reloader: Arc<Mutex<Option<crossbeam_channel::Sender<Vec<voxctrl_routing::HotkeyBinding>>>>>,
 
@@ -156,6 +170,12 @@ impl AppState {
 
     pub fn set_speaking(&self, v: bool) {
         self.speaking.store(v, Ordering::SeqCst);
+        // Wakes the stop-key arbiter so the grab is taken as playback starts
+        // rather than at the next tick. Nothing here can block: this runs on
+        // the playback thread, which has no tokio runtime and an audio deadline.
+        if let Some(tx) = self.speaking_tx.get() {
+            let _ = tx.send(v);
+        }
     }
 
     pub fn is_overlay_enabled(&self) -> bool {
