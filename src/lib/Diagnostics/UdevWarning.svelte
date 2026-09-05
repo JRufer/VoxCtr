@@ -548,10 +548,6 @@
     @apply text-[12px] font-semibold text-[var(--color-accent-blue)] underline underline-offset-2 bg-transparent border-0 p-0 cursor-pointer;
   }
 
-  .btn-link.inline {
-    @apply text-[12px];
-  }
-
   .loading-container {
     @apply flex flex-col items-center justify-center gap-3 h-full w-full;
   }

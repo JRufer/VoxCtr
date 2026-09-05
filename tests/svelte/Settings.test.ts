@@ -97,7 +97,7 @@ describe("Settings.svelte Startup Redirect", () => {
     configLoaded.set(true);
   });
 
-  test("automatically selects Engine tab and forces window show/focus on mount when voice model is not downloaded", async () => {
+  test("automatically selects Engine tab and shows/focuses window on mount when voice model is not downloaded and auto_show_settings is true", async () => {
     mockShow.mockClear();
     mockFocus.mockClear();
 
@@ -112,5 +112,27 @@ describe("Settings.svelte Startup Redirect", () => {
       expect(mockShow).toHaveBeenCalled();
       expect(mockFocus).toHaveBeenCalled();
     });
+  });
+
+  test("does not show or focus window on mount when auto_show_settings is false", async () => {
+    mockShow.mockClear();
+    mockFocus.mockClear();
+
+    config.update((c) => ({
+      ...c,
+      ui: {
+        ...c.ui,
+        auto_show_settings: false,
+      },
+    }));
+
+    render(Settings);
+
+    const engineHeader = await screen.findByText("Inference Engine");
+    expect(engineHeader).not.toBeNull();
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mockShow).not.toHaveBeenCalled();
+    expect(mockFocus).not.toHaveBeenCalled();
   });
 });

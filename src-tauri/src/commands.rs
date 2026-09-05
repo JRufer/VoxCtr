@@ -501,8 +501,9 @@ pub async fn inflect_micro_inspect(model_dir: String) -> Result<serde_json::Valu
 }
 
 #[tauri::command]
-pub async fn check_model_downloaded(model_size: String, model_dir: String) -> Result<bool, String> {
-    Ok(voxctrl_inference::whisper_cpp::is_model_downloaded(&model_size, &model_dir))
+pub async fn check_model_downloaded(model_size: String, model_dir: Option<String>) -> Result<bool, String> {
+    let dir = model_dir.unwrap_or_default();
+    Ok(voxctrl_inference::whisper_cpp::is_model_downloaded(&model_size, &dir))
 }
 
 #[tauri::command]

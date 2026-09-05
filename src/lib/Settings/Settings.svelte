@@ -42,7 +42,7 @@
     await invoke("toggle_recording");
   }
 
-  let lastTab = activeTab;
+  let lastTab: Tab = "general";
   let tabContentEl = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
@@ -78,18 +78,23 @@
         if (cfg && cfg.engine && cfg.engine.whisper_cpp) {
           const modelSize = cfg.engine.whisper_cpp.model_size;
           if (cfg.engine.backend !== "moonshine") {
-            invoke<boolean>("check_model_downloaded", { modelSize })
+            invoke<boolean>("check_model_downloaded", {
+              modelSize,
+              modelDir: cfg.engine.whisper_cpp.model_dir || "",
+            })
               .then(async (isDownloaded) => {
                 if (!isDownloaded) {
                   activeTab = "engine";
-                  // Force settings window to open and focus, bypassing auto_show_settings
-                  try {
-                    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-                    const currentWin = getCurrentWindow();
-                    await currentWin.show();
-                    await currentWin.setFocus();
-                  } catch (winErr) {
-                    console.error("Failed to programmatically show settings window on startup:", winErr);
+                  // Only open and focus settings window if auto_show_settings is enabled
+                  if (cfg?.ui?.auto_show_settings) {
+                    try {
+                      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+                      const currentWin = getCurrentWindow();
+                      await currentWin.show();
+                      await currentWin.setFocus();
+                    } catch (winErr) {
+                      console.error("Failed to programmatically show settings window on startup:", winErr);
+                    }
                   }
                 }
               })

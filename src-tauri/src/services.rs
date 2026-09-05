@@ -287,7 +287,7 @@ pub fn auto_download_speech_model_if_needed(
         // rather than leaving a new install with no visible setup at all.
     }
 
-    let mut show_settings = cfg_data.ui.auto_show_settings;
+    let show_settings = cfg_data.ui.auto_show_settings;
     // Only the whisper-cpp path needs a GGUF model on disk. A Moonshine
     // selection uses whisper-cpp (and thus its model) unless the
     // Moonshine backend is actually compiled into this build.
@@ -328,8 +328,13 @@ pub fn auto_download_speech_model_if_needed(
                         }
                     }
                 });
-            } else {
-                show_settings = true;
+            } else if !show_settings {
+                voxctrl_inject::show_notification(
+                    "VoxCtrl",
+                    &format!(
+                        "Speech model '{model_size}' is not downloaded. Open Settings → Engine to download it."
+                    ),
+                );
             }
         }
     }

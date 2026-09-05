@@ -122,7 +122,7 @@ impl Default for AudioConfig {
 }
 
 fn default_auto_show_settings() -> bool {
-    true
+    false
 }
 
 fn default_setup_completed() -> bool {
@@ -183,7 +183,7 @@ impl Default for UiConfig {
             overlay_style: "mono_bars".into(),
             overlay_position: "center".into(),
             overlay_monitor: "primary".into(),
-            auto_show_settings: true,
+            auto_show_settings: false,
             show_notification: false,
             show_command_overlay: true,
             command_overlay_duration_secs: 3,
@@ -903,7 +903,7 @@ mod tests {
     #[test]
     fn test_default_config_values() {
         let cfg = AppConfig::default();
-        assert!(cfg.ui.auto_show_settings);
+        assert!(!cfg.ui.auto_show_settings);
         assert!(!cfg.ui.show_notification);
         assert_eq!(cfg.ui.overlay_style, "mono_bars");
         assert_eq!(cfg.ui.overlay_position, "center");

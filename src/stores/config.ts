@@ -145,7 +145,7 @@ const defaultConfig: AppConfig = {
     overlay_style: "mono_bars",
     overlay_position: "center",
     overlay_monitor: "primary",
-    auto_show_settings: true,
+    auto_show_settings: false,
     show_notification: false,
     show_command_overlay: true,
     command_overlay_duration_secs: 3,

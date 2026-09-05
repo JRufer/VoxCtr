@@ -46,7 +46,7 @@ Full schema with defaults:
     "overlay_style": "blue_wave",
     "overlay_position": "center",
     "overlay_monitor": "primary",
-    "auto_show_settings": true,
+    "auto_show_settings": false,
     "show_notification": false,
     "setup_completed": true
   },
@@ -168,7 +168,7 @@ The `.en` variants are English-only but slightly faster. `large-v3-turbo` is a d
 | `overlay_style` | string | `"voice_card"`, `"waveform"`, `"pulse"`, `"blue_wave"`, `"mono_bars"`, `"spectrum"`, `"terminal"`, `"vinyl"`, `"none"` | `"blue_wave"` | HUD visualization style |
 | `overlay_position` | string | `"top"`, `"center"`, `"bottom"` | `"center"` | Screen positioning of the overlay window |
 | `overlay_monitor` | string | `"primary"` or monitor name | `"primary"` | Specific display screen for visual overlay |
-| `auto_show_settings` | bool | | `true` | Auto-show Settings window on startup |
+| `auto_show_settings` | bool | | `false` | Auto-show Settings window on startup |
 | `show_notification` | bool | | `false` | Desktop toast notification after text delivery |
 | `setup_completed` | bool | | `false` on a new install | Whether the first-run wizard has been finished. Absent from a config file written by an earlier VoxCtrl, which is read as `true` — an existing install has plainly been set up already, and must not be handed a setup wizard on upgrade |
 
