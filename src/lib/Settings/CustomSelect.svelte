@@ -21,6 +21,31 @@
   const VIEWPORT_MARGIN = 8;
 
   /**
+   * Find any ancestor that forms a containing block for `position: fixed`
+   * (e.g. elements with transform, perspective, filter, or will-change).
+   */
+  function getContainingBlock(el: HTMLElement): HTMLElement | null {
+    let parent = el.parentElement;
+    while (parent && parent !== document.body && parent !== document.documentElement) {
+      const style = window.getComputedStyle(parent);
+      if (
+        (style.transform && style.transform !== "none") ||
+        (style.perspective && style.perspective !== "none") ||
+        (style.filter && style.filter !== "none") ||
+        (style as any).contain === "paint" ||
+        (style as any).contain === "layout" ||
+        (style as any).contain === "strict" ||
+        (style as any).contain === "content" ||
+        (style as any).willChange === "transform"
+      ) {
+        return parent;
+      }
+      parent = parent.parentElement;
+    }
+    return null;
+  }
+
+  /**
    * Place the open menu in viewport coordinates.
    *
    * The menu cannot be positioned inside the wrapper: every settings panel and
@@ -29,20 +54,31 @@
    * which is what hid the lower half of the delivery list. Fixed positioning
    * escapes the clip, so the menu is measured against the trigger instead, and
    * flipped above it when the space below is too small.
+   *
+   * In CSS, `position: fixed` uses an ancestor as its containing block if that
+   * ancestor has a `transform`, `perspective`, `filter`, or `will-change`. We
+   * account for any such containing block so the menu remains accurately anchored.
    */
   function positionMenu() {
     if (!containerEl) return;
     const rect = containerEl.getBoundingClientRect();
+
+    const containingBlock = getContainingBlock(containerEl);
+    const cbRect = containingBlock ? containingBlock.getBoundingClientRect() : null;
+    const parentLeft = cbRect ? cbRect.left : 0;
+    const parentTop = cbRect ? cbRect.top : 0;
+    const parentBottom = cbRect ? cbRect.bottom : window.innerHeight;
+
     const below = window.innerHeight - rect.bottom - MENU_GAP - VIEWPORT_MARGIN;
     const above = rect.top - MENU_GAP - VIEWPORT_MARGIN;
     const openUpwards = below < 160 && above > below;
     const maxHeight = Math.max(120, Math.floor(openUpwards ? above : below));
 
     menuStyle = openUpwards
-      ? `position: fixed; left: ${rect.left}px; width: ${rect.width}px; ` +
-        `bottom: ${window.innerHeight - rect.top + MENU_GAP}px; max-height: ${maxHeight}px;`
-      : `position: fixed; left: ${rect.left}px; width: ${rect.width}px; ` +
-        `top: ${rect.bottom + MENU_GAP}px; max-height: ${maxHeight}px;`;
+      ? `position: fixed; left: ${rect.left - parentLeft}px; width: ${rect.width}px; ` +
+        `bottom: ${parentBottom - rect.top + MENU_GAP}px; max-height: ${maxHeight}px;`
+      : `position: fixed; left: ${rect.left - parentLeft}px; width: ${rect.width}px; ` +
+        `top: ${rect.bottom + MENU_GAP - parentTop}px; max-height: ${maxHeight}px;`;
   }
 
   function toggleOpen() {

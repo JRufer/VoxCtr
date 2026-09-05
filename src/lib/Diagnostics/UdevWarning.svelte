@@ -566,6 +566,6 @@
 
   @keyframes scaleUp {
     from { transform: scale(0.98); opacity: 0; }
-    to { transform: scale(1); opacity: 1; }
+    to { transform: none; opacity: 1; }
   }
 </style>

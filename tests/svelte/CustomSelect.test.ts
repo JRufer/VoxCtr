@@ -98,4 +98,49 @@ describe("CustomSelect dropdown placement", () => {
     expect(onchange).toHaveBeenCalledWith("b");
     expect(container.querySelector(".custom-dropdown-menu")).toBeNull();
   });
+
+  test("offsets fixed coordinates when an ancestor forms a containing block", async () => {
+    stubTriggerRect(100);
+    const { container } = render(CustomSelect, { value: "a", options });
+
+    // Simulate an ancestor with a CSS transform (e.g. section with slideIn animation)
+    vi.spyOn(window, "getComputedStyle").mockImplementation((el: Element) => {
+      if (el === container) {
+        return {
+          transform: "translateY(0px)",
+          perspective: "none",
+          filter: "none",
+          contain: "none",
+          willChange: "auto",
+        } as CSSStyleDeclaration;
+      }
+      return {
+        transform: "none",
+        perspective: "none",
+        filter: "none",
+        contain: "none",
+        willChange: "auto",
+      } as CSSStyleDeclaration;
+    });
+
+    vi.spyOn(container, "getBoundingClientRect").mockReturnValue({
+      top: 40,
+      bottom: 600,
+      left: 10,
+      right: 500,
+      width: 490,
+      height: 560,
+      x: 10,
+      y: 40,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    const menu = await openMenu(container);
+
+    expect(menu.style.position).toBe("fixed");
+    // Trigger is at left: 20px, container containing block is at left: 10px -> left: 10px
+    expect(menu.style.left).toBe("10px");
+    // Trigger is at bottom: 136px + 4px, container top: 40px -> top: 100px
+    expect(menu.style.top).toBe("100px");
+  });
 });
