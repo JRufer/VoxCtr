@@ -41,7 +41,14 @@ pub struct UpdateCheckPayload {
 
 /// Run a check and remember the result. Returns what to show the user.
 pub async fn check(state: &Arc<AppState>) -> Result<UpdateCheckPayload, String> {
-    let outcome = voxctrl_update::check(CURRENT_VERSION)
+    // Which release artifact this binary *is*, so the update keeps the variant
+    // the user installed. On Windows the installer writes identical paths for
+    // the CPU and GPU builds, so nothing on disk can answer this — only the
+    // features the binary was compiled with.
+    let gpu_build = voxctrl_inference::moonshine_gpu_backend().is_some()
+        || voxctrl_inference::whisper_gpu_backend().is_some();
+
+    let outcome = voxctrl_update::check(CURRENT_VERSION, gpu_build)
         .await
         .map_err(|e| e.to_string())?;
 

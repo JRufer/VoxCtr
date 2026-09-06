@@ -39,12 +39,85 @@ pub fn whisper_gpu_backend() -> Option<&'static str> {
 /// [`whisper_gpu_backend`] rather than inferred from it: they are genuinely
 /// different answers in the build most people run.
 pub fn moonshine_gpu_backend() -> Option<&'static str> {
+    // Same order as `MoonshineBackend::with_gpu` registers them in. The two
+    // being one edit apart is the whole risk here, so a test holds them
+    // together rather than a comment alone.
     if cfg!(feature = "moonshine-cuda") {
         Some("cuda")
     } else if cfg!(feature = "moonshine-coreml") {
         Some("coreml")
+    } else if cfg!(feature = "moonshine-webgpu") {
+        Some("webgpu")
     } else {
         None
+    }
+}
+
+/// The same provider, spelled the way ONNX Runtime spells it, for registration
+/// and logging.
+///
+/// A pure mapping over [`moonshine_gpu_backend`] rather than a second `cfg`
+/// cascade: the Engine tab and the session builder then cannot name different
+/// providers, which is the failure mode worth designing out. `with_gpu` still
+/// selects the provider *type* by `cfg`, but on exactly the conditions above.
+// Its only non-test caller is the Moonshine backend, which is compiled out
+// without the `moonshine` feature; the tests below still exercise it there.
+#[cfg_attr(not(feature = "moonshine"), allow(dead_code))]
+pub(crate) fn moonshine_gpu_provider() -> Option<&'static str> {
+    match moonshine_gpu_backend() {
+        Some("cuda") => Some("CUDA"),
+        Some("coreml") => Some("CoreML"),
+        Some("webgpu") => Some("WebGPU"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod gpu_backend_tests {
+    use super::*;
+
+    #[test]
+    fn every_reported_backend_has_a_provider_spelling() {
+        // A backend the mapping does not know would make `with_gpu` log a bare
+        // "GPU" while registering something specific — the Engine tab and the
+        // log disagreeing about what this build does. Runs in every feature
+        // configuration CI builds, including the default CPU one.
+        match moonshine_gpu_backend() {
+            Some(backend) => assert!(
+                moonshine_gpu_provider().is_some(),
+                "{backend} is reported to the UI but has no ONNX Runtime spelling"
+            ),
+            None => assert_eq!(
+                moonshine_gpu_provider(),
+                None,
+                "a CPU-only build named a GPU provider"
+            ),
+        }
+    }
+
+    #[test]
+    fn a_build_with_no_gpu_feature_reports_none() {
+        if cfg!(not(any(
+            feature = "moonshine-cuda",
+            feature = "moonshine-coreml",
+            feature = "moonshine-webgpu"
+        ))) {
+            assert_eq!(moonshine_gpu_backend(), None);
+        }
+    }
+
+    #[test]
+    fn the_webgpu_build_reports_webgpu() {
+        // Guards the release artifact: a `moonshine-webgpu` build that reported
+        // None would show "CPU only" in the Engine tab on the very build that
+        // exists to use the GPU.
+        if cfg!(all(
+            feature = "moonshine-webgpu",
+            not(any(feature = "moonshine-cuda", feature = "moonshine-coreml"))
+        )) {
+            assert_eq!(moonshine_gpu_backend(), Some("webgpu"));
+            assert_eq!(moonshine_gpu_provider(), Some("WebGPU"));
+        }
     }
 }
 

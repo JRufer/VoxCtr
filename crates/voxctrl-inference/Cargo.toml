@@ -50,13 +50,34 @@ moonshine = ["dep:ort", "dep:tokenizers"]
 # runtime at build *and* run time, which is exactly what the Vulkan AppImage
 # exists to avoid shipping.
 #
-# There is no `moonshine-vulkan` because ONNX Runtime has no Vulkan execution
-# provider. So the standard Vulkan build — where whisper.cpp *does* get the GPU
-# — runs Moonshine on the CPU, and holds its weights in RAM as fp32 rather than
-# in VRAM. `moonshine_gpu_backend()` reports which of these is true so the UI
-# can say so instead of leaving the user to measure it.
+# There is still no `moonshine-vulkan`: ONNX Runtime has no Vulkan execution
+# provider, so a `vulkan` build accelerates whisper.cpp and nothing else. What
+# closes that gap is `moonshine-webgpu` below, which reaches the same
+# vendor-neutral GPUs by a different road. `moonshine_gpu_backend()` reports
+# which of these a build actually has, so the UI can say so instead of leaving
+# the user to measure it.
 moonshine-cuda = ["moonshine", "ort/cuda"]
 moonshine-coreml = ["moonshine", "ort/coreml"]
+
+# Cross-vendor GPU offload for Moonshine, via ONNX Runtime's WebGPU execution
+# provider. This is the Windows counterpart to what `vulkan` does for
+# whisper.cpp: any modern GPU, no vendor SDK at build time, no runtime to ship.
+# On Windows ORT's WebGPU EP runs on Dawn over D3D12, so it covers NVIDIA, AMD
+# and Intel alike.
+#
+# Chosen over DirectML, which is the obvious-looking answer and does not work
+# here. `ort` exposes an `ort::ep::DirectML` and a `directml` feature, but
+# `ort-sys`'s prebuilt table (build/download/dist.txt) ships no DirectML binary
+# for any target, and its `resolve_dist()` never consults the `directml` feature
+# when choosing which prebuilt to fetch. Enabling it therefore downloads the
+# plain CPU runtime, compiles fine, and then fails to register the provider at
+# run time — forever. Reaching real DirectML means switching to `load-dynamic`
+# and shipping Microsoft's own onnxruntime.dll and DirectML.dll, which gives up
+# the self-contained binary the rest of this file is arranged around.
+#
+# `wgpu` is a tag `resolve_dist()` does understand, and
+# `x86_64-pc-windows-msvc+wgpu` is a prebuilt that exists.
+moonshine-webgpu = ["moonshine", "ort/webgpu"]
 
 [dependencies.ort]
 version = "2.0.0-rc.12"

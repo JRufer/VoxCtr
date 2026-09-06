@@ -75,6 +75,19 @@ jobs:
       - name: cargo check (workspace, default features)
         run: cargo check --workspace --all-targets
 
+      # The GPU features are off by default, so the workspace check above never
+      # compiles a line of their execution-provider code — and the first thing
+      # that would is a release build, where a mistake costs a whole run. That
+      # is the same shape of gap that let the Windows backend ship unbuildable,
+      # so each shipped GPU variant gets checked here.
+      #
+      # `moonshine-webgpu` is what the Windows GPU release artifact is built
+      # with; `vulkan` is what the Linux GPU AppImage is built with. Both pull
+      # their own prebuilt ONNX Runtime / compile their own shaders, so this is
+      # not free, but it is far cheaper than finding out at release time.
+      - name: cargo check (moonshine-webgpu)
+        run: cargo check -p voxctrl-app --features moonshine-webgpu
+
   # ── Unit tests ────────────────────────────────────────────────────────────────
   cargo-test:
     name: cargo test

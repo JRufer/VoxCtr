@@ -23,7 +23,11 @@ pub enum InstallKind {
         vulkan: bool,
     },
     /// A Windows install, updated by running the new installer.
-    WindowsInstaller,
+    /// A Windows NSIS installation, replaced by re-running the installer.
+    ///
+    /// `webgpu` marks the GPU variant. Unlike the AppImage there is no filename
+    /// to read it off, so it comes from the build's own features.
+    WindowsInstaller { webgpu: bool },
     /// Installed by something that owns the files — a `.deb`, a distro package.
     ManagedPackage,
     /// A development build, or anything else we cannot safely replace.
@@ -34,14 +38,14 @@ impl InstallKind {
     /// Whether VoxCtrl can replace itself, as opposed to pointing the user at
     /// the download page.
     pub fn can_self_update(&self) -> bool {
-        matches!(self, Self::AppImage { .. } | Self::WindowsInstaller)
+        matches!(self, Self::AppImage { .. } | Self::WindowsInstaller { .. })
     }
 
     /// Why self-updating is unavailable, phrased for the user. `None` when it
     /// is available.
     pub fn unsupported_reason(&self) -> Option<&'static str> {
         match self {
-            Self::AppImage { .. } | Self::WindowsInstaller => None,
+            Self::AppImage { .. } | Self::WindowsInstaller { .. } => None,
             Self::ManagedPackage => Some(
                 "This copy of VoxCtrl was installed by your package manager, which owns \
                  the files. Update it the same way you installed it, or download the new \
@@ -61,7 +65,14 @@ impl InstallKind {
 /// An AppImage sets `APPIMAGE` to the absolute path of the image file — that is
 /// the whole detection, and it is the runtime's own contract. Everything else
 /// is decided from where the executable sits.
-pub fn detect() -> InstallKind {
+///
+/// `gpu_build` says whether this binary is the GPU variant of its platform's
+/// release artifacts. An AppImage can read that off its own filename; a Windows
+/// installation cannot, because the installer writes the same paths either way.
+/// So the caller — compiled from the same features as the binary it is asking
+/// about — has to say. Getting it wrong means a GPU install quietly updating
+/// itself onto the CPU build.
+pub fn detect(gpu_build: bool) -> InstallKind {
     let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from).filter(|p| !p.as_os_str().is_empty());
     if let Some(path) = appimage {
         let path = std::fs::canonicalize(&path).unwrap_or(path);
@@ -70,12 +81,20 @@ pub fn detect() -> InstallKind {
     }
 
     let exe = std::env::current_exe().unwrap_or_default();
-    classify_exe_path(&exe)
+    classify_exe_path_with(&exe, gpu_build)
 }
 
 /// The part of [`detect`] that depends only on the executable path, split out so
 /// it can be tested without a real installation.
+///
+/// Assumes a CPU build; [`classify_exe_path_with`] is the form that takes the
+/// variant. Kept because most callers and tests do not care.
 pub fn classify_exe_path(exe: &Path) -> InstallKind {
+    classify_exe_path_with(exe, false)
+}
+
+/// [`classify_exe_path`], told whether this is the GPU build.
+pub fn classify_exe_path_with(exe: &Path, gpu_build: bool) -> InstallKind {
     if cfg!(target_os = "windows") {
         // The NSIS bundle installs under Program Files or the user's local
         // app data; either way re-running the installer is the update path.
@@ -83,10 +102,11 @@ pub fn classify_exe_path(exe: &Path) -> InstallKind {
         return if is_build_dir(exe) {
             InstallKind::Unmanaged
         } else {
-            InstallKind::WindowsInstaller
+            InstallKind::WindowsInstaller { webgpu: gpu_build }
         };
     }
 
+    let _ = gpu_build;
     if is_build_dir(exe) {
         return InstallKind::Unmanaged;
     }
@@ -133,12 +153,22 @@ pub fn select_asset<'a>(kind: &InstallKind, assets: &'a [ReleaseAsset]) -> Optio
         InstallKind::AppImage { vulkan: false, .. } => {
             appimage_named(assets, "-linux-x86_64.appimage")
         }
-        InstallKind::WindowsInstaller => assets.iter().find(|a| {
-            let n = a.name.to_lowercase();
-            n.ends_with("-windows-x86_64.exe")
-        }),
+        // Same rule as the AppImage above: keep the GPU build when the release
+        // has one, and take the CPU build rather than skip an update when it
+        // does not — it runs on the same machine.
+        InstallKind::WindowsInstaller { webgpu: true } => windows_named(assets, "-windows-x86_64-webgpu.exe")
+            .or_else(|| windows_named(assets, "-windows-x86_64.exe")),
+        InstallKind::WindowsInstaller { webgpu: false } => {
+            windows_named(assets, "-windows-x86_64.exe")
+        }
         InstallKind::ManagedPackage | InstallKind::Unmanaged => None,
     }
+}
+
+fn windows_named<'a>(assets: &'a [ReleaseAsset], suffix: &str) -> Option<&'a ReleaseAsset> {
+    assets
+        .iter()
+        .find(|a| a.name.to_lowercase().ends_with(suffix))
 }
 
 fn appimage_named<'a>(assets: &'a [ReleaseAsset], suffix: &str) -> Option<&'a ReleaseAsset> {
@@ -209,7 +239,40 @@ mod tests {
     #[test]
     fn windows_takes_the_installer() {
         let assets = release_assets();
-        let picked = select_asset(&InstallKind::WindowsInstaller, &assets).unwrap();
+        let picked =
+            select_asset(&InstallKind::WindowsInstaller { webgpu: false }, &assets).unwrap();
+        assert_eq!(picked.name, "VoxCtrl_0.4.0_x64-setup-windows-x86_64.exe");
+    }
+
+    #[test]
+    fn a_webgpu_windows_install_stays_on_the_gpu_build() {
+        let mut assets = release_assets();
+        assets.push(asset("VoxCtrl_0.5.0_x64-setup-windows-x86_64-webgpu.exe"));
+
+        let picked =
+            select_asset(&InstallKind::WindowsInstaller { webgpu: true }, &assets).unwrap();
+        assert_eq!(picked.name, "VoxCtrl_0.5.0_x64-setup-windows-x86_64-webgpu.exe");
+    }
+
+    #[test]
+    fn a_webgpu_windows_install_takes_the_cpu_build_rather_than_skip_an_update() {
+        // Same rule the Vulkan AppImage follows: a release that shipped only
+        // the CPU installer is still an upgrade worth taking.
+        let assets = release_assets();
+        let picked =
+            select_asset(&InstallKind::WindowsInstaller { webgpu: true }, &assets).unwrap();
+        assert_eq!(picked.name, "VoxCtrl_0.4.0_x64-setup-windows-x86_64.exe");
+    }
+
+    #[test]
+    fn a_cpu_windows_install_is_never_upgraded_onto_the_gpu_build() {
+        // The GPU installer needs a GPU; handing it to a machine that asked for
+        // the CPU build would be a downgrade dressed as an update.
+        let mut assets = release_assets();
+        assets.push(asset("VoxCtrl_0.5.0_x64-setup-windows-x86_64-webgpu.exe"));
+
+        let picked =
+            select_asset(&InstallKind::WindowsInstaller { webgpu: false }, &assets).unwrap();
         assert_eq!(picked.name, "VoxCtrl_0.4.0_x64-setup-windows-x86_64.exe");
     }
 
