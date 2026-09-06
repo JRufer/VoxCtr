@@ -968,9 +968,10 @@ pub fn hotkey_status(health: &voxctrl_hotkeys::ListenerHealth) -> HotkeyStatusPa
                     .to_string()
             }
         }
-        voxctrl_hotkeys::Backend::WindowsHook => {
-            "Global shortcuts are active.".to_string()
-        }
+        voxctrl_hotkeys::Backend::WindowsHook => (
+            "VoxCtrl is receiving shortcuts through a Windows low-level keyboard hook.              Every gesture style works, including bare modifiers, and no permission setup              was needed — but in this mode every keystroke passes through VoxCtrl. Keys are              matched against your shortcuts and discarded; nothing is stored or sent              anywhere. Windows does not deliver keys to this hook while an elevated              application has focus, or on the secure desktop (the UAC prompt and the lock              screen), so shortcuts do not fire there."
+        )
+        .to_string(),
         voxctrl_hotkeys::Backend::X11 => (
             "Your desktop has no global-shortcuts portal, so VoxCtrl is reading X11 key \
              events directly. Every gesture style works, including bare modifiers, and no \

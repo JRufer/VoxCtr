@@ -151,6 +151,7 @@ pub fn start_dbus_service(app_state: Arc<AppState>) {
 ///
 /// An unknown or empty id leaves whatever the app already had, which is the
 /// "Focused Window" default on a fresh start.
+#[cfg(target_os = "linux")]
 async fn apply_dbus_binding(state: &Arc<AppState>, binding_id: &str) {
     if binding_id.is_empty() {
         return;

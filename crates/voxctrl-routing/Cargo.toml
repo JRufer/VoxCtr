@@ -24,7 +24,9 @@ async-trait = "0.1"
 zbus = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-base64 = { workspace = true }
+# Keystroke synthesis for the `inject` target. Shared with voxctrl-inject and
+# read by voxctrl-hotkeys, so it lives in a crate none of them depends on.
+voxctrl-winput = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -1,3 +1,9 @@
+// The overlay is a GUI sidecar, so it must not open a console window of its
+// own. `main.rs` has carried this for the settings app since the start; without
+// the same line here a console flashed up — or sat there — beside every
+// dictation on Windows.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 use std::io::BufRead;
@@ -1259,12 +1265,41 @@ fn park_offscreen(ui: &OverlayWindow) {
     });
 }
 
+/// Stops the overlay ever taking focus.
+///
+/// `set_cursor_hittest(false)` already makes it click-through, so a user cannot
+/// focus it by clicking. `WS_EX_NOACTIVATE` covers the rest: without it the
+/// window can still be activated when the shell reorders the z-order, and an
+/// overlay that takes focus mid-dictation sends the transcription to itself
+/// instead of to whatever the user was typing into.
+#[cfg(target_os = "windows")]
+fn deny_activation(hwnd: isize) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+    };
+    unsafe {
+        let hwnd = hwnd as *mut core::ffi::c_void;
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE as isize);
+    }
+}
+
 /// Configures the overlay window so that it never captures mouse clicks or cursor events,
 /// passing all pointer interactions down to the UI underneath at all times.
 fn apply_clickthrough(ui: &OverlayWindow) {
     ui.window().with_winit_window(|w| {
         // Platform-agnostic / Wayland / Windows / macOS cursor hit-test disable
         let _ = w.set_cursor_hittest(false);
+
+        #[cfg(target_os = "windows")]
+        {
+            use i_slint_backend_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            if let Ok(handle) = w.window_handle() {
+                if let RawWindowHandle::Win32(h) = handle.as_raw() {
+                    deny_activation(h.hwnd.get());
+                }
+            }
+        }
 
         #[cfg(target_os = "linux")]
         {

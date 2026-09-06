@@ -27,5 +27,26 @@ futures-util = { workspace = true }
 zbus = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-# rdev provides global hotkey listening on Windows
-rdev = "0.5"
+# The Win32 low-level keyboard hook, called directly.
+#
+# This replaced `rdev`, which could not serve the job on two counts. It names
+# keys with its own vocabulary (`MetaLeft`, `KeyA`), and translating those into
+# the evdev names every other part of VoxCtrl speaks is what the Windows backend
+# used to get wrong — `KEY_METALEFT` never matched the stored `KEY_LEFTMETA`, so
+# no default binding could fire. And it hides the two things this backend needs:
+# the scan code, which is the layout-independent identity the settings UI
+# records, and the hook's return value, which is the only way to stop a bound
+# key also reaching the focused application.
+#
+# windows-sys rather than the `windows` crate: this needs six functions and a
+# struct, the raw FFI signatures are unambiguous, and 0.61 is already in the
+# dependency graph via Tauri, so it adds nothing to compile.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+# `INJECTED_TAG`: the marker on VoxCtrl's own synthesised keystrokes, so the
+# hook can ignore them instead of re-firing bindings from the app's output.
+voxctrl-winput = { workspace = true }

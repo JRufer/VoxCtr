@@ -8,11 +8,13 @@ use tokio::sync::Mutex;
 use voxctrl_hotkeys::GestureKind;
 
 use crate::state::AppState;
+#[cfg(target_os = "linux")]
 use crate::tray::update_tray_for_setup;
-use crate::window::{
-    setup_blocker, show_setup_window, BLIND_ALERT_INTERVAL, SETUP_NOTICE_INTERVAL,
-    SETUP_POLL_INTERVAL,
-};
+use crate::window::{setup_blocker, show_setup_window, SETUP_NOTICE_INTERVAL};
+// Only `spawn_setup_watcher` uses these, and it is Linux-only: it polls for a
+// desktop portal that has bound nothing, a failure the Windows hook cannot have.
+#[cfg(target_os = "linux")]
+use crate::window::{BLIND_ALERT_INTERVAL, SETUP_POLL_INTERVAL};
 
 pub fn spawn_audio_coordinator(
     state_for_audio: Arc<AppState>,

@@ -10,10 +10,12 @@ use crate::state::AppState;
 static SETUP_MENU_ITEM: OnceLock<tauri::menu::MenuItem<tauri::Wry>> = OnceLock::new();
 
 pub const TRAY_SETUP_OK: &str = "🩺  Setup & Diagnostics";
+#[cfg(target_os = "linux")]
 pub const TRAY_SETUP_BROKEN: &str = "⚠️  Global shortcuts unavailable";
 
 /// Reflect setup state in the tray, which is the one piece of VoxCtrl UI that
 /// is always on screen.
+#[cfg(target_os = "linux")]
 pub fn update_tray_for_setup(app: &tauri::AppHandle, ok: bool) {
     let app = app.clone();
     let handle = app.clone();

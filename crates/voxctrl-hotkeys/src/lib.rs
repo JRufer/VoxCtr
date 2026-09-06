@@ -2,6 +2,14 @@ pub mod gestures;
 mod health;
 mod keys;
 pub mod trigger;
+/// The Windows key table and suppression rules. Compiled everywhere, not just
+/// on Windows, so its tests run on the Linux lane where the suite actually runs.
+///
+/// Its only non-test consumer is the Windows backend, so off Windows every item
+/// here is "unused" as far as a non-test build can tell — hence the allow. The
+/// tests are what keep it honest, and they run on both.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod win_keys;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -16,6 +24,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use voxctrl_routing::HotkeyBinding;
+
 
 pub use gestures::{GestureEvent, GestureKind};
 pub use health::{Backend, BoundShortcut, ListenerHealth};

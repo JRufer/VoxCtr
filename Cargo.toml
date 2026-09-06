@@ -7,6 +7,7 @@ members = [
     "crates/voxctrl-inference",
     "crates/voxctrl-tts",
     "crates/voxctrl-inject",
+    "crates/voxctrl-winput",
     "crates/voxctrl-dbus",
     "crates/voxctrl-mcp",
     "crates/voxctrl-llm",
@@ -17,7 +18,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["VoxCtrl Contributors"]
 license = "MIT"
@@ -126,6 +127,7 @@ voxctrl-audio    = { path = "crates/voxctrl-audio" }
 voxctrl-inference = { path = "crates/voxctrl-inference" }
 voxctrl-tts      = { path = "crates/voxctrl-tts" }
 voxctrl-inject   = { path = "crates/voxctrl-inject" }
+voxctrl-winput   = { path = "crates/voxctrl-winput" }
 voxctrl-dbus     = { path = "crates/voxctrl-dbus" }
 voxctrl-mcp      = { path = "crates/voxctrl-mcp" }
 voxctrl-llm      = { path = "crates/voxctrl-llm" }

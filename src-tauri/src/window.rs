@@ -90,11 +90,13 @@ pub const SETUP_NOTICE_INTERVAL: Duration = Duration::from_secs(60);
 /// change made elsewhere — the portal coming up, a shortcut reassigned in the
 /// desktop's settings — visibly flips the app to working within a couple of
 /// seconds.
+#[cfg(target_os = "linux")]
 pub const SETUP_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Re-alert cadence while nothing can deliver shortcuts at all. In that state
 /// no shortcut can reach the app, so this is the only way the user hears about
 /// it while they are pressing keys and getting nothing.
+#[cfg(target_os = "linux")]
 pub const BLIND_ALERT_INTERVAL: Duration = Duration::from_secs(300);
 
 pub fn set_app_handle(handle: tauri::AppHandle) {

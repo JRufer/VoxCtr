@@ -1,0 +1,22 @@
+[package]
+name = "voxctrl-winput"
+version.workspace = true
+edition.workspace = true
+
+# Synthesised keyboard input on Windows, and the marker that identifies it.
+#
+# Its own crate rather than a module in `voxctrl-inject` because three crates
+# need it and two of them cannot depend on that one: `voxctrl-hotkeys` reads the
+# marker, `voxctrl-inject` and `voxctrl-routing` write the input, and
+# hotkeys → routing already exists, so any other arrangement is a cycle. It
+# depends on nothing of VoxCtrl's, which is what keeps it usable from all three.
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+arboard = { workspace = true }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }

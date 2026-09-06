@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU32},
     Arc,
 };
+#[cfg(target_os = "linux")]
 use tauri::Manager;
 use tokio::sync::Mutex;
 use voxctrl_config::Config;

@@ -51,6 +51,17 @@ pub fn spawn_overlay_process(overlay_rx: crossbeam_channel::Receiver<String>) {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit());
+
+        // CREATE_NO_WINDOW. The overlay is a GUI process, but it is started by
+        // one, and without this Windows still hands the child a console — which
+        // appears as a black rectangle beside the overlay on the first
+        // dictation.
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            overlay_cmd.creation_flags(CREATE_NO_WINDOW);
+        }
         // Run the overlay through XWayland on Wayland sessions. A native
         // Wayland client cannot control its own stacking or position, so
         // always-on-top and the configured placement are simply ignored

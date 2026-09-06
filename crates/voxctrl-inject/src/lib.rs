@@ -1,5 +1,8 @@
 use anyhow::Result;
-use tracing::{debug, warn};
+use tracing::debug;
+#[cfg(target_os = "linux")]
+use tracing::warn;
+
 
 /// Inject text into the currently focused window using the best available
 /// method for the current platform and display server.
@@ -76,31 +79,11 @@ async fn clipboard_paste(text: &str) -> Result<()> {
 
 #[cfg(target_os = "windows")]
 async fn inject_windows(text: &str) -> Result<()> {
-    // Copy to clipboard, then send Ctrl+V using the windows-rs SendInput API.
-    // This is the most reliable method on Windows.
+    // `SendInput` is a blocking Win32 call and long text is a lot of events, so
+    // it does not belong on an async worker.
     let t = text.to_string();
-    tokio::task::spawn_blocking(move || {
-        let mut cb = arboard::Clipboard::new()?;
-        cb.set_text(&t)?;
-        anyhow::Ok(())
-    })
-    .await??;
-
-    send_ctrl_v_windows().await?;
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-async fn send_ctrl_v_windows() -> Result<()> {
-    // PowerShell fallback while we wire up windows-rs SendInput
-    tokio::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^v')",
-        ])
-        .status()
-        .await?;
+    tokio::task::spawn_blocking(move || voxctrl_winput::deliver(&t)).await??;
+    debug!("Injected via SendInput");
     Ok(())
 }
 
