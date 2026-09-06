@@ -673,7 +673,7 @@
           {#if hotkeyStatus.backend === "portal"}
             Your desktop is handling these shortcuts
           {:else if hotkeyStatus.backend === "windows_hook"}
-            Global shortcuts are active
+            Reading keystrokes with a keyboard hook
           {:else if hotkeyStatus.backend === "evdev"}
             Reading input devices directly
           {:else if hotkeyStatus.backend === "starting"}

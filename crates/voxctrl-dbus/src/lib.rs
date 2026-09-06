@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::sync::Mutex;
+#[cfg(target_os = "linux")]
 use tracing::info;
 
 // ── Shared state ──────────────────────────────────────────────────────────────

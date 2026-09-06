@@ -65,7 +65,17 @@ $env:CUDA_COMPUTE_CAP = "86"   # Set to your GPU's compute capability
 npm run tauri build -- --features cuda
 ```
 
-Without the `cuda` feature flag, Whisper inference runs on the CPU. The `cuda` feature is opt-in and never required.
+Without the `cuda` feature flag, Whisper inference runs on the CPU. The `cuda`
+feature is opt-in and never required.
+
+**There is deliberately no Vulkan build for Windows.** whisper.cpp's Vulkan
+backend fails to register on Windows MSVC static builds — which is exactly what
+`whisper-rs-sys` produces for Rust — and falls back to the CPU while reporting
+that it found a GPU ([whisper.cpp#3750](https://github.com/ggml-org/whisper.cpp/issues/3750),
+open against the `whisper-rs` version this workspace pins). A GPU build that is
+silently a CPU build is worse than no GPU build, so the released Windows
+installer is CPU-only until either that is fixed or the DirectML execution
+provider lands.
 
 ### Using the build script
 
@@ -104,7 +114,8 @@ Supported sizes: `tiny`, `base`, `small`, `medium`, `large-v3`, `large-v3-turbo`
 
 ## Piper TTS (optional)
 
-To use Piper neural TTS, download the Windows binary and place it at:
+Piper is the default TTS engine, and on Windows it is the one thing VoxCtrl
+cannot install for you yet. Download the Windows release and place the binary at:
 
 ```
 %LOCALAPPDATA%\voxctrl\piper\piper.exe
@@ -112,17 +123,81 @@ To use Piper neural TTS, download the Windows binary and place it at:
 
 Download from: https://github.com/rhasspy/piper/releases
 
-Voice models go in `%LOCALAPPDATA%\voxctrl\piper-voices\`. The Settings UI has a download button for each supported voice.
+Voice models go in `%LOCALAPPDATA%\voxctrl\piper-voices\`. The Settings UI has a
+download button for each supported voice, and those *do* work on Windows — it is
+only the engine binary that has to be placed by hand.
+
+**Or pick an engine that needs nothing.** Settings → Text-to-Speech offers
+Pocket-TTS and Breeze-TTS-2, which are pure Rust plus ONNX and work out of the box.
+eSpeak-NG and Inflect-Micro both shell out to `espeak-ng`, which is not on a stock
+Windows machine, so they need it installed and on `PATH` first.
 
 ---
 
 ## Text Injection
 
-On Windows, VoxCtrl injects dictated text by:
-1. Writing the text to the clipboard via `arboard`
-2. Simulating Ctrl+V via PowerShell `SendKeys`
+VoxCtrl types dictated text with the Win32 `SendInput` API, one `KEYEVENTF_UNICODE`
+event per UTF-16 code unit (see `crates/voxctrl-winput`). The character travels as
+itself, so no keyboard layout is consulted and no escaping layer can misread it.
 
-This works in most applications. Native `SendInput` integration is planned to improve reliability and speed.
+Transcriptions longer than 2000 characters go via the clipboard and a synthesised
+Ctrl+V instead, because the receiving application processes one message per
+character and a long paragraph visibly crawls into editors that do syntax work per
+keystroke. The previous clipboard contents are restored afterwards.
+
+Every synthesised event carries a marker in `dwExtraInfo` so VoxCtrl's own
+keyboard hook ignores it. Without that, dictating text that completes a shortcut
+would re-trigger that shortcut from VoxCtrl's own output.
+
+> **Previously:** this path shelled out to PowerShell and called
+> `SendKeys::SendWait`. The payload was base64-encoded so that no shell
+> metacharacter could escape the string — a real defence, and it worked — but
+> `SendKeys` then applied *its own* escaping to the decoded text, in which
+> `+ ^ % ~ ( ) { } [ ]` are syntax. "50% (a+b)" arrived as "50" plus two stray
+> chords and "array[0]" as "array0", so any dictation containing ordinary
+> punctuation came out wrong.
+
+### If nothing is typed
+
+`SendInput` cannot deliver into a window owned by a more-privileged process
+(Windows calls this UIPI). If dictation works everywhere except one application,
+that application is almost certainly running elevated; VoxCtrl has to be elevated
+too to type into it. VoxCtrl reports this rather than failing silently.
+
+---
+
+## Global Shortcuts
+
+Shortcuts arrive through a Win32 low-level keyboard hook
+(`crates/voxctrl-hotkeys/src/windows/`). Keys are identified by **scan code**,
+not virtual-key code, because scan codes are physical positions: a shortcut
+recorded on the key left of `S` fires from that key whatever the layout calls it,
+which is what `KeyboardEvent.code` in the settings UI records. The mapping from
+scan code to VoxCtrl's key names lives in `crates/voxctrl-hotkeys/src/win_keys.rs`
+and is deliberately outside the platform gate so its tests run on every platform.
+
+All four gesture styles work — hold, toggle, double-tap, double-tap-hold — the
+same as on Linux.
+
+Two limits are inherent to the mechanism and cannot be worked around:
+
+- Windows does not deliver keys to the hook while an **elevated application** has
+  focus, unless VoxCtrl is elevated too.
+- The hook never sees the **secure desktop** — the UAC prompt, the lock screen,
+  Ctrl+Alt+Del — so shortcuts do not fire there.
+
+The non-modifier key that *completes* a shortcut is swallowed, so binding
+`Super+Space` does not also open Windows Search. Modifiers are never swallowed:
+eating a bare Ctrl or Super would break every other shortcut on the machine.
+
+### Privacy
+
+A low-level keyboard hook is called for **every keystroke on the machine** — the
+same exposure as the evdev and X11 backends on Linux, and unlike the XDG portal,
+where the compositor owns the grab and VoxCtrl is told only that its own shortcut
+fired. The Hotkeys tab says so plainly on Windows and does not show the padlock
+it shows for the portal. Keys are matched against your shortcuts and discarded;
+nothing is stored, logged, or sent anywhere.
 
 ---
 

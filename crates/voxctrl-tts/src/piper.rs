@@ -3,7 +3,9 @@
 //! spawns the `piper` binary resolved here and calls back into
 //! [`get_voice_path`] / [`sample_rate_for_voice`].
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Result;
 use tracing::{info, warn};
@@ -189,8 +191,37 @@ fn extract_piper_archive(bytes: &[u8], dest_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Fetch the standalone Piper binary VoxCtrl manages for itself.
+///
+/// Unix only. On Windows this reports what it cannot do rather than returning
+/// success: the body used to be `#[cfg(unix)]` with a bare `Ok(())` fallthrough,
+/// so on Windows it claimed to have installed Piper and had done nothing, and
+/// the first sign of trouble was silent TTS. Piper is the default engine, so
+/// that is the common path, not an edge case.
+///
+/// Wiring up the download needs the Windows release asset — a zip, not the
+/// tarball the Unix path unpacks — which means a zip reader and a verified
+/// URL. Until then, saying so is better than pretending.
+#[cfg(not(unix))]
 pub async fn download_piper_binary() -> Result<()> {
-    #[cfg(unix)]
+    {
+        let dir = dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("voxctrl")
+            .join("piper");
+        anyhow::bail!(
+            "VoxCtrl cannot install Piper automatically on this platform yet. \
+             Download the Piper release for Windows from \
+             https://github.com/rhasspy/piper/releases and put piper.exe in \
+             {}, or choose a different engine in Settings → Text-to-Speech \
+             (Pocket-TTS needs no external binary).",
+            dir.display()
+        );
+    }
+}
+
+#[cfg(unix)]
+pub async fn download_piper_binary() -> Result<()> {
     {
         let local_dir = dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))

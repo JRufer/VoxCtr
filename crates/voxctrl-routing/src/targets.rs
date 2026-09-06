@@ -141,32 +141,25 @@ impl DeliveryTarget for InjectTarget {
 
         #[cfg(target_os = "windows")]
         {
-            // Use -EncodedCommand to pass the script as Base64 so that no shell
-            // metacharacter in the transcribed text ($, `, {}, etc.) can escape
-            // the string boundary and be interpreted by PowerShell.
-            let script = format!(
-                r#"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String("{}")))"#,
-                {
-                    // Encode the payload as UTF-8 Base64 so it is opaque to PowerShell parsing.
-                    use base64::{Engine as _, engine::general_purpose::STANDARD};
-                    STANDARD.encode(payload.as_bytes())
-                }
-            );
-            // Encode the whole script itself as UTF-16LE Base64 for -EncodedCommand.
-            let utf16: Vec<u16> = script.encode_utf16().collect();
-            let bytes: Vec<u8> = utf16.iter().flat_map(|c| c.to_le_bytes()).collect();
-            use base64::{Engine as _, engine::general_purpose::STANDARD};
-            let encoded = STANDARD.encode(&bytes);
-            let ok = tokio::process::Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", &encoded])
-                .status()
-                .await
-                .map(|s| s.success())
-                .unwrap_or(false);
-            return if ok {
-                DeliveryResult::ok(payload)
-            } else {
-                DeliveryResult::err("PowerShell SendKeys failed")
+            // `SendInput` with KEYEVENTF_UNICODE, via voxctrl-winput.
+            //
+            // This used to shell out to PowerShell and call
+            // `SendKeys::SendWait`. The payload was base64-encoded so no shell
+            // metacharacter could escape the string — a real defence, and it
+            // worked — but SendKeys then applied *its own* escaping to the
+            // decoded text, in which `+ ^ % ~ ( ) { } [ ]` are syntax. So
+            // "50% (a+b)" was typed as "50" plus two stray chords and
+            // "array[0]" as "array0": every dictation containing ordinary
+            // punctuation came out wrong. SendInput carries the character
+            // itself, so there is no escaping layer left to misread it.
+            let sent = tokio::task::spawn_blocking(move || {
+                voxctrl_winput::deliver(&payload).map(|()| payload)
+            })
+            .await;
+            return match sent {
+                Ok(Ok(payload)) => DeliveryResult::ok(payload),
+                Ok(Err(e)) => DeliveryResult::err(e.to_string()),
+                Err(e) => DeliveryResult::err(format!("Injection task failed: {e}")),
             };
         }
 
@@ -189,7 +182,10 @@ impl DeliveryTarget for InjectTarget {
             };
         }
         #[cfg(target_os = "windows")]
-        return TestResult { reachable: true, detail: "PowerShell SendKeys available".into() };
+        return TestResult {
+            reachable: true,
+            detail: "SendInput available (types Unicode directly)".into(),
+        };
         #[allow(unreachable_code)]
         TestResult { reachable: false, detail: "Platform not supported".into() }
     }
@@ -516,10 +512,15 @@ impl DeliveryTarget for FileTarget {
 
 // ── DbusTarget ────────────────────────────────────────────────────────────────
 
-pub struct DbusTarget(OutputTarget);
+/// D-Bus has no Windows counterpart, so off Linux this target only ever reports
+/// that. It still exists there because a `targets.toml` written on Linux has to
+/// load and round-trip on Windows rather than failing to parse — the config is
+/// shared, only the delivery is not.
+pub struct DbusTarget(#[cfg_attr(not(target_os = "linux"), allow(dead_code))] OutputTarget);
 
 #[async_trait::async_trait]
 impl DeliveryTarget for DbusTarget {
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
     async fn deliver(&self, text: &str) -> DeliveryResult {
         #[cfg(target_os = "linux")]
         {
@@ -1140,10 +1141,16 @@ impl DeliveryTarget for ChatTarget {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Whether `bin` can actually be spawned.
+///
+/// Defers to `voxctrl_config::find_in_path`, which mirrors what
+/// `Command::new` will do on each platform. This used to be a second,
+/// simpler implementation that searched `PATH` for a file with exactly the
+/// given name — so on Windows it looked for `echo`, never `echo.exe`, and
+/// reported every working Exec target as unreachable. Two copies of "can I run
+/// this?" is one too many; there is now one.
 fn which(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
-        .unwrap_or(false)
+    voxctrl_config::find_in_path(bin).is_some()
 }
 
 /// Public alias for tests — not part of the stable API.

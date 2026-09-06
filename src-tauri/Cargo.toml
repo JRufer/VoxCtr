@@ -59,6 +59,13 @@ crossbeam-channel = { workspace = true }
 chrono = { workspace = true }
 tauri-plugin-single-instance = "2.4.2"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Only for the overlay sidecar's WS_EX_NOACTIVATE, which winit does not expose.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
 zbus = { workspace = true }

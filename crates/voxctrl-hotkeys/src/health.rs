@@ -198,12 +198,22 @@ impl ListenerHealth {
         self.backend() == Backend::None && self.devices_denied() > 0
     }
 
-    /// Shortcuts are working without VoxCtrl having any access to input devices.
+    /// Shortcuts are working without VoxCtrl seeing any key but its own.
+    ///
+    /// This drives a padlock and a "VoxCtrl does not read your keyboard" claim
+    /// in the Hotkeys tab, so it is a promise, not a diagnostic. It is true only
+    /// where something else owns the key grab and hands VoxCtrl whole shortcuts:
+    /// the XDG portal, and a Mint custom keybinding that invokes VoxCtrl over
+    /// D-Bus.
+    ///
+    /// `Backend::WindowsHook` is deliberately not in that set, and used to be.
+    /// A `WH_KEYBOARD_LL` hook is called for every keystroke on the machine,
+    /// exactly like the evdev and X11 backends — which is why it sits with them
+    /// in [`Backend::sees_raw_keys`]. The two are exact opposites by
+    /// construction; `every_backend_either_sees_keys_or_is_private` holds them
+    /// to it.
     pub fn is_private(&self) -> bool {
-        matches!(
-            self.backend(),
-            Backend::Portal | Backend::WindowsHook | Backend::MintDbus
-        )
+        matches!(self.backend(), Backend::Portal | Backend::MintDbus)
     }
 
     pub fn set_supported(&self, supported: bool) {
@@ -417,6 +427,49 @@ mod tests {
         for backend in [Backend::X11, Backend::Evdev, Backend::WindowsHook, Backend::Portal] {
             assert_eq!(backend.gestures().len(), 4, "{backend:?} lost a gesture");
         }
+    }
+
+    #[test]
+    fn every_backend_either_sees_keys_or_is_private() {
+        // The invariant that `is_private()` exists to express: a backend either
+        // reads raw keystrokes or it is handed whole shortcuts, never both and
+        // never neither. `WindowsHook` was once in both sets at once, so the
+        // Hotkeys tab showed a padlock and "VoxCtrl does not read your
+        // keyboard" over a hook that is called for every key on the machine.
+        // Deciding a new backend's privacy is now a choice this test forces.
+        for backend in [
+            Backend::Portal,
+            Backend::X11,
+            Backend::MintDbus,
+            Backend::Evdev,
+            Backend::WindowsHook,
+        ] {
+            let h = ListenerHealth::default();
+            h.set_supported(true);
+            h.set_backend(backend);
+            assert_eq!(
+                backend.sees_raw_keys(),
+                !h.is_private(),
+                "{backend:?} claims to both read every key and read none"
+            );
+        }
+    }
+
+    #[test]
+    fn the_windows_hook_is_not_private() {
+        // Pinned separately from the invariant above so that flipping it back
+        // fails with a message that says what is wrong rather than only that
+        // two sets disagree.
+        let h = ListenerHealth::default();
+        h.set_supported(true);
+        h.set_backend(Backend::WindowsHook);
+
+        assert!(h.is_active());
+        assert!(
+            !h.is_private(),
+            "a WH_KEYBOARD_LL hook is called for every keystroke on the machine"
+        );
+        assert!(h.backend().sees_raw_keys());
     }
 
     #[test]

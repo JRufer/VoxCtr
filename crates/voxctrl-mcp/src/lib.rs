@@ -5,6 +5,7 @@
 //!   - speak_text(text) → {}
 //!   - get_status() → {recording, speaking}
 
+#[cfg(not(target_os = "windows"))]
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -12,8 +13,20 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
+#[cfg(not(target_os = "windows"))]
+use tracing::warn;
 
+/// Where the MCP server listens, in the form clients need.
+///
+/// The server has always bound the right thing per platform — a Unix socket on
+/// Linux, a named pipe on Windows — but this constant said `/tmp` regardless,
+/// and it is what the app, the README and `docs/architecture.md` quote to the
+/// user when telling an MCP client where to connect. On Windows that address
+/// does not exist.
+#[cfg(target_os = "windows")]
+pub const SOCKET_PATH: &str = r"\\.\pipe\voxctrl-mcp";
+#[cfg(not(target_os = "windows"))]
 pub const SOCKET_PATH: &str = "/tmp/voxctrl-mcp.sock";
 
 // ── JSON-RPC types ────────────────────────────────────────────────────────────
@@ -159,13 +172,13 @@ async fn run_named_pipe_server<C: McpCallbacks>(callbacks: Arc<C>) -> Result<()>
     // tokio supports this via tokio::net::windows::named_pipe
     use tokio::net::windows::named_pipe::{PipeMode, ServerOptions};
 
-    const PIPE_NAME: &str = r"\\.\pipe\voxctrl-mcp";
-    info!("MCP server listening on {PIPE_NAME}");
+    let pipe_name = SOCKET_PATH;
+    info!("MCP server listening on {pipe_name}");
 
     loop {
         let server = ServerOptions::new()
             .pipe_mode(PipeMode::Byte)
-            .create(PIPE_NAME)?;
+            .create(pipe_name)?;
 
         server.connect().await?;
 

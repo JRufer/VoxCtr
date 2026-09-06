@@ -96,21 +96,19 @@ jobs:
             vulkan: true
 
           # ── Windows CPU ────────────────────────────────────────────────────
-          # DISABLED: the Windows build is the slowest job in the matrix and
-          # nobody can test what it produces at the moment, so it is not worth
-          # the wait on every push to master.
-          #
-          # To re-enable: uncomment the five lines below, and put the Windows
-          # row back in the "## Downloads" table in the release body at the
-          # bottom of this file. Every Windows-specific *step* further down
-          # (`if: runner.os == 'Windows'`) is left in place and simply never
-          # runs while no Windows entry exists in this matrix — nothing else
-          # needs changing.
-          # - name: windows-cpu
-          #   os: windows-2022
-          #   features: ""
-          #   artifact_label: windows-x86_64
-          #   cuda: false
+          # NSIS installer, CPU inference. No Vulkan counterpart on purpose:
+          # whisper.cpp's Vulkan backend fails to register on Windows MSVC
+          # static builds — which is what whisper-rs-sys produces — and falls
+          # back to the CPU while reporting that it is on the GPU
+          # (ggml-org/whisper.cpp#3750, open against the exact whisper-rs this
+          # workspace pins). A GPU build that is silently a CPU build is worse
+          # than no GPU build, so Windows GPU support waits for either that fix
+          # or the DirectML execution provider.
+          - name: windows-cpu
+            os: windows-2022
+            features: ""
+            artifact_label: windows-x86_64
+            cuda: false
 
     steps:
       - uses: actions/checkout@v4
@@ -437,153 +435,77 @@ jobs:
           # "## Downloads" is evergreen, and GitHub appends its own generated
           # "What's Changed" list of merged PRs beneath all of this.
           #
-          # The Downloads table lists no Windows build because the Windows job
-          # is commented out of the build matrix above; a row for a file this
-          # workflow does not produce would send people looking for a download
-          # that is not there. Restore the row when the job comes back:
-          #   | Windows | `-windows-x86_64-setup.exe` | None |
-          # Note this is a literal YAML block scalar — a `#` inside `body:`
-          # would be published as text, which is why the row is removed rather
-          # than commented out.
+          # The Downloads table has to match what the build matrix above
+          # actually produces: a row for a file this workflow does not build
+          # sends people looking for a download that is not there, and a build
+          # with no row is one nobody finds. Note this is a literal YAML block
+          # scalar — a `#` inside `body:` would be published as text, so a row
+          # is removed rather than commented out.
           body: |
-            ## What's new in 0.4.0
+            ## What's new in 0.5.0
 
-            The largest release so far: a new machine is walked through setup instead of
-            dropped into a settings window, VoxCtrl can update itself, output targets are
-            now Output Commands and say how to use them, and a settings audit removed or
-            implemented every control that was doing nothing.
+            **VoxCtrl runs on Windows.** The installer is back in the release, and
+            the Windows code behind it works rather than merely compiling.
 
-            ### First-run setup wizard
+            ### Windows
 
-            A first launch used to open Settings on a config nobody had chosen — the
-            default model downloading in the background, a `Super+Space` binding the user
-            never saw, and no sign whether any of it worked. The first thing that told you
-            something was wrong was pressing a key and getting silence.
+            Windows had been a build target without being a supported platform.
+            The code was there, but no CI job had ever compiled the application
+            for it — the Windows check excluded both the speech engine and the
+            app itself — and three of its core paths were wrong:
 
-            A fresh install now gets a seven-step wizard in its own window: pick a
-            transcription engine and model size (downloaded before you continue), bind a
-            hotkey and register it with your desktop, choose an overlay, dictate a live
-            test, add a voice, and finish on a screen that reports anything that failed.
-            Every choice is written to the config as it is made, so quitting halfway keeps
-            what you picked.
+            - **Global shortcuts could not fire at all.** The hotkey backend
+              named keys in a vocabulary nothing else used, so the shipped
+              default (`Super+Space`) — and almost anything you could record —
+              never matched. It has been rewritten as a Win32 low-level keyboard
+              hook keyed by scan code, so shortcuts are positional and work the
+              same on any keyboard layout. All four gesture styles work, the same
+              as on Linux, and the key that completes a shortcut is swallowed so
+              binding `Super+Space` does not also open Windows Search.
+            - **Dictated text came out mangled.** Injection went through
+              PowerShell `SendKeys`, which reads `+ ^ % ~ ( ) { } [ ]` as its own
+              syntax: "50% (a+b)" arrived as "50" plus two stray chords, and
+              "array[0]" as "array0". Text is now typed with `SendInput`, which
+              carries each character as itself — no escaping layer, no keyboard
+              layout, and no process spawned per dictation. Long transcriptions
+              go via the clipboard and hand it back afterwards.
+            - **The privacy indicator said the opposite of the truth.** A
+              low-level keyboard hook is called for every keystroke on the
+              machine, but the status API grouped it with the desktop portal, so
+              the Hotkeys tab would have shown a padlock and "VoxCtrl does not
+              read your keyboard" over a backend that reads all of it. It now
+              reports what it is, and a test holds the two apart so they cannot
+              drift back together.
 
-            - The hotkey step offers only gestures your desktop's shortcut backend can
-              actually deliver, and will not let you past until the desktop has *accepted*
-              the binding — because the next screen is a live dictation test that would
-              otherwise be guaranteed to fail.
-            - The test step is genuinely end to end: the transcript is typed into the
-              wizard's own textarea down the real delivery path.
-            - The first binding is pointed at a "Command" output, so voice commands work
-              the day you add a second one, with nothing to re-bind.
-            - The window sizes itself to the display it opens on, so a 1080p desktop at
-              125% scaling no longer puts the Continue button past the bottom edge.
+            Also on Windows: the overlay no longer opens a console window or
+            steals focus mid-dictation, the MCP server advertises its named pipe
+            instead of a Unix socket path that does not exist there, and Piper
+            says it cannot install itself rather than reporting success and doing
+            nothing.
 
-            Run it again any time with `voxctrl --setup`, or Settings → General → "Open
-            setup wizard". An upgrade never triggers it: a config file written by an
-            earlier VoxCtrl reads as already set up.
+            Two limits are inherent to how Windows works, and VoxCtrl says so
+            rather than failing quietly: shortcuts do not fire while an elevated
+            application has focus or on the UAC prompt and lock screen, and
+            dictation cannot type into an elevated window unless VoxCtrl is
+            elevated too.
 
-            ### VoxCtrl updates itself
+            ### Build and CI
 
-            An AppImage sits where you downloaded it, so until now the only way to update
-            was to notice the release yourself and fetch the right file by hand.
+            The Windows `cargo check` no longer excludes any crate and now checks
+            test code too, and there is a Windows test lane beside the Linux one.
+            Every bug above was invisible because Windows code was excluded from
+            CI; that is the part most worth not repeating.
 
-            Ten seconds after launch, VoxCtrl asks GitHub what the latest release is. If
-            there is a newer one, a window shows the version, the release notes and the
-            download size, and offers **Update and restart**, **Skip this version** or
-            **Not now**. Confirming downloads the build matching your installation — CPU
-            AppImage or Vulkan AppImage — verifies it against the SHA-256 checksum GitHub
-            published, replaces the running file and restarts into it.
+            ### Notes
 
-            Nothing is replaced until a complete, verified file is on disk beside the one
-            it replaces, and the swap is a single rename. A failed download, a checksum
-            mismatch or a directory you cannot write to each leave the working version
-            exactly as it was, and "cannot write to" is detected *before* the download
-            rather than after 100 MB of it. A `.deb`, a distro package or a build from
-            source is told why it cannot self-update instead of being given a button that
-            cannot work.
+            The Windows build is CPU-only. whisper.cpp's Vulkan backend fails to
+            register on Windows MSVC static builds and falls back to the CPU while
+            reporting a GPU, so there is deliberately no Vulkan Windows artifact
+            until that is fixed. Linux is unaffected: the Vulkan AppImage is
+            unchanged.
 
-            **On privacy:** this is the first thing VoxCtrl does on the network without
-            being asked. It is one unauthenticated GET to the public releases API, sending
-            a `User-Agent` of `VoxCtrl/<version>` and nothing else — no cookie, no account,
-            no install ID, nothing about you or your machine. Settings → General →
-            "Check for a new version on launch" turns it off, as does one click in the
-            update window; with it off VoxCtrl makes no request unless you press "Check
-            now". docs/privacy.md documents exactly what is sent and how to watch it with
-            `tcpdump`.
-
-            ### Output Targets are now Output Commands
-
-            "Output Targets" described where text lands, which is the implementer's view.
-            What you actually do with one is say its name mid-dictation — and nothing in
-            the app ever said so.
-
-            The tab is now **Output Commands**, and it opens with the thing you need to
-            know: start dictation, say *"VoxCtrl"*, then the command's name, then your
-            text. *"VoxCtrl notes, remember to call the plumber"* sends the rest to the
-            command named **notes**. Dictation with no such phrase in it goes wherever your
-            hotkey already points.
-
-            Nothing on disk changed: still `targets.toml`, still `[[target]]`, still
-            `target_id` in bindings. No existing config, script or integration is touched.
-
-            ### Settings that were doing nothing — implemented or removed
-
-            An audit found controls that had never been wired to anything. Each was taken
-            in the direction it deserved.
-
-            **Now real:**
-
-            - **Noise suppression** runs RNNoise on the capture path, and the toggle
-              applies without a restart.
-            - **MCP record timeout** is now the default `transcribe_voice` listens for when
-              the caller omits one, instead of a hardcoded 15 seconds, and is advertised in
-              the tool schema.
-            - **Breeze-TTS-2 GPU** loads the model onto a CUDA or Metal device (opt-in at
-              build time; falls back to CPU with a warning).
-            - **File targets choose their timestamp format**, validated as you type, with
-              a bad pattern falling back to the default rather than costing you a
-              dictation.
-
-            **Removed, because nothing read them:** the AT-SPI2 section, Inference mode,
-            Silence duration, the TTS custom-vocabulary box, Breeze's temperature slider,
-            quiet mode, the Backend "Auto-detect" entry (it always resolved to
-            whisper.cpp), and four unwired options in the target editor. Existing
-            `config.json` and `targets.toml` files keep loading — the removed keys are
-            simply ignored.
-
-            ### Fixes and smaller changes
-
-            - **Dictation no longer appends a newline.** It appends a single trailing space
-              instead, so consecutive utterances do not run their words together; text that
-              already ends in whitespace is left alone.
-            - **The delivery-type dropdown is no longer clipped** by the editor's scrolling
-              body — it could previously cut off mid-list with the rest unreachable.
-            - **Clicking the tray now actually raises Settings** when it is open behind
-              another window, instead of blinking the taskbar entry.
-            - **Windows close when you close them**, and the app carries on in the tray
-              rather than treating the last window as a quit.
-            - **The HuggingFace token is asked for once** in the wizard and stored once; an
-              exported `HF_TOKEN` wins and is never written to the config.
-            - The settings sidebar sizes itself to its longest label instead of clipping it
-              on wide system fonts.
-            - The transcript history feature is gone.
-
-            ### Windows builds are paused
-
-            **This release has no Windows download.** The Windows job is the slowest leg of
-            the build and nothing it produced was being tested, so it is commented out of
-            the release workflow rather than removed — restoring it is uncommenting five
-            lines. Windows support in the code is untouched; only the automated build is
-            off. Build from source in the meantime.
-
-            ### Requirements
-
-            glibc 2.35 or newer and a GCC 12 libstdc++ — Ubuntu 22.04+, Linux
-            Mint 21+, Debian 12+, Fedora 36+, Arch, openSUSE Tumbleweed. Ubuntu
-            20.04, Mint 20, Debian 11 and RHEL 9 are below that baseline; build
-            from source there.
-
-            ---
+            The installer is not code-signed yet, so SmartScreen will warn that
+            the publisher is unknown.
 
             ## Downloads
 
@@ -593,12 +515,34 @@ jobs:
             |---|---|---|
             | Linux | `-linux-x86_64.AppImage` | None |
             | Linux (GPU) | `-linux-x86_64-vulkan.AppImage` | Any Vulkan GPU |
+            | Windows | `-windows-x86_64.exe` | None |
 
             **The Vulkan AppImage** is a portable GPU build: it accelerates any
             NVIDIA/AMD/Intel GPU via the host Vulkan driver, and falls back to
             CPU when no GPU is present.
 
             **CPU builds** run on any hardware, including AMD, Intel, and ARM.
+
+            **The Windows build** is an NSIS installer and runs inference on the
+            CPU. It is not code-signed yet, so SmartScreen will warn that the
+            publisher is unknown: choose **More info → Run anyway**.
+
+            ### Windows — first run
+
+            Windows 10 21H2 or newer, or Windows 11. Everything VoxCtrl needs is
+            in the installer; WebView2 ships with Windows 11 and the installer
+            fetches it on older builds.
+
+            Two things are worth knowing before the first dictation:
+
+            - **Microphone access.** Windows denies it silently. If dictation
+              produces nothing, check **Settings → Privacy & security →
+              Microphone** and allow desktop apps.
+            - **Global shortcuts** arrive through a Windows keyboard hook, so
+              every gesture works — but Windows does not deliver keys to it
+              while an elevated application has focus, or on the UAC prompt and
+              lock screen. Shortcuts do not fire there, and dictated text cannot
+              be typed into an elevated window unless VoxCtrl is elevated too.
 
             ### Linux CPU / GPU — first run
 
