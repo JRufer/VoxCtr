@@ -83,6 +83,12 @@ vulkan = ["voxctrl-inference/vulkan"]
 # default; without it a "moonshine" backend selection transparently falls back
 # to whisper-cpp.
 moonshine = ["voxctrl-inference/moonshine"]
+# GPU offload for Moonshine. Opt-in for the same reason as `cuda`: it needs the
+# CUDA runtime at build and run time. Note there is deliberately no Vulkan
+# equivalent — ONNX Runtime has none — so the `vulkan` build above accelerates
+# whisper.cpp only, and Moonshine stays on the CPU in it.
+moonshine-cuda = ["voxctrl-inference/moonshine-cuda"]
+moonshine-coreml = ["voxctrl-inference/moonshine-coreml"]
 # Compiles the Inflect-Micro-v2 ONNX text-to-speech engine into the app. On by
 # default; without it, selecting the engine reports that the build lacks it
 # instead of failing obscurely. Needs `espeak-ng` installed at runtime for

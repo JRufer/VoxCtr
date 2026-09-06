@@ -200,6 +200,29 @@ pub fn cuda_enabled() -> bool {
     cfg!(feature = "cuda")
 }
 
+/// What this build can actually offload to a GPU, per engine.
+///
+/// Both fields are decided at compile time and neither can be inferred from the
+/// other: the Vulkan build gives whisper.cpp the GPU and leaves Moonshine on the
+/// CPU, because ONNX Runtime has no Vulkan execution provider. The Engine tab
+/// asks for this so it can offer the device options the build can honour, and
+/// name the engine that cannot use the GPU at all.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AcceleratorSupport {
+    /// `"cuda"`, `"vulkan"`, or `None` on a CPU-only build.
+    pub whisper_gpu: Option<String>,
+    /// `"cuda"`, `"coreml"`, or `None` — `None` in every build shipped today.
+    pub moonshine_gpu: Option<String>,
+}
+
+#[tauri::command]
+pub fn accelerator_support() -> AcceleratorSupport {
+    AcceleratorSupport {
+        whisper_gpu: voxctrl_inference::whisper_gpu_backend().map(str::to_string),
+        moonshine_gpu: voxctrl_inference::moonshine_gpu_backend().map(str::to_string),
+    }
+}
+
 // ── Routing ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]

@@ -187,7 +187,7 @@ describe("EngineStep", () => {
       if (cmd === "check_model_downloaded") return false;
       if (cmd === "check_moonshine_downloaded") return false;
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return undefined;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
@@ -201,7 +201,7 @@ describe("EngineStep", () => {
       if (cmd === "check_model_downloaded") return args.modelSize === "small";
       if (cmd === "check_moonshine_downloaded") return false;
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return undefined;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
@@ -211,7 +211,7 @@ describe("EngineStep", () => {
   test("picking an engine marks that card selected on screen", async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
@@ -230,7 +230,7 @@ describe("EngineStep", () => {
   test("picking a model size highlights that size on screen", async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
@@ -244,7 +244,7 @@ describe("EngineStep", () => {
   test("the GPU toggle flips, and says which path it will use", async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return true;
+      if (cmd === "accelerator_support") return { whisper_gpu: "cuda", moonshine_gpu: null };
       return false;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
@@ -263,6 +263,35 @@ describe("EngineStep", () => {
     await waitFor(() => expect(toggle.textContent).toContain("ON · CUDA"));
   });
 
+  /**
+   * A CPU-only build has nowhere to offload to. The toggle used to name Vulkan
+   * anyway — it read the CUDA flag and assumed Vulkan whenever that was false —
+   * so a build with no GPU support at all offered to switch it on and reported
+   * "ON · Vulkan" once you did.
+   */
+  test("the GPU toggle says so, and does nothing, on a CPU-only build", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "moonshine_available") return true;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
+      return false;
+    });
+    render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
+
+    const toggle = (await screen.findByText("GPU offloading")).closest("button") as HTMLButtonElement;
+    const state = toggle.querySelector(".state") as HTMLElement;
+    await waitFor(() => expect(state.textContent).toContain("UNAVAILABLE"));
+    // The chip names the active path; it must not name one this build lacks.
+    expect(state.textContent).not.toMatch(/vulkan|cuda/i);
+    expect(toggle.disabled).toBe(true);
+
+    await fireEvent.click(toggle);
+
+    let current: any;
+    config.subscribe((c) => (current = c))();
+    expect(current.engine.whisper_cpp.device).not.toBe("cpu");
+    expect(state.textContent).toContain("UNAVAILABLE");
+  });
+
   test("an already-downloaded model needs no click before continuing", async () => {
     // The gate is there to stop an unwanted download. There is nothing to
     // download here, so making the user click their own existing choice would
@@ -271,7 +300,7 @@ describe("EngineStep", () => {
     invoke.mockImplementation(async (cmd: string, args: any) => {
       if (cmd === "check_model_downloaded") return args.modelSize === "small";
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, {
@@ -289,7 +318,7 @@ describe("EngineStep", () => {
     invoke.mockImplementation(async (cmd: string, args: any) => {
       if (cmd === "check_model_downloaded") return args.modelSize === "small";
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, {
@@ -314,7 +343,7 @@ describe("EngineStep", () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "check_model_downloaded") return pending;
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, {
@@ -333,7 +362,7 @@ describe("EngineStep", () => {
     const blockers: (string | null)[] = [];
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, {
@@ -356,7 +385,7 @@ describe("EngineStep", () => {
     const blockers: (string | null)[] = [];
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, {
@@ -372,7 +401,7 @@ describe("EngineStep", () => {
   test("picking a model size writes it straight into the config", async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
@@ -389,7 +418,7 @@ describe("EngineStep", () => {
   test("warns when Moonshine was not compiled into this build", async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "moonshine_available") return false;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       return false;
     });
     render(EngineStep, { registerGate: noopGate, setBlocker: noopBlocker });
@@ -400,7 +429,7 @@ describe("EngineStep", () => {
     let gate: (() => Promise<boolean>) | null = null;
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "moonshine_available") return true;
-      if (cmd === "cuda_enabled") return false;
+      if (cmd === "accelerator_support") return { whisper_gpu: null, moonshine_gpu: null };
       if (cmd === "download_model") throw new Error("network unreachable");
       return false;
     });

@@ -27,7 +27,11 @@
    *  "moonshine" selection silently runs whisper.cpp, which the user deserves
    *  to know before they pick it. */
   let moonshineAvailable = $state(true);
-  let cudaEnabled = $state(false);
+  /** The GPU backend whisper.cpp was compiled against, or null on a CPU-only
+   *  build. Null is the honest default: a build that cannot answer cannot
+   *  offload either, and naming a backend it does not have is how the toggle
+   *  came to read "ON · Vulkan" on builds with no GPU support at all. */
+  let whisperGpu = $state<string | null>(null);
 
   /** model id → on disk, per engine. */
   let whisperDownloaded = $state<Record<string, boolean>>({});
@@ -42,8 +46,16 @@
   const selectedEngine = $derived<SttEngineId>(
     $config.engine.backend === "moonshine" ? "moonshine" : "whisper-cpp",
   );
-  const gpuOn = $derived($config.engine.whisper_cpp.device !== "cpu");
-  const gpuPath = $derived(cudaEnabled ? "CUDA" : "Vulkan");
+  const GPU_LABELS: Record<string, string> = {
+    cuda: "CUDA",
+    vulkan: "Vulkan",
+    coreml: "CoreML",
+  };
+  /** Offloading is only really on when the build has somewhere to offload to. */
+  const gpuOn = $derived(
+    !!whisperGpu && $config.engine.whisper_cpp.device !== "cpu",
+  );
+  const gpuPath = $derived(whisperGpu ? (GPU_LABELS[whisperGpu] ?? whisperGpu) : "");
 
   /** The model the current engine will actually load. */
   const selectedModel = $derived(
@@ -88,9 +100,12 @@
   }
 
   function toggleGpu() {
+    // Nothing to switch on in a CPU-only build: the setting would flip and the
+    // engine would go on running exactly as it was.
+    if (!whisperGpu) return;
     patchConfig((cfg) => {
-      // "auto" lets the engine pick CUDA or Vulkan by what the machine has,
-      // which is a better answer than pinning one of them from here.
+      // "auto" means "use the backend this build has", which is a better answer
+      // than pinning a name from here — there is only ever one to pick.
       cfg.engine.whisper_cpp.device = gpuOn ? "cpu" : "auto";
     });
   }
@@ -203,9 +218,9 @@
     invoke<boolean>("moonshine_available")
       .then((v) => (moonshineAvailable = v))
       .catch(() => (moonshineAvailable = false));
-    invoke<boolean>("cuda_enabled")
-      .then((v) => (cudaEnabled = v))
-      .catch(() => (cudaEnabled = false));
+    invoke<{ whisper_gpu: string | null }>("accelerator_support")
+      .then((v) => (whisperGpu = v?.whisper_gpu ?? null))
+      .catch(() => (whisperGpu = null));
     void refreshReadiness();
     return () => {
       registerGate(STEP, null);
@@ -258,16 +273,34 @@
       </p>
     </div>
 
-    <button class="vx-card gpu-toggle" class:vx-on={gpuOn} onclick={toggleGpu}>
+    <button
+      class="vx-card gpu-toggle"
+      class:vx-on={gpuOn}
+      onclick={toggleGpu}
+      disabled={!whisperGpu}
+    >
       <span class="switch" class:on={gpuOn}><span class="knob"></span></span>
       <span class="gpu-copy">
         <span class="gpu-title">
           <span class="glyph">∗</span> GPU offloading
-          <span class="state" class:on={gpuOn}>{gpuOn ? `ON · ${gpuPath}` : "OFF · CPU"}</span>
+          <span class="state" class:on={gpuOn}>
+            {#if !whisperGpu}
+              UNAVAILABLE · CPU BUILD
+            {:else if gpuOn}
+              ON · {gpuPath}
+            {:else}
+              OFF · CPU
+            {/if}
+          </span>
         </span>
         <span class="gpu-desc">
-          Moves whisper.cpp weights from RAM to your GPU: faster, less RAM, uses VRAM. Moonshine is
-          CPU-native and unaffected.
+          {#if whisperGpu}
+            Moves whisper.cpp weights from RAM to your GPU: faster, less RAM, uses VRAM. Moonshine is
+            CPU-native and unaffected.
+          {:else}
+            This build has no GPU backend compiled in, so both engines run on the CPU. The Vulkan
+            download accelerates whisper.cpp; Moonshine is CPU-native either way.
+          {/if}
         </span>
       </span>
     </button>
@@ -411,6 +444,13 @@
     align-items: center;
     gap: 14px;
     padding: 12px 16px;
+  }
+
+  /* A CPU-only build has nothing to switch on. Dimmed and not clickable, so it
+     reads as a report about the build rather than a setting left turned off. */
+  .gpu-toggle:disabled {
+    opacity: 0.55;
+    cursor: default;
   }
 
   .switch {

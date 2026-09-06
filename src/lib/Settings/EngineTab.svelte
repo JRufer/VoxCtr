@@ -26,10 +26,31 @@
     "large-v3-turbo",
   ];
 
-  const backendOptions = [
+  // GPU support is decided when the binary is compiled, per engine, and the two
+  // answers differ in the build most people run: the Vulkan build accelerates
+  // whisper.cpp and leaves Moonshine on the CPU, because ONNX Runtime has no
+  // Vulkan execution provider. Defaults assume no GPU, so an older backend that
+  // does not answer this call is described as CPU-only rather than as more than
+  // it is.
+  let whisperGpu = $state<string | null>(null);
+  let moonshineGpu = $state<string | null>(null);
+
+  const GPU_LABELS: Record<string, string> = {
+    cuda: "CUDA (NVIDIA)",
+    vulkan: "Vulkan (AMD/Intel/NVIDIA)",
+    coreml: "CoreML (Apple)",
+  };
+  const gpuLabel = (id: string) => GPU_LABELS[id] ?? id;
+
+  let backendOptions = $derived([
     { value: "whisper-cpp", label: "Whisper.cpp" },
-    { value: "moonshine", label: "Moonshine (CPU only)" }
-  ];
+    {
+      value: "moonshine",
+      label: moonshineGpu
+        ? `Moonshine (${gpuLabel(moonshineGpu)})`
+        : "Moonshine (CPU only)",
+    },
+  ]);
 
   let whisperModelSizeOptions = $derived(
     MODEL_SIZES.map(s => ({
@@ -38,13 +59,15 @@
     }))
   );
 
-  let cudaEnabled = $state(false);
-
+  // Only what this build can actually do. Offering "Vulkan" unconditionally —
+  // as this list used to — meant a CUDA build and a CPU-only build both showed
+  // a Vulkan option that selecting changed nothing about: the device setting
+  // says *whether* to offload, and ggml links exactly one backend to offload
+  // to. So there is at most one GPU entry, named after the one in the build.
   let deviceOptions = $derived([
-    { value: "auto", label: "Auto" },
-    ...(cudaEnabled ? [{ value: "cuda", label: "CUDA (NVIDIA)" }] : []),
-    { value: "vulkan", label: "Vulkan (AMD/Intel)" },
-    { value: "cpu", label: "CPU" }
+    { value: "auto", label: whisperGpu ? `Auto (${gpuLabel(whisperGpu)})` : "Auto" },
+    ...(whisperGpu ? [{ value: whisperGpu, label: gpuLabel(whisperGpu) }] : []),
+    { value: "cpu", label: "CPU" },
   ]);
 
   const moonshineModelSizeOptions = [
@@ -178,9 +201,22 @@
       console.error("Failed to query Moonshine availability", e);
     }
     checkMoonshineDownloaded();
-    cudaEnabled = await invoke<boolean>("cuda_enabled");
-    // If this is a CPU build but config still says "cuda", reset to "auto"
-    if (!cudaEnabled && cfg.engine.whisper_cpp.device === "cuda") {
+    try {
+      const support = await invoke<{
+        whisper_gpu: string | null;
+        moonshine_gpu: string | null;
+      }>("accelerator_support");
+      whisperGpu = support.whisper_gpu ?? null;
+      moonshineGpu = support.moonshine_gpu ?? null;
+    } catch (e) {
+      console.error("Failed to query GPU support", e);
+    }
+    // A config naming a GPU backend this build does not have — copied from
+    // another machine, or left behind by a switch between the CPU and Vulkan
+    // downloads — would otherwise sit in the dropdown as a value with no entry,
+    // reading as a working GPU setting while the backend quietly ran on the CPU.
+    const device = cfg.engine.whisper_cpp.device;
+    if (device !== "auto" && device !== "cpu" && device !== whisperGpu) {
       cfg.engine.whisper_cpp.device = "auto";
       markDirty();
     }
@@ -299,6 +335,29 @@
               This build was compiled without Moonshine, so selecting it will fall
               back to Whisper.cpp (using the Whisper model configured above).
               Rebuild with <code>--features moonshine</code> to enable it.
+            </p>
+          </div>
+        </div>
+      {/if}
+
+      {#if moonshineAvailable && !moonshineGpu}
+        <div
+          class="flex items-center gap-4 bg-slate-500/10 border border-slate-500/30 rounded-xl p-4 mb-4"
+        >
+          <span class="text-2xl leading-none text-slate-300">🖥️</span>
+          <div class="flex-1">
+            <strong class="block text-slate-100 font-semibold text-sm mb-1"
+              >Moonshine runs on the CPU in this build</strong
+            >
+            <p class="m-0 text-slate-200 text-xs leading-relaxed">
+              ONNX Runtime, which Moonshine uses, has no Vulkan backend, so the
+              Device setting above applies to Whisper.cpp only. Moonshine holds
+              its weights in RAM as fp32 — roughly <code>530&nbsp;MB</code> for
+              <code>base</code>, <code>240&nbsp;MB</code> for <code>tiny</code> —
+              where Whisper.cpp{whisperGpu
+                ? ` puts a quantized model in VRAM via ${gpuLabel(whisperGpu)}`
+                : " uses a smaller quantized model"}. Pick Whisper.cpp if memory
+              matters more than Moonshine's latency.
             </p>
           </div>
         </div>

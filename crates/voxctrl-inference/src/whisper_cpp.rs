@@ -38,6 +38,56 @@ pub fn is_small_auto_downloadable(size: &str) -> bool {
     matches!(size, "tiny" | "tiny.en")
 }
 
+/// What a configured `device` actually resolves to in this build.
+///
+/// `whisper_cpp.device` chooses *whether* to offload, never *to what*: ggml
+/// links one compute backend at compile time. So `cuda` on a Vulkan build runs
+/// on Vulkan, and any GPU choice on a CPU build runs on the CPU.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DeviceOutcome<'a> {
+    /// The user asked for the CPU and gets it.
+    Cpu,
+    /// Offloading to the build's one GPU backend.
+    Gpu(&'a str),
+    /// A GPU was asked for and this build has none.
+    NoGpuInBuild,
+    /// A GPU was asked for by name, and this build has a different one.
+    DifferentGpuInBuild(&'a str),
+}
+
+/// Resolve a configured device name against what this build can actually do.
+///
+/// The Engine tab only offers what the build has, but a config file can be
+/// copied between machines or hand-edited, so a mismatch is reported rather
+/// than obeyed silently.
+pub fn resolve_device<'a>(requested: &str, compiled: Option<&'a str>) -> DeviceOutcome<'a> {
+    if requested == "cpu" {
+        return DeviceOutcome::Cpu;
+    }
+    match compiled {
+        None => DeviceOutcome::NoGpuInBuild,
+        Some(backend) if requested != "auto" && requested != backend => {
+            DeviceOutcome::DifferentGpuInBuild(backend)
+        }
+        Some(backend) => DeviceOutcome::Gpu(backend),
+    }
+}
+
+fn log_device_choice(requested: &str, compiled: Option<&str>) {
+    match resolve_device(requested, compiled) {
+        DeviceOutcome::Cpu => info!("Whisper acceleration: none (device = cpu)"),
+        DeviceOutcome::Gpu(backend) => info!("Whisper acceleration: {backend}"),
+        DeviceOutcome::NoGpuInBuild => tracing::warn!(
+            "Whisper device is '{requested}', but this build has no GPU backend \
+             compiled in; running on the CPU"
+        ),
+        DeviceOutcome::DifferentGpuInBuild(backend) => tracing::warn!(
+            "Whisper device is '{requested}', but this build compiles the {backend} \
+             backend; using {backend}"
+        ),
+    }
+}
+
 // ── Backend ───────────────────────────────────────────────────────────────────
 
 pub struct WhisperCppBackend {
@@ -132,7 +182,9 @@ impl TranscriptionBackend for WhisperCppBackend {
         info!("Loading whisper.cpp model: {}", path.display());
 
         let mut params = whisper_rs::WhisperContextParameters::default();
-        params.use_gpu = self.cfg.device.to_lowercase() != "cpu";
+        let requested = self.cfg.device.to_lowercase();
+        params.use_gpu = requested != "cpu";
+        log_device_choice(&requested, crate::whisper_gpu_backend());
 
         let ctx = whisper_rs::WhisperContext::new_with_params(path.to_str().unwrap(), params)
             .context("whisper-rs load")?;
@@ -289,6 +341,40 @@ pub async fn download_model(size: &str, model_dir: &str) -> Result<()> {
 mod tests {
     use super::*;
     use voxctrl_config::WhisperCppConfig;
+
+    // ── resolve_device ────────────────────────────────────────────────────────
+
+    /// "auto" is the default and must never produce a warning about a mismatch:
+    /// it is a request to use whatever the build has.
+    #[test]
+    fn auto_takes_whatever_the_build_compiled() {
+        assert_eq!(resolve_device("auto", Some("vulkan")), DeviceOutcome::Gpu("vulkan"));
+        assert_eq!(resolve_device("auto", Some("cuda")), DeviceOutcome::Gpu("cuda"));
+    }
+
+    /// The case that made the Device dropdown misleading: a config naming CUDA
+    /// on the Vulkan AppImage. It runs — on Vulkan — and says so.
+    #[test]
+    fn naming_the_other_gpu_backend_reports_the_one_in_the_build() {
+        assert_eq!(
+            resolve_device("cuda", Some("vulkan")),
+            DeviceOutcome::DifferentGpuInBuild("vulkan")
+        );
+    }
+
+    /// A GPU asked for in a CPU-only build silently did nothing at all before.
+    #[test]
+    fn asking_for_a_gpu_a_cpu_build_lacks_is_reported() {
+        for requested in ["auto", "cuda", "vulkan"] {
+            assert_eq!(resolve_device(requested, None), DeviceOutcome::NoGpuInBuild);
+        }
+    }
+
+    #[test]
+    fn cpu_is_honoured_whatever_the_build_has() {
+        assert_eq!(resolve_device("cpu", Some("cuda")), DeviceOutcome::Cpu);
+        assert_eq!(resolve_device("cpu", None), DeviceOutcome::Cpu);
+    }
 
     // ── is_small_auto_downloadable ────────────────────────────────────────────
 

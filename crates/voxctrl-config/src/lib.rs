@@ -608,6 +608,61 @@ fn migrate_hf_token(data: &mut AppConfig) -> bool {
     true
 }
 
+/// Read a config file, keeping every section that parses.
+///
+/// serde is all-or-nothing: one unreadable value anywhere in the file — a
+/// backend spelled `whisper_cpp` instead of `whisper-cpp`, a hand-edit, a
+/// section written by a newer VoxCtrl with a stricter type — used to fail the
+/// whole deserialize, and the app started on wholesale defaults. Every unrelated
+/// setting in the file silently reverted for that run, and the next save wrote
+/// the defaults back over the user's file for good.
+///
+/// So a failure is retried section by section: each top-level key is applied to
+/// the defaults on its own, and one that will not deserialize is dropped with a
+/// warning naming it. A bad `engine` block costs the engine settings and nothing
+/// else. Only a file that is not a JSON object at all falls back entirely.
+fn parse_tolerant(text: &str) -> AppConfig {
+    let whole_file_error = match serde_json::from_str::<AppConfig>(text) {
+        Ok(cfg) => return cfg,
+        Err(e) => e,
+    };
+
+    let Ok(serde_json::Value::Object(file)) = serde_json::from_str::<serde_json::Value>(text)
+    else {
+        tracing::warn!("Failed to load config, using defaults: {whole_file_error}");
+        return AppConfig::default();
+    };
+
+    tracing::warn!(
+        "Config did not load as a whole ({whole_file_error}); \
+         recovering it section by section"
+    );
+
+    let Ok(serde_json::Value::Object(mut merged)) = serde_json::to_value(AppConfig::default())
+    else {
+        return AppConfig::default();
+    };
+
+    for (key, value) in file {
+        // A key with no counterpart in the defaults is one serde would ignore
+        // anyway — a setting from a newer or older VoxCtrl. Leave it be.
+        if !merged.contains_key(&key) {
+            continue;
+        }
+        let mut candidate = merged.clone();
+        candidate.insert(key.clone(), value);
+        match serde_json::from_value::<AppConfig>(serde_json::Value::Object(candidate.clone())) {
+            Ok(_) => merged = candidate,
+            Err(e) => tracing::warn!(
+                "Config section '{key}' could not be read ({e}); it falls back to \
+                 defaults, and the rest of the file is kept"
+            ),
+        }
+    }
+
+    serde_json::from_value(serde_json::Value::Object(merged)).unwrap_or_default()
+}
+
 // ── Config manager ────────────────────────────────────────────────────────────
 
 pub struct Config {
@@ -626,13 +681,10 @@ impl Config {
     pub fn load() -> Self {
         let path = Self::config_path();
         let mut data = if path.exists() {
-            match std::fs::read_to_string(&path)
-                .map_err(ConfigError::Io)
-                .and_then(|s| serde_json::from_str::<AppConfig>(&s).map_err(ConfigError::Json))
-            {
-                Ok(cfg) => cfg,
+            match std::fs::read_to_string(&path).map_err(ConfigError::Io) {
+                Ok(text) => parse_tolerant(&text),
                 Err(e) => {
-                    tracing::warn!("Failed to load config, using defaults: {e}");
+                    tracing::warn!("Failed to read config, using defaults: {e}");
                     AppConfig::default()
                 }
             }
@@ -793,6 +845,76 @@ pub fn validate(cfg: &AppConfig) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── parse_tolerant ────────────────────────────────────────────────────────
+
+    /// A file with nothing wrong with it must take the ordinary path and come
+    /// back exactly as written.
+    #[test]
+    fn a_valid_config_parses_whole() {
+        let cfg = parse_tolerant(
+            r#"{"engine": {"backend": "moonshine",
+                           "whisper_cpp": {"model_dir": "", "model_size": "small",
+                                           "device": "auto", "threads": 0},
+                           "moonshine": {"model_size": "base", "language": "en"}},
+                "audio": {"vad_threshold": 0.65, "input_device_index": null,
+                          "evdev_device": null, "noise_suppression": true,
+                          "gain": 1.6, "dynamic_stream": true}}"#,
+        );
+        assert_eq!(cfg.engine.backend, BackendChoice::Moonshine);
+        assert_eq!(cfg.engine.whisper_cpp.model_size, "small");
+        assert_eq!(cfg.audio.gain, 1.6);
+    }
+
+    /// The failure this exists for: `whisper_cpp` where the enum spells it
+    /// `whisper-cpp`. The engine section is lost, and every unrelated setting
+    /// in the file survives — which is the opposite of what used to happen.
+    #[test]
+    fn one_bad_section_does_not_take_the_rest_of_the_file_with_it() {
+        let cfg = parse_tolerant(
+            r#"{"engine": {"backend": "whisper_cpp"},
+                "audio": {"vad_threshold": 0.65, "input_device_index": null,
+                          "evdev_device": null, "noise_suppression": true,
+                          "gain": 1.6, "dynamic_stream": true},
+                "ui": {"show_overlay": false, "overlay_style": "pulse",
+                       "overlay_position": "top", "overlay_monitor": "primary",
+                       "auto_show_settings": false, "show_notification": false,
+                       "show_command_overlay": true, "command_overlay_duration_secs": 3,
+                       "setup_completed": true}}"#,
+        );
+
+        // Kept.
+        assert_eq!(cfg.audio.gain, 1.6);
+        assert!(cfg.audio.noise_suppression);
+        assert_eq!(cfg.ui.overlay_style, "pulse");
+        assert!(!cfg.ui.show_overlay);
+
+        // Lost, because it is the section that would not read.
+        assert_eq!(cfg.engine.backend, BackendChoice::default());
+    }
+
+    /// A key the running build knows nothing about is left alone rather than
+    /// counted as a failed section — it is how a config survives a downgrade.
+    #[test]
+    fn an_unknown_top_level_key_is_ignored() {
+        let cfg = parse_tolerant(
+            r#"{"engine": {"backend": "whisper_cpp"},
+                "some_future_section": {"whatever": 1},
+                "features": {"remove_fillers": false, "custom_vocabulary": [],
+                             "spoken_punctuation": true, "auto_format_lists": true,
+                             "snippets": {}}}"#,
+        );
+        assert!(!cfg.features.remove_fillers);
+    }
+
+    /// Not a JSON object at all — there are no sections to recover, so this is
+    /// the one case that still falls back wholesale.
+    #[test]
+    fn a_file_that_is_not_an_object_falls_back_to_defaults() {
+        let cfg = parse_tolerant("[1, 2, 3]");
+        assert_eq!(cfg.engine.backend, BackendChoice::default());
+        assert_eq!(cfg.audio.gain, AudioConfig::default().gain);
+    }
 
     fn tts_json(body: &str) -> TtsConfig {
         serde_json::from_str(body).expect("tts config should parse")
