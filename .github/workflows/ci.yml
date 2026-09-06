@@ -3,8 +3,15 @@ name: CI
 on:
   push:
     branches: [master]
+  # Every pull request, whatever it targets — deliberately unfiltered.
+  #
+  # This used to be `branches: [master]`, which meant a pull request based on
+  # another branch got no checks at all: not a compile, not a test, nothing. A
+  # stacked change could then be merged down into its base and reach master
+  # having never been built on its own. That is the same shape of hole as
+  # excluding crates from the Windows check — work that looks reviewed because a
+  # PR exists, and was never compiled.
   pull_request:
-    branches: [master]
 
 env:
   CARGO_HTTP_MULTIPLEXING: false
