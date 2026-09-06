@@ -60,9 +60,18 @@ pub fn moonshine_gpu_backend() -> Option<&'static str> {
 /// cascade: the Engine tab and the session builder then cannot name different
 /// providers, which is the failure mode worth designing out. `with_gpu` still
 /// selects the provider *type* by `cfg`, but on exactly the conditions above.
-// Its only non-test caller is the Moonshine backend, which is compiled out
-// without the `moonshine` feature; the tests below still exercise it there.
-#[cfg_attr(not(feature = "moonshine"), allow(dead_code))]
+// Its only non-test caller is the branch of `with_gpu` that registers a
+// provider, which is compiled out when no GPU feature is on — the `moonshine`
+// feature alone is not enough to reach it, which is what the first version of
+// this attribute got wrong. The tests below still exercise it either way.
+#[cfg_attr(
+    not(any(
+        feature = "moonshine-cuda",
+        feature = "moonshine-coreml",
+        feature = "moonshine-webgpu"
+    )),
+    allow(dead_code)
+)]
 pub(crate) fn moonshine_gpu_provider() -> Option<&'static str> {
     match moonshine_gpu_backend() {
         Some("cuda") => Some("CUDA"),
