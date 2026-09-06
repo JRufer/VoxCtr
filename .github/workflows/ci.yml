@@ -42,24 +42,38 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # whisper-rs builds whisper.cpp through the `cmake` crate, so the check
+      # now needs a C++ toolchain that the excluded-crates version did not. The
+      # Windows runners ship both MSVC and CMake; assert it rather than let a
+      # missing one surface as a confusing build-script panic.
+      - name: Verify Windows build tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake --version
+          rustc -vV
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: check-${{ matrix.os }}
 
-      # Full workspace check on Linux (includes voxctrl-inference which needs
-      # whisper-rs/C++). Default features include the two ONNX-backed engines,
-      # so this also fetches ONNX Runtime at build time and needs network access.
+      # The same full-workspace check on both platforms, deliberately with
+      # nothing excluded.
+      #
+      # This job used to skip voxctrl-inference and voxctrl-app on Windows,
+      # on the grounds that the Linux check covered their type-safety. It does
+      # not: everything under `src-tauri/src` that is `cfg(target_os =
+      # "windows")` is invisible to a Linux compiler, and that is most of the
+      # platform code there is. With those two excluded the excluded set was the
+      # speech engine and the entire application, so no Windows build was ever
+      # verified — which is how the Windows hotkey backend shipped naming keys
+      # in a vocabulary nothing else used.
+      #
+      # `--all-targets` so the test code is checked too, not just the libraries.
+      # Default features include the two ONNX-backed engines, so this fetches
+      # ONNX Runtime at build time and needs network access.
       - name: cargo check (workspace, default features)
-        if: runner.os != 'Windows'
-        run: cargo check --workspace
-
-      # On Windows, exclude crates that require whisper.cpp C++ compilation
-      # (voxctrl-inference, voxctrl-app). Their Rust type-safety is covered by
-      # the Linux check above; this job validates Windows-specific platform code
-      # in the remaining pure-Rust crates.
-      - name: cargo check (workspace excluding C++ crates, Windows)
-        if: runner.os == 'Windows'
-        run: cargo check --workspace --exclude voxctrl-inference --exclude voxctrl-app
+        run: cargo check --workspace --all-targets
 
   # ── Unit tests ────────────────────────────────────────────────────────────────
   cargo-test:
@@ -106,7 +120,36 @@ jobs:
       # suite passing. Without a display here those tests silently skip and the
       # gap reopens.
       - name: cargo test
-        run: xvfb-run -a cargo test -p voxctrl-config -p voxctrl-routing -p voxctrl-hotkeys -p voxctrl-tts -p voxctrl-update -p voxctrl-app
+        run: xvfb-run -a cargo test -p voxctrl-config -p voxctrl-routing -p voxctrl-hotkeys -p voxctrl-winput -p voxctrl-tts -p voxctrl-update -p voxctrl-app
+
+  # ── Unit tests (Windows) ──────────────────────────────────────────────────────
+  #
+  # The Linux lane above runs the whole suite; this one runs the crates whose
+  # behaviour differs by platform, so a Windows-only regression cannot hide
+  # behind a green Linux run. Crates needing a display, a desktop portal or
+  # espeak-ng are left to the Linux lane, where those exist.
+  cargo-test-windows:
+    name: cargo test (windows)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test-windows
+
+      - name: cargo test
+        run: >
+          cargo test
+          -p voxctrl-config
+          -p voxctrl-routing
+          -p voxctrl-hotkeys
+          -p voxctrl-winput
+          -p voxctrl-update
+          -p voxctrl-text
 
   # ── Frontend type check ───────────────────────────────────────────────────────
   frontend-check:

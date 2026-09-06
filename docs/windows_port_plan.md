@@ -1,7 +1,53 @@
 # Porting VoxCtrl to Windows 11 — Development Plan
 
-**Status:** proposal · **Target:** Windows 11 (x64 + ARM64), Windows 10 22H2 as a
-best-effort floor · **Baseline:** VoxCtrl 0.4.0
+**Status:** Milestones 0–1 delivered in v0.5.0; 2–4 outstanding ·
+**Target:** Windows 11 (x64 + ARM64), Windows 10 22H2 as a best-effort floor ·
+**Baseline:** VoxCtrl 0.4.0
+
+---
+
+## 0. What has since been done
+
+Everything below the line was written as a proposal against 0.4.0. Milestones 0
+and 1 shipped in v0.5.0; the audit is left as written so the reasoning stays
+readable, with corrections noted here.
+
+**Done**
+
+- **B1, the hotkey vocabulary.** `rdev` is gone. The backend is a
+  `WH_KEYBOARD_LL` hook written against `windows-sys`, keyed by scan code, in
+  `crates/voxctrl-hotkeys/src/windows/`. The scan-code table and the suppression
+  rules live in `src/win_keys.rs`, deliberately *outside* the platform gate so
+  their tests run on the Linux lane.
+- **B2, text injection.** `SendInput` with `KEYEVENTF_UNICODE`, in the new
+  `voxctrl-winput` crate, used by both the `inject` target and
+  `voxctrl-inject`. Long text falls back to a clipboard paste that restores the
+  previous clipboard. Both PowerShell `SendKeys` call sites are gone.
+- **B3, the privacy claim.** `Backend::WindowsHook` is out of `is_private()`, an
+  invariant test holds `sees_raw_keys() == !is_private()` for every backend, and
+  the Hotkeys tab and `docs/privacy.md` now say what the hook sees.
+- **CI.** The Windows `cargo check` no longer excludes anything and runs
+  `--all-targets`; there is a Windows `cargo test` lane.
+- **Release.** The `windows-cpu` matrix row is enabled and the Downloads table
+  has its Windows row back.
+- Overlay console window and focus stealing; the placeholder files named like
+  CUDA DLLs; the MCP address advertised on Windows; the Piper installer that
+  reported success while doing nothing.
+
+**Corrections to the audit below**
+
+- **B4 was wrong.** `voxctrl-app` was predicted to need "a batch of ordinary
+  compile errors" fixed. It did not — checked against a real Windows target, it
+  compiled as written. The excluded-crates CI was still hiding everything, and
+  the other three blockers were real; this one was not.
+- **The CUDA DLLs are in the repo**, contrary to a note in the original PR: they
+  were 50-byte text files with `.dll` names, and the NSIS hook copied them next
+  to `voxctrl.exe`. Removed rather than shipped.
+
+**Still outstanding** — Milestone 2 onward: notifications via
+`tauri-plugin-notification` and an AUMID, autostart, the named-pipe delivery type
+and its ACL, Piper's Windows auto-install, the Windows first-run wizard, code
+signing, DirectML, and the `voxctrl-platform` extraction.
 
 ---
 

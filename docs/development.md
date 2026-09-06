@@ -461,9 +461,18 @@ auditing configuration files:
 1. **Backend** — `voxctrl_hotkeys::ListenerHealth::backend()` says which
    mechanism is live: `Portal`, `Evdev`, `WindowsHook`, `Starting`, or `None`.
    This is ground truth; nothing is inferred from what is on disk.
-2. **Privacy** — `is_private()` is true only for the portal and the Windows
-   hook, the two paths where VoxCtrl receives its own shortcuts and no raw
-   keystrokes. The UI states this in plain language, and only when true.
+2. **Privacy** — `is_private()` is true only where something else owns the key
+   grab and hands VoxCtrl whole shortcuts: the XDG portal, and a Linux Mint
+   custom keybinding that invokes VoxCtrl over D-Bus. The UI states this in
+   plain language, and only when true.
+
+   It is the exact opposite of `Backend::sees_raw_keys()`, and
+   `every_backend_either_sees_keys_or_is_private` in `health.rs` enforces that.
+   The Windows hook used to be in *both* sets — a `WH_KEYBOARD_LL` hook is
+   called for every keystroke on the machine, so the Hotkeys tab showed a
+   padlock and "VoxCtrl does not read your keyboard" over a backend that reads
+   all of it. Deciding a new backend's privacy is now a choice that test
+   forces.
 3. **Bound shortcuts** — the portal returns what the compositor *actually*
    bound, which may differ from what VoxCtrl requested. `BoundShortcut` carries
    both, so the Hotkeys tab can show the real keys and flag anything refused.

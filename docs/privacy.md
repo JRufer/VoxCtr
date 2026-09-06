@@ -89,6 +89,15 @@ If you would rather it never happened at all, a desktop that implements the port
 
 Windows offers no portal equivalent; a low-level keyboard hook (`WH_KEYBOARD_LL`) is the only mechanism for application-defined global shortcuts. That hook sees all keystrokes. The same handling applies: nothing logged, nothing stored, nothing transmitted.
 
+`is_private` is false on Windows, and the Hotkeys tab says which keys pass through VoxCtrl rather than showing the padlock it shows for the portal. That was not always true: until v0.5.0 the status API grouped the Windows hook with the portal, so the UI would have claimed VoxCtrl did not read the keyboard while the hook read all of it. No release shipped a Windows build in that state — the Windows job was disabled in the release matrix — but the claim was in the code, and it is worth being explicit that it is gone.
+
+Two further properties follow from how the hook works rather than from anything VoxCtrl chose:
+
+- It never sees the **secure desktop** — the UAC prompt, the lock screen, Ctrl+Alt+Del. Nothing typed there reaches VoxCtrl, and shortcuts do not fire there either.
+- It does not receive keys destined for a **more-privileged process**. If you run something elevated, VoxCtrl sees nothing you type into it (and cannot dictate into it either).
+
+VoxCtrl also ignores its own synthesised keystrokes: every event it generates carries a marker in `dwExtraInfo`, and the hook skips those, so dictated text is never re-read as input.
+
 ---
 
 ## Audio
