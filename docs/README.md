@@ -26,6 +26,7 @@ Global shortcuts are registered with your desktop through the XDG `GlobalShortcu
 | [Development Guide](./development.md) | Dev environment, build system, crate structure |
 | [Windows Build](./windows_build.md) | Building VoxCtrl on Windows |
 | [Windows Port Plan](./windows_port_plan.md) | Audit and phased plan for full Windows 11 parity |
+| [Windows Testing](./windows_testing.md) | Hand to a Windows tester: install, what to try, how to send a log |
 
 ---
 
