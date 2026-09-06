@@ -236,6 +236,10 @@ struct EnvVarGuard {
 }
 
 impl EnvVarGuard {
+    // Only the Linux clipboard/injection tests set a variable; on Windows the
+    // guard is still constructed by `prepend_to_path`, so the type is used but
+    // this constructor is not.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var_os(key);
         std::env::set_var(key, value);
@@ -1191,7 +1195,18 @@ async fn test_mcp_delivery_failure_connect_error() {
     let target = build_target(config);
     let res = target.deliver("Hello").await;
     assert!(!res.success);
-    assert!(res.error.as_ref().unwrap().contains("Failed to connect to MCP socket"));
+    // The message names the transport, and the transport differs: a Unix
+    // socket on Linux, a named pipe on Windows.
+    let expected = if cfg!(target_os = "windows") {
+        "Failed to connect to MCP named pipe"
+    } else {
+        "Failed to connect to MCP socket"
+    };
+    assert!(
+        res.error.as_ref().unwrap().contains(expected),
+        "expected {expected:?}, got {:?}",
+        res.error
+    );
 }
 
 #[cfg(unix)]
@@ -1621,6 +1636,28 @@ async fn test_chat_target_reports_http_errors_and_rolls_back_turn() {
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
         let (mut sock, _) = listener.accept().await.unwrap();
+
+        // Drain the request before answering. A server that writes a response
+        // and closes without reading gives the client a connection reset on
+        // Windows, so the target reported a transport error instead of the 404
+        // this test is about. The other mock servers in this file already read
+        // first; this one did not.
+        {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 4096];
+            loop {
+                match sock.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        }
+
         let body = "{\"error\":\"model not found\"}";
         let _ = sock
             .write_all(

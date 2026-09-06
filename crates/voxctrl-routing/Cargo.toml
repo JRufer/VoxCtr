@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+# `find_in_path`: one implementation of "can this be spawned?", shared with the
+# rest of the app rather than a second, subtly different copy here.
+voxctrl-config = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }

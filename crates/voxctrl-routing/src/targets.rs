@@ -1141,10 +1141,16 @@ impl DeliveryTarget for ChatTarget {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Whether `bin` can actually be spawned.
+///
+/// Defers to `voxctrl_config::find_in_path`, which mirrors what
+/// `Command::new` will do on each platform. This used to be a second,
+/// simpler implementation that searched `PATH` for a file with exactly the
+/// given name — so on Windows it looked for `echo`, never `echo.exe`, and
+/// reported every working Exec target as unreachable. Two copies of "can I run
+/// this?" is one too many; there is now one.
 fn which(bin: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(bin).is_file()))
-        .unwrap_or(false)
+    voxctrl_config::find_in_path(bin).is_some()
 }
 
 /// Public alias for tests — not part of the stable API.
