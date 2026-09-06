@@ -34,7 +34,10 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use ort::{
     memory::Allocator,
-    session::{builder::GraphOptimizationLevel, Session, SessionInputValue},
+    session::{
+        builder::{GraphOptimizationLevel, SessionBuilder},
+        Session, SessionInputValue,
+    },
     value::{Shape, Tensor},
 };
 use tokenizers::Tokenizer;
@@ -215,14 +218,56 @@ impl MoonshineBackend {
         // `std::error::Error`, so it can't flow through `anyhow::Context`. Format
         // it via Display instead. `commit_from_file` returns a plain `ort::Error`
         // that anyhow can absorb directly.
-        Session::builder()
+        let builder = Session::builder()
             .map_err(|e| anyhow!("ort session builder: {e}"))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| anyhow!("set optimization level: {e}"))?
             .with_intra_threads(threads())
-            .map_err(|e| anyhow!("set intra threads: {e}"))?
+            .map_err(|e| anyhow!("set intra threads: {e}"))?;
+
+        let mut builder = Self::with_gpu(builder);
+
+        builder
             .commit_from_file(path)
             .with_context(|| format!("load ONNX graph {}", path.display()))
+    }
+
+    /// Register this build's GPU execution provider, if it has one.
+    ///
+    /// Registration is asked to `error_on_failure` rather than ORT's default of
+    /// logging and silently continuing on the CPU. Silently is precisely how
+    /// this backend spent its whole life running on the CPU while the Engine tab
+    /// showed a Device setting: the fallback is fine, being told about it is the
+    /// point. On failure the builder is recovered from the error and returned
+    /// unchanged, so a machine with no usable CUDA still loads the model.
+    fn with_gpu(builder: SessionBuilder) -> SessionBuilder {
+        #[cfg(any(feature = "moonshine-cuda", feature = "moonshine-coreml"))]
+        {
+            #[cfg(feature = "moonshine-cuda")]
+            let (name, ep) = ("CUDA", ort::ep::CUDA::default().build().error_on_failure());
+            #[cfg(all(feature = "moonshine-coreml", not(feature = "moonshine-cuda")))]
+            let (name, ep) = ("CoreML", ort::ep::CoreML::default().build().error_on_failure());
+
+            match builder.with_execution_providers([ep]) {
+                Ok(with_ep) => {
+                    // Per graph, so twice per load; `load` already says this
+                    // once at INFO. The failure below stays at WARN.
+                    tracing::debug!("Moonshine: {name} execution provider registered");
+                    return with_ep;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Moonshine: {name} execution provider unavailable ({e}); \
+                         running on the CPU, which holds the fp32 weights in RAM"
+                    );
+                    // The error carries the builder back, so the load goes on.
+                    return e.recover();
+                }
+            }
+        }
+
+        #[cfg(not(any(feature = "moonshine-cuda", feature = "moonshine-coreml")))]
+        builder
     }
 }
 
@@ -247,6 +292,16 @@ impl TranscriptionBackend for MoonshineBackend {
         }
 
         info!("Loading Moonshine '{size}' model from {}", dir.display());
+        match crate::moonshine_gpu_backend() {
+            Some(backend) => info!("Moonshine acceleration: {backend}"),
+            // Said at INFO on every load because the alternative — saying
+            // nothing — is what let a CPU-only backend look like a GPU one for
+            // as long as the Engine tab showed a Device setting beside it.
+            None => info!(
+                "Moonshine acceleration: none (CPU); this build has no ONNX Runtime \
+                 GPU provider, so the fp32 weights stay in RAM"
+            ),
+        }
 
         let encoder = Self::build_session(&dir.join(ENCODER_FILE))?;
         let decoder = Self::build_session(&dir.join(DECODER_FILE))?;

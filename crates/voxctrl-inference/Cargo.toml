@@ -45,6 +45,19 @@ vulkan = ["whisper-rs/vulkan"]
 # binary (see `assets/moonshine_tokenizer.json`).
 moonshine = ["dep:ort", "dep:tokenizers"]
 
+# GPU offload for the Moonshine backend. Opt-in for the same reason as
+# voxctrl-tts's `breeze-cuda`: the CUDA execution provider needs the CUDA
+# runtime at build *and* run time, which is exactly what the Vulkan AppImage
+# exists to avoid shipping.
+#
+# There is no `moonshine-vulkan` because ONNX Runtime has no Vulkan execution
+# provider. So the standard Vulkan build — where whisper.cpp *does* get the GPU
+# — runs Moonshine on the CPU, and holds its weights in RAM as fp32 rather than
+# in VRAM. `moonshine_gpu_backend()` reports which of these is true so the UI
+# can say so instead of leaving the user to measure it.
+moonshine-cuda = ["moonshine", "ort/cuda"]
+moonshine-coreml = ["moonshine", "ort/coreml"]
+
 [dependencies.ort]
 version = "2.0.0-rc.12"
 optional = true

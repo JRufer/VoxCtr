@@ -139,6 +139,14 @@ pub fn run() {
     tracing::info!("Whisper model size: {}", config.data.engine.whisper_cpp.model_size);
     tracing::info!("Whisper device: {}", config.data.engine.whisper_cpp.device);
     tracing::info!("Whisper threads: {}", config.data.engine.whisper_cpp.threads);
+    // What the build can offload, as opposed to what the config asks for. The
+    // two differ more often than they look like they should: the Vulkan build
+    // accelerates whisper.cpp and nothing else.
+    tracing::info!(
+        "GPU support in this build — whisper.cpp: {}, Moonshine: {}",
+        voxctrl_inference::whisper_gpu_backend().unwrap_or("none (CPU)"),
+        voxctrl_inference::moonshine_gpu_backend().unwrap_or("none (CPU)"),
+    );
     tracing::info!("Moonshine model size: {}", config.data.engine.moonshine.model_size);
     tracing::info!("Moonshine language: {}", config.data.engine.moonshine.language);
     tracing::info!("VAD threshold: {}", config.data.audio.vad_threshold);
@@ -490,6 +498,7 @@ pub fn run() {
             check_directory_exists,
             test_openai,
             cuda_enabled,
+            accelerator_support,
             check_hotkey_status,
             check_hotkey_keys,
             retry_portal_shortcuts,

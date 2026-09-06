@@ -11,6 +11,43 @@ pub mod whisper_cpp;
 /// as effectively whisper-cpp.
 pub const MOONSHINE_COMPILED: bool = cfg!(feature = "moonshine");
 
+/// Which GPU backend whisper.cpp can offload to in this build, or `None` for a
+/// CPU-only build.
+///
+/// This is fixed when the binary is compiled — ggml links exactly one compute
+/// backend — so it is the honest answer to "can this app use my GPU", and the
+/// only correct source for the Device dropdown. `whisper_cpp.device` selects
+/// *whether* to offload, never *to what*: a config asking for `cuda` on a
+/// Vulkan build gets Vulkan, and on a CPU build gets nothing at all.
+pub fn whisper_gpu_backend() -> Option<&'static str> {
+    // Both features can be enabled at once; ggml picks CUDA in that case.
+    if cfg!(feature = "cuda") {
+        Some("cuda")
+    } else if cfg!(feature = "vulkan") {
+        Some("vulkan")
+    } else {
+        None
+    }
+}
+
+/// Which GPU backend the Moonshine ONNX backend can offload to in this build,
+/// or `None` when it runs on the CPU.
+///
+/// ONNX Runtime has no Vulkan execution provider, so a Vulkan build — the one
+/// that gives whisper.cpp GPU offload without CUDA's runtime — has no GPU path
+/// for Moonshine at all. That asymmetry is why this is reported separately from
+/// [`whisper_gpu_backend`] rather than inferred from it: they are genuinely
+/// different answers in the build most people run.
+pub fn moonshine_gpu_backend() -> Option<&'static str> {
+    if cfg!(feature = "moonshine-cuda") {
+        Some("cuda")
+    } else if cfg!(feature = "moonshine-coreml") {
+        Some("coreml")
+    } else {
+        None
+    }
+}
+
 use std::sync::Arc;
 
 use anyhow::Result;
