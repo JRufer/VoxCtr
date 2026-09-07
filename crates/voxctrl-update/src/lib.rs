@@ -84,10 +84,14 @@ impl CheckOutcome {
 }
 
 /// Ask GitHub whether there is anything newer than `current_version`.
-pub async fn check(current_version: &str) -> Result<CheckOutcome> {
+///
+/// `gpu_build` says whether this binary is the GPU variant of its platform's
+/// release artifacts; see [`install::detect`] for why it cannot be worked out
+/// from the installation alone on Windows.
+pub async fn check(current_version: &str, gpu_build: bool) -> Result<CheckOutcome> {
     let client = release::client()?;
     let latest = release::fetch_latest(&client).await?;
-    Ok(evaluate(&latest, current_version, install::detect()))
+    Ok(evaluate(&latest, current_version, install::detect(gpu_build)))
 }
 
 /// The decision half of [`check`], with the network and the machine both passed
@@ -210,7 +214,7 @@ pub async fn install(
             tracing::info!("updated {} to {}", path.display(), pending.info.version);
             Ok(path.clone())
         }
-        InstallKind::WindowsInstaller => {
+        InstallKind::WindowsInstaller { .. } => {
             // The installer is a throwaway: it is run once and replaces the
             // real installation itself, so it goes to the temp directory
             // rather than beside anything.

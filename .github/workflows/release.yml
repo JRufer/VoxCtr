@@ -110,6 +110,22 @@ jobs:
             artifact_label: windows-x86_64
             cuda: false
 
+          # ── Windows GPU ────────────────────────────────────────────────────
+          # Moonshine on the GPU via ONNX Runtime's WebGPU execution provider —
+          # Dawn over D3D12 on Windows, so NVIDIA, AMD and Intel alike, with no
+          # vendor SDK at build time and nothing extra to ship.
+          #
+          # This accelerates Moonshine, not whisper.cpp: ggml's Vulkan backend
+          # is the only GPU path whisper.cpp has here and it does not register
+          # on Windows MSVC static builds (ggml-org/whisper.cpp#3750). Someone
+          # reading "Windows GPU" should know which engine gets the GPU, which
+          # is why the app reports the two separately.
+          - name: windows-webgpu
+            os: windows-2022
+            features: "moonshine-webgpu"
+            artifact_label: windows-x86_64-webgpu
+            cuda: false
+
     steps:
       - uses: actions/checkout@v4
 
@@ -332,8 +348,14 @@ jobs:
       # the MSI is a secondary, unadvertised artifact. Call tauri directly so
       # `--bundles nsis` reaches tauri instead of cargo.
       - name: Build installer (Windows, CPU)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.features == ''
         run: npx tauri build --bundles nsis
+
+      # Split from the step above rather than interpolating a possibly-empty
+      # `--features`, which passes tauri a bare flag and fails the build.
+      - name: Build installer (Windows, GPU)
+        if: runner.os == 'Windows' && matrix.features != ''
+        run: npx tauri build --bundles nsis --features ${{ matrix.features }}
 
       # ── Collect and rename Linux artifacts ──────────────────────────────────
       # Search the whole workspace so the path is correct regardless of whether
@@ -516,6 +538,7 @@ jobs:
             | Linux | `-linux-x86_64.AppImage` | None |
             | Linux (GPU) | `-linux-x86_64-vulkan.AppImage` | Any Vulkan GPU |
             | Windows | `-windows-x86_64.exe` | None |
+            | Windows (GPU) | `-windows-x86_64-webgpu.exe` | Any Direct3D 12 GPU |
 
             **The Vulkan AppImage** is a portable GPU build: it accelerates any
             NVIDIA/AMD/Intel GPU via the host Vulkan driver, and falls back to
@@ -523,9 +546,18 @@ jobs:
 
             **CPU builds** run on any hardware, including AMD, Intel, and ARM.
 
-            **The Windows build** is an NSIS installer and runs inference on the
-            CPU. It is not code-signed yet, so SmartScreen will warn that the
-            publisher is unknown: choose **More info → Run anyway**.
+            **The Windows builds** are NSIS installers. Neither is code-signed
+            yet, so SmartScreen will warn that the publisher is unknown: choose
+            **More info → Run anyway**.
+
+            **The Windows GPU build** accelerates the **Moonshine** speech
+            engine on any Direct3D 12 GPU — NVIDIA, AMD or Intel — through ONNX
+            Runtime's WebGPU provider. Select Moonshine in **Settings → Engine**;
+            the tab says which backend the build actually has. Whisper.cpp still
+            runs on the CPU on Windows either way, because its only GPU path
+            here is ggml's Vulkan backend, which does not register on Windows
+            MSVC static builds. If your GPU is not usable the app says so in the
+            log and falls back to the CPU rather than pretending.
 
             ### Windows — first run
 

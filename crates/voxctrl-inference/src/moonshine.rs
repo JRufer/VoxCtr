@@ -241,12 +241,34 @@ impl MoonshineBackend {
     /// point. On failure the builder is recovered from the error and returned
     /// unchanged, so a machine with no usable CUDA still loads the model.
     fn with_gpu(builder: SessionBuilder) -> SessionBuilder {
-        #[cfg(any(feature = "moonshine-cuda", feature = "moonshine-coreml"))]
+        #[cfg(any(
+            feature = "moonshine-cuda",
+            feature = "moonshine-coreml",
+            feature = "moonshine-webgpu"
+        ))]
         {
+            // One provider, picked in the order they are worth having: CUDA
+            // beats a generic device where it exists, CoreML beats WebGPU on
+            // Apple hardware, and WebGPU covers everything else. This order is
+            // mirrored by `moonshine_gpu_backend()`, which is where the name
+            // below comes from.
             #[cfg(feature = "moonshine-cuda")]
-            let (name, ep) = ("CUDA", ort::ep::CUDA::default().build().error_on_failure());
+            let ep = ort::ep::CUDA::default().build().error_on_failure();
             #[cfg(all(feature = "moonshine-coreml", not(feature = "moonshine-cuda")))]
-            let (name, ep) = ("CoreML", ort::ep::CoreML::default().build().error_on_failure());
+            let ep = ort::ep::CoreML::default().build().error_on_failure();
+            #[cfg(all(
+                feature = "moonshine-webgpu",
+                not(any(feature = "moonshine-cuda", feature = "moonshine-coreml"))
+            ))]
+            // Defaults deliberately: on Windows ORT's WebGPU EP runs on Dawn,
+            // which selects D3D12 there on its own. Naming a backend type would
+            // only be a way to get it wrong on someone else's machine.
+            let ep = ort::ep::WebGPU::default().build().error_on_failure();
+
+            // Not a second cascade: the name is derived from the same function
+            // that tells the UI which backend this build has, so the log and
+            // the Engine tab cannot name different providers.
+            let name = crate::moonshine_gpu_provider().unwrap_or("GPU");
 
             match builder.with_execution_providers([ep]) {
                 Ok(with_ep) => {
@@ -266,7 +288,11 @@ impl MoonshineBackend {
             }
         }
 
-        #[cfg(not(any(feature = "moonshine-cuda", feature = "moonshine-coreml")))]
+        #[cfg(not(any(
+            feature = "moonshine-cuda",
+            feature = "moonshine-coreml",
+            feature = "moonshine-webgpu"
+        )))]
         builder
     }
 }
@@ -596,6 +622,8 @@ fn threads() -> usize {
 
 #[cfg(test)]
 mod tests {
+
+
     use super::*;
 
     #[test]

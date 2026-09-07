@@ -39,6 +39,7 @@
     cuda: "CUDA (NVIDIA)",
     vulkan: "Vulkan (AMD/Intel/NVIDIA)",
     coreml: "CoreML (Apple)",
+    webgpu: "WebGPU (AMD/Intel/NVIDIA)",
   };
   const gpuLabel = (id: string) => GPU_LABELS[id] ?? id;
 

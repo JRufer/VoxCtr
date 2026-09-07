@@ -96,6 +96,11 @@ moonshine = ["voxctrl-inference/moonshine"]
 # whisper.cpp only, and Moonshine stays on the CPU in it.
 moonshine-cuda = ["voxctrl-inference/moonshine-cuda"]
 moonshine-coreml = ["voxctrl-inference/moonshine-coreml"]
+# Cross-vendor GPU offload for Moonshine. Unlike `moonshine-cuda` this needs no
+# vendor toolchain at build time and nothing extra at run time, so it is what
+# the Windows GPU release build uses. See voxctrl-inference's Cargo.toml for why
+# this is WebGPU and not DirectML.
+moonshine-webgpu = ["voxctrl-inference/moonshine-webgpu"]
 # Compiles the Inflect-Micro-v2 ONNX text-to-speech engine into the app. On by
 # default; without it, selecting the engine reports that the build lacks it
 # instead of failing obscurely. Needs `espeak-ng` installed at runtime for
